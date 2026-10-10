@@ -16,6 +16,8 @@ each table.
 - [0.7.3 against 0.7.2](#073-against-072)
 - [Results](#results)
 - [macOS on Apple silicon](#macos-on-apple-silicon)
+- [Windows x64](#windows-x64)
+- [Against PiG and oh-my-pi](#against-pig-and-oh-my-pi)
 - [With a real model](#with-a-real-model)
 - [Setup and method](#setup-and-method)
 - [In a real terminal (tmux)](#in-a-real-terminal-tmux)
@@ -200,6 +202,25 @@ commit for as long as it keeps the image cached, after the process has exited (p
 [WINDOWS.md](WINDOWS.md#what-was-measured)). `bench/image_commit.py`, medians of 5: Pi on Bun 1 MB; Pi-Bolt 33 MB (the 32 MB of the
 region that has to be in the image); before that was fixed, 1,029 MB.
 
+
+## Against PiG and oh-my-pi
+
+Pi-Bolt 0.7.3 against two other fast builds of Pi, on the same machines with the same tools: [PiG](https://github.com/MichaelKinsy/PiG)
+0.4.1 (`@pi-in-go/pig`), the Go port of Pi, based on Pi 1.0.3, and [oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7
+(`omp`), a fork of Pi that runs on Bun. Each run interleaves Pi-Bolt, Pi 1.1.0 on stock Bun and on Node with them; the tables in
+the [README](../README.md#against-pig-and-oh-my-pi) take the medians of 21 runs (`bench/benchmark.py`), the mean of two rounds
+for long answers and large files, and the medians of the long sessions (75 prompts) and the tmux rounds. PiG reads its own
+names for Pi's settings (`PIG_HOME`, `PIG_CODING_AGENT_DIR`, `PIG_OFFLINE`) and oh-my-pi reads `models.yml`; `bench/harness.py`
+gives both the same local fake model as the others.
+
+oh-my-pi compacts a long conversation on its own: by prompt 25 it sends 0.5 MB where the others send 5.6 MB, and it stops
+answering the scripted session after that, so it is left out of the long session. On Linux, PiG and oh-my-pi were measured in two
+runs, each with Pi-Bolt and Pi on Bun; Pi-Bolt's figures agree between them within the usual variation (its memory at the end of
+the long session varied most, 89 to 240 MB over seven sessions; the table takes the PiG run's, 142 MB).
+
+Raw data: [`bench/results/2026-10-10-linux-vs-pig-0.4.1`](../bench/results/2026-10-10-linux-vs-pig-0.4.1),
+[`bench/results/2026-10-10-linux-vs-omp-18.8.7`](../bench/results/2026-10-10-linux-vs-omp-18.8.7) and
+[`bench/results/2026-10-10-darwin-arm64-0.7.3-vs-pig-omp`](../bench/results/2026-10-10-darwin-arm64-0.7.3-vs-pig-omp).
 
 ## With a real model
 

@@ -141,6 +141,8 @@ def pi_home(port: int):
     # A changelog seen far in the future: no "what's new" screen on start.
     (home / "settings.json").write_text(json.dumps({"lastChangelogVersion": "9999.0.0", "theme": "dark"}))
     (home / "auth.json").write_text("{}")
+    # (OMP, the oh-my-pi fork, reads models.yml; JSON is YAML.)
+    (home / "models.yml").write_text((home / "models.json").read_text())
     try:
         yield home
     finally:
@@ -161,8 +163,11 @@ def workdir():
 def pi_env(home: Path, extra: dict | None = None) -> dict:
     # Nothing from the caller's BUN_* / NODE_* environment: those change what a build does.
     env = {k: v for k, v in os.environ.items() if not k.startswith(("BUN_", "NODE_", "PI_"))}
+    env = {k: v for k, v in env.items() if not k.startswith("PIG_")}
     env.update({"PI_CODING_AGENT_DIR": str(home), "PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
                 "TERM": "xterm-256color"})
+    # (PiG, the Go port, reads its own names for the same settings.)
+    env.update({"PIG_HOME": str(home), "PIG_CODING_AGENT_DIR": str(home), "PIG_OFFLINE": "1"})
     env.update(extra or {})
     return env
 

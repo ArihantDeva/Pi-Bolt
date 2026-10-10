@@ -1,0 +1,23 @@
+{"build": "pi-bolt", "exit": 0, "prompt": 25, "ms_per_prompt": 165.6, "cpu_ms_per_prompt": 81.8, "rss_mb": 170.1, "own_mb": 67.4, "request_mb": 5.62, "tokens_m": 1.41}
+{"build": "pi-bolt", "exit": 0, "prompt": 50, "ms_per_prompt": 366.5, "cpu_ms_per_prompt": 189.7, "rss_mb": 181.9, "own_mb": 79.0, "request_mb": 11.24, "tokens_m": 2.81}
+{"build": "pi-bolt", "exit": 0, "prompt": 75, "ms_per_prompt": 570.9, "cpu_ms_per_prompt": 296.3, "rss_mb": 343.5, "own_mb": 240.4, "request_mb": 16.85, "tokens_m": 4.21}
+{"build": "omp", "exit": 0, "prompt": 25, "ms_per_prompt": 244.0, "cpu_ms_per_prompt": 182.7, "rss_mb": 585.2, "own_mb": 423.7, "request_mb": 0.51, "tokens_m": 0.13}
+{"build": "omp", "exit": 0, "prompt": 37, "error": "no answer"}
+{"build": "bun", "exit": 0, "prompt": 25, "ms_per_prompt": 220.4, "cpu_ms_per_prompt": 183.7, "rss_mb": 223.5, "own_mb": 158.8, "request_mb": 5.62, "tokens_m": 1.41}
+{"build": "bun", "exit": 0, "prompt": 50, "ms_per_prompt": 490.5, "cpu_ms_per_prompt": 364.5, "rss_mb": 351.0, "own_mb": 286.3, "request_mb": 11.24, "tokens_m": 2.81}
+{"build": "bun", "exit": 0, "prompt": 75, "ms_per_prompt": 743.0, "cpu_ms_per_prompt": 531.5, "rss_mb": 386.6, "own_mb": 321.8, "request_mb": 16.85, "tokens_m": 4.21}
+{"build": "pi-bolt", "exit": 0, "prompt": 25, "ms_per_prompt": 170.1, "cpu_ms_per_prompt": 84.1, "rss_mb": 209.1, "own_mb": 106.2, "request_mb": 5.62, "tokens_m": 1.41}
+{"build": "pi-bolt", "exit": 0, "prompt": 50, "ms_per_prompt": 378.1, "cpu_ms_per_prompt": 188.8, "rss_mb": 260.0, "own_mb": 157.2, "request_mb": 11.24, "tokens_m": 2.81}
+{"build": "pi-bolt", "exit": 0, "prompt": 75, "ms_per_prompt": 564.4, "cpu_ms_per_prompt": 295.8, "rss_mb": 287.4, "own_mb": 194.3, "request_mb": 16.85, "tokens_m": 4.21}
+{"build": "pi-bolt", "exit": 0, "prompt": 25, "ms_per_prompt": 170.8, "cpu_ms_per_prompt": 81.6, "rss_mb": 191.4, "own_mb": 88.5, "request_mb": 5.62, "tokens_m": 1.41}
+{"build": "pi-bolt", "exit": 0, "prompt": 50, "ms_per_prompt": 355.4, "cpu_ms_per_prompt": 178.3, "rss_mb": 270.0, "own_mb": 167.2, "request_mb": 11.24, "tokens_m": 2.81}
+{"build": "pi-bolt", "exit": 0, "prompt": 75, "ms_per_prompt": 564.0, "cpu_ms_per_prompt": 302.5, "rss_mb": 282.3, "own_mb": 189.6, "request_mb": 16.85, "tokens_m": 4.21}
+{"build": "bun", "exit": 0, "prompt": 25, "ms_per_prompt": 218.7, "cpu_ms_per_prompt": 196.8, "rss_mb": 220.1, "own_mb": 156.3, "request_mb": 5.62, "tokens_m": 1.41}
+{"build": "bun", "exit": 0, "prompt": 50, "ms_per_prompt": 500.1, "cpu_ms_per_prompt": 364.5, "rss_mb": 339.7, "own_mb": 275.9, "request_mb": 11.24, "tokens_m": 2.81}
+{"build": "bun", "exit": 0, "prompt": 75, "ms_per_prompt": 794.8, "cpu_ms_per_prompt": 557.0, "rss_mb": 336.4, "own_mb": 272.5, "request_mb": 16.85, "tokens_m": 4.21}
+{"build": "pi-bolt", "exit": 0, "prompt": 25, "ms_per_prompt": 169.9, "cpu_ms_per_prompt": 83.1, "rss_mb": 214.9, "own_mb": 112.2, "request_mb": 5.62, "tokens_m": 1.41}
+{"build": "pi-bolt", "exit": 0, "prompt": 50, "ms_per_prompt": 371.4, "cpu_ms_per_prompt": 191.7, "rss_mb": 285.6, "own_mb": 182.9, "request_mb": 11.24, "tokens_m": 2.81}
+{"build": "pi-bolt", "exit": 0, "prompt": 75, "ms_per_prompt": 542.9, "cpu_ms_per_prompt": 298.1, "rss_mb": 181.8, "own_mb": 89.0, "request_mb": 16.85, "tokens_m": 4.21}
+{"build": "bun", "exit": 0, "prompt": 25, "ms_per_prompt": 217.9, "cpu_ms_per_prompt": 176.1, "rss_mb": 284.2, "own_mb": 220.1, "request_mb": 5.62, "tokens_m": 1.41}
+{"build": "bun", "exit": 0, "prompt": 50, "ms_per_prompt": 486.9, "cpu_ms_per_prompt": 356.3, "rss_mb": 316.7, "own_mb": 252.6, "request_mb": 11.24, "tokens_m": 2.81}
+{"build": "bun", "exit": 0, "prompt": 75, "ms_per_prompt": 757.3, "cpu_ms_per_prompt": 529.3, "rss_mb": 316.8, "own_mb": 252.5, "request_mb": 16.85, "tokens_m": 4.21}

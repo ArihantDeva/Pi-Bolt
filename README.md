@@ -122,6 +122,42 @@ across the builds; lower is better.
 | CPU, one prompt (`pi -p`) | **92 ms** | 329 ms | 544 ms |
 | Ready to type | **92 ms** | 177 ms | 311 ms |
 
+### Against PiG and oh-my-pi
+
+Pi-Bolt 0.7.3 against two other fast Pi builds: [PiG](https://github.com/MichaelKinsy/PiG) 0.4.1, the Go port of Pi
+(based on Pi 1.0.3), and [oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7, a fork of Pi on Bun. Same machines and
+method as above; 0.8.0 measures within a few percent of 0.7.3.
+
+**Linux x86-64** (AMD EPYC 7B13)
+
+| Benchmark | Pi-Bolt 0.7.3 | PiG 0.4.1 | oh-my-pi 18.8.7 |
+|---|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.8 s** | 101 s | 3.8 s |
+| CPU, streaming a 60,000-character answer | 4.1 s | 24.6 s | **3.3 s** |
+| Memory after a 4.2M-token session | **142 MB** | 344 MB | – |
+| Memory of a session in tmux | **27 MB** | 40 MB | 329 MB |
+| CPU, interactive session (5 prompts) | **324 ms** | 3,155 ms | 3,397 ms |
+| CPU, one prompt (`pi -p`) | **87 ms** | 306 ms | 1,823 ms |
+| Peak memory, one prompt (`pi -p`) | 126 MB | **58 MB** | 475 MB |
+| Ready to type | 49 ms | **43 ms** | 1,088 ms |
+
+**macOS** (Apple M5)
+
+| Benchmark | Pi-Bolt 0.7.3 | PiG 0.4.1 | oh-my-pi 18.8.7 |
+|---|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.5 s** | 67 s | 2.5 s |
+| CPU, streaming a 60,000-character answer | 5.2 s | 17.0 s | **5.1 s** |
+| Memory after a 4.2M-token session | **46 MB** | 329 MB | – |
+| Memory of a session in tmux | **25 MB** | 48 MB | 317 MB |
+| CPU, interactive session (5 prompts) | **95 ms** | 1,355 ms | 1,383 ms |
+| CPU, one prompt (`pi -p`) | **31 ms** | 132 ms | 592 ms |
+| Peak memory, one prompt (`pi -p`) | 75 MB | **49 MB** | 421 MB |
+| Ready to type | 25 ms | **20 ms** | 564 ms |
+
+PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with as little CPU or a
+little less. Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files
+fastest. oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–).
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-long-dark.svg">
   <img alt="Long answers and large files, Pi-Bolt 0.7.3 vs Pi-Bolt 0.7.0 vs Bun 1.4.2 vs Node 24: CPU streaming a 20,000-character answer 1.1 / 1.2 / 10.7 / 8.0 s; a 60,000-character answer 4.3 / 4.5 / 44.4 / 42.3 s; share of a core while streaming 9 / 9 / 88 / 84%; writing a 200 KB file through a tool call 0.8 / 0.9 / 30.0 / 39.4 s" src="docs/images/bench-long-light.svg">
