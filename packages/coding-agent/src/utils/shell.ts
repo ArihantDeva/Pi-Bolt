@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 import { isProgramFile, windowsPathDirectories } from "./windows-path.ts";
@@ -15,7 +15,32 @@ export interface ShellConfig {
  */
 function isLegacyWslBashPath(path: string): boolean {
 	const normalized = path.replace(/\//g, "\\").toLowerCase();
-	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
+	// System32's bash.exe, and the WSL Store app's alias in %LOCALAPPDATA%\Microsoft\WindowsApps (on the user's PATH whenever
+	// WSL is installed from the Store): both start WSL's bash, which reads the command from stdin.
+	return (
+		/^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized) ||
+		/\\microsoft\\windowsapps\\bash\.exe$/.test(normalized)
+	);
+}
+
+/**
+ * Windows: Git Bash where Git for Windows is, other than Program Files: per user (%LOCALAPPDATA%\Programs\Git, the installer's
+ * choice for a user without administrator rights), scoop's, and the Git whose git.exe is on PATH (a portable Git: only its cmd
+ * folder is on PATH, never bash's). Before any bash.exe on PATH, which is WSL's launcher on most machines that have WSL.
+ */
+function gitBashCandidates(): string[] {
+	const candidates: string[] = [];
+	if (process.env.LOCALAPPDATA) candidates.push(join(process.env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe"));
+	if (process.env.USERPROFILE)
+		candidates.push(join(process.env.USERPROFILE, "scoop", "apps", "git", "current", "bin", "bash.exe"));
+	const git = findExecutableOnPath("git.exe");
+	if (git) {
+		// <git>\cmd\git.exe, <git>\mingw64\bin\git.exe or <git>\bin\git.exe: Git Bash is <git>\bin\bash.exe.
+		let root = dirname(dirname(git));
+		if (/^mingw(?:32|64)$/i.test(basename(root))) root = dirname(root);
+		candidates.push(join(root, "bin", "bash.exe"));
+	}
+	return candidates;
 }
 
 function getBashShellConfig(shell: string): ShellConfig {
@@ -26,18 +51,18 @@ function getBashShellConfig(shell: string): ShellConfig {
 // `where` for it took a process start each time.
 const foundOnWindowsPath = new Map<string, string>();
 
-function findExecutableOnPath(executable: string): string | null {
+function findExecutableOnPath(executable: string, accept?: (file: string) => boolean): string | null {
 	if (process.platform === "win32") {
 		// Windows: the file in PATH's absolute directories, in order. (`where`, which this was, also looks in the working
 		// directory first, so a project's own bash.exe or pwsh.exe would have been taken for the shell.)
 		const path = process.env.PATH ?? "";
-		const key = `${path}\0${executable}`;
+		const key = `${path}\0${executable}\0${accept ? "filtered" : ""}`;
 		const cached = foundOnWindowsPath.get(key);
 		if (cached && existsSync(cached)) return cached;
 		for (const dir of windowsPathDirectories(path)) {
 			if (!isAbsolute(dir)) continue;
 			const file = join(dir, executable);
-			if (isProgramFile(file)) {
+			if ((!accept || accept(file)) && isProgramFile(file)) {
 				foundOnWindowsPath.set(key, file);
 				return file;
 			}
@@ -88,16 +113,22 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 			paths.push(`${programFilesX86}\\Git\\bin\\bash.exe`);
 		}
 
+		paths.push(...gitBashCandidates());
+
 		for (const path of paths) {
 			if (existsSync(path)) {
 				return getBashShellConfig(path);
 			}
 		}
 
-		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
-		const bashOnPath = findExecutableOnPath("bash.exe");
+		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, then WSL's launchers last)
+		const bashOnPath = findExecutableOnPath("bash.exe", (file) => !isLegacyWslBashPath(file));
 		if (bashOnPath) {
 			return getBashShellConfig(bashOnPath);
+		}
+		const wslBash = findExecutableOnPath("bash.exe");
+		if (wslBash) {
+			return getBashShellConfig(wslBash);
 		}
 
 		throw new Error(
