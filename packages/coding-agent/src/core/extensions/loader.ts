@@ -11,6 +11,7 @@ import type { Provider } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import type { createJiti } from "jiti";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
+import { PIBOLT } from "../../pi-bolt.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
@@ -56,8 +57,31 @@ function getCreateJiti(): Promise<typeof createJiti> {
 let virtualModulesPromise: Promise<Record<string, unknown>> | undefined;
 
 function getVirtualModules(): Promise<Record<string, unknown>> {
-	virtualModulesPromise ??= import("./virtual-modules.ts").then((module) => module.VIRTUAL_MODULES);
+	virtualModulesPromise ??= import("./virtual-modules.ts").then((module) =>
+		PIBOLT && !PIBOLT.jit ? withoutJitOnlyPackages(module.VIRTUAL_MODULES) : module.VIRTUAL_MODULES,
+	);
 	return virtualModulesPromise;
+}
+
+/**
+ * Packages that work only through bun:ffi and that their extensions have a Node.js alternative for. Pi-Bolt's build without the
+ * JIT makes no machine code at run time, and bun:ffi's calls into native code are made at run time. There, importing one of
+ * these fails, so that the extension takes its alternative: pi-fff, which tries @ff-labs/fff-bun first, then uses
+ * @ff-labs/fff-node (the same native library, through ffi-rs, a Node-API module).
+ */
+const JIT_ONLY_PACKAGES = ["@ff-labs/fff-bun"];
+
+function withoutJitOnlyPackages(modules: Record<string, unknown>): Record<string, unknown> {
+	const result = { ...modules };
+	for (const name of JIT_ONLY_PACKAGES) {
+		Object.defineProperty(result, name, {
+			enumerable: false,
+			get() {
+				throw new Error(`${name} needs the JIT (bun:ffi), which this build of Pi-Bolt does not have: install the -jit build`);
+			},
+		});
+	}
+	return result;
 }
 
 /**

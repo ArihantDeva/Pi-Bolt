@@ -30,7 +30,7 @@ npm install -g --allow-scripts=pi-bolt pi-bolt
 With other package managers:
 
 ```bash
-bun add -g pi-bolt
+bun add -g --trust pi-bolt
 pnpm add -g pi-bolt
 yarn global add pi-bolt
 ```
