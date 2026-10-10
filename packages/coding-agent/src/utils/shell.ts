@@ -202,7 +202,8 @@ export function sanitizeBinaryOutput(str: string): string {
 const trackedDetachedChildPids = new Set<number>();
 
 /**
- * Windows, in a runtime with Bun's FFI (Pi-Bolt, Pi on Bun): a job object for each shell a tool starts, so that stopping the
+ * Windows, in a runtime with Bun's FFI, which needs the JIT (Pi-Bolt's -jit build, Pi on Bun; not the default Pi-Bolt build,
+ * where Git Bash's processes are found by their group's variable instead): a job object for each shell a tool starts, so that stopping the
  * command (Escape, its timeout, Pi exiting) ends everything it started. `taskkill /T` alone walks the tree by parent process,
  * and misses a process whose parent has exited (Git Bash's `sleep 25; echo x`, `cd web && npm run dev`: a dev server left
  * holding its port), or one started while it walks. The job is only ended when the command is stopped; one that finishes
@@ -258,8 +259,43 @@ function getWindowsJobs(): WindowsJobs | null {
 	return windowsJobs;
 }
 
-export function trackDetachedChildPid(pid: number): void {
+/**
+ * Windows: the bash of a Cygwin-family shell (Git Bash, MSYS2, Cygwin) that sees that shell's processes in /proc: Git Bash's
+ * bin\bash.exe is a launcher of usr\bin\bash.exe. Undefined for any other shell (PowerShell, cmd, WSL).
+ */
+export function getMsysBash(shell: string): string | undefined {
+	if (process.platform !== "win32" || isLegacyWslBashPath(shell) || basename(shell).toLowerCase() !== "bash.exe") {
+		return undefined;
+	}
+	for (const bash of [join(dirname(dirname(shell)), "usr", "bin", "bash.exe"), shell]) {
+		const dir = dirname(bash);
+		if (existsSync(bash) && (existsSync(join(dir, "msys-2.0.dll")) || existsSync(join(dir, "cygwin1.dll"))))
+			return bash;
+	}
+	return undefined;
+}
+
+/**
+ * A Cygwin-family shell's processes are found by an environment variable the tool gives the shell (every process it starts
+ * inherits it): `taskkill /T` walks the tree by parent process, and a program bash started (`sleep 25; echo x`, `tail -f`)
+ * is the child of a fork that has exited, which it never reaches. (Bash builtins only: this bash has no /usr/bin on PATH.)
+ */
+export const MSYS_SHELL_GROUP_VARIABLE = "PI_SHELL_GROUP";
+const msysGroupOfPid = new Map<number, { bash: string; group: string }>();
+
+function killMsysGroup(bash: string, group: string): void {
+	const script =
+		`for p in /proc/[0-9]*; do mapfile -d '' -t e 2>/dev/null < "$p/environ" || continue; ` +
+		`for v in "\${e[@]}"; do if [[ $v == "${MSYS_SHELL_GROUP_VARIABLE}=${group}" ]]; then kill -9 "\${p#/proc/}" 2>/dev/null; break; fi; done; done`;
+	try {
+		const child = spawn(bash, ["-c", script], { stdio: "ignore", detached: true, windowsHide: true });
+		child.once("error", () => {});
+	} catch {}
+}
+
+export function trackDetachedChildPid(pid: number, msys?: { bash: string; group: string }): void {
 	trackedDetachedChildPids.add(pid);
+	if (msys) msysGroupOfPid.set(pid, msys);
 	if (process.platform === "win32") {
 		try {
 			const job = getWindowsJobs()?.attach(pid);
@@ -272,6 +308,7 @@ export function trackDetachedChildPid(pid: number): void {
 
 export function untrackDetachedChildPid(pid: number): void {
 	trackedDetachedChildPids.delete(pid);
+	msysGroupOfPid.delete(pid);
 	const job = windowsJobOfPid.get(pid);
 	if (job !== undefined) {
 		windowsJobOfPid.delete(pid);
@@ -300,6 +337,10 @@ export function killProcessTree(pid: number): void {
 				getWindowsJobs()?.terminate(job);
 			} catch {}
 		}
+		// A Cygwin-family shell's processes, by its group's variable (see killMsysGroup), whatever their parents: once taskkill
+		// is done. (Before it, it would end the processes that stand for a native program bash started, the parents of that
+		// program's own tree, which taskkill would then no longer reach.)
+		const msys = msysGroupOfPid.get(pid);
 		// Use the trusted System32 executable so cleanup does not depend on PATH.
 		try {
 			const child = spawn(
@@ -312,8 +353,12 @@ export function killProcessTree(pid: number): void {
 				},
 			);
 			// A failed spawn emits "error" asynchronously; consume it to avoid crashing Node.
-			child.once("error", () => {});
+			child.once("error", () => {
+				if (msys) killMsysGroup(msys.bash, msys.group);
+			});
+			if (msys) child.once("exit", () => killMsysGroup(msys.bash, msys.group));
 		} catch {
+			if (msys) killMsysGroup(msys.bash, msys.group);
 			// Ignore errors if taskkill fails.
 		}
 	} else {
