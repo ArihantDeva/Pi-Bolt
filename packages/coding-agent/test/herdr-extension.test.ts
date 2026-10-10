@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { COMMAND_NAME } from "../src/config.ts";
 import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 import { createHerdrExtension, quietOtherHerdrReporters, resumeArgv } from "../src/extensions/herdr/index.ts";
 import { isHerdrPiIntegration } from "../src/extensions/herdr/integration-file.ts";
+import { herdrArguments } from "../src/extensions/herdr/transport.ts";
 
 type Request = { id: string; method: string; params: Record<string, unknown> };
 
@@ -217,6 +218,79 @@ describe("Herdr extension", () => {
 		expect(resumeArgv("/home/me/a\nb.jsonl")).toBeUndefined();
 		expect(resumeArgv("/home/me/a\u0085b.jsonl")).toBeUndefined();
 		expect(resumeArgv(`/${"a".repeat(8200)}`)).toBeUndefined();
+	});
+});
+
+describe("Herdr executable (Windows)", () => {
+	test("requests become `herdr pane` arguments", () => {
+		expect(
+			herdrArguments({
+				method: "pane.report_agent",
+				params: {
+					pane_id: "w1:p2",
+					source: "pi-bolt",
+					agent: "pi-bolt",
+					state: "blocked",
+					message: "-y to continue?",
+					seq: 7,
+					agent_session_path: "C:\\Users\\me\\s.jsonl",
+					resume_argv: ["pi-bolt", "--session", "C:\\Users\\me\\s.jsonl"],
+				},
+			}),
+		).toEqual([
+			"pane",
+			"report-agent",
+			"w1:p2",
+			"--source",
+			"pi-bolt",
+			"--agent",
+			"pi-bolt",
+			"--seq",
+			"7",
+			"--state",
+			"blocked",
+			"--message",
+			"-y to continue?",
+			"--agent-session-path",
+			"C:\\Users\\me\\s.jsonl",
+			"--",
+			"pi-bolt",
+			"--session",
+			"C:\\Users\\me\\s.jsonl",
+		]);
+		expect(
+			herdrArguments({
+				method: "pane.release_agent",
+				params: { pane_id: "w1:p2", source: "pi-bolt", agent: "pi-bolt", seq: 8 },
+			}),
+		).toEqual(["pane", "release-agent", "w1:p2", "--source", "pi-bolt", "--agent", "pi-bolt", "--seq", "8"]);
+	});
+
+	test.skipIf(process.platform === "win32")("on Windows, reports run HERDR_BIN_PATH", async () => {
+		const dir = tempDir();
+		const log = join(dir, "calls");
+		const bin = join(dir, "herdr");
+		// One line per call: its arguments, separated by |.
+		writeFileSync(bin, `#!/bin/sh\nIFS='|'; printf '%s\\n' "$*" >> '${log}'\n`);
+		chmodSync(bin, 0o755);
+		const fake = fakePi();
+		const env = { HERDR_ENV: "1", HERDR_BIN_PATH: bin, HERDR_PANE_ID: "w1:p2" };
+		createHerdrExtension(env, "win32")(fake.pi);
+		await fake.fire(
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			context({ sessionFile: "/w/s.jsonl" }),
+		);
+		const calls = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []);
+		await until(() => calls().length === 1);
+		await fake.fire("session_shutdown", { type: "session_shutdown", reason: "quit" });
+		await until(() => calls().length === 2);
+		expect(calls()[0]).toMatch(
+			new RegExp(
+				`^pane\\|report-agent\\|w1:p2\\|--source\\|pi-bolt\\|--agent\\|pi-bolt\\|--seq\\|\\d+\\|--state\\|idle\\|--agent-session-path\\|/w/s.jsonl\\|--\\|${COMMAND_NAME}\\|--session\\|/w/s.jsonl$`,
+			),
+		);
+		expect(calls()[1]).toMatch(/^pane\|release-agent\|w1:p2\|--source\|pi-bolt\|--agent\|pi-bolt\|--seq\|\d+$/);
 	});
 });
 

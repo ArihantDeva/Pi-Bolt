@@ -6,36 +6,23 @@
  * Herdr's own Pi integration (`herdr integration install pi`, ~/.pi/agent/extensions/herdr-agent-state.ts) reports as `pi` and
  * restores with `pi --session`, which is not Pi-Bolt, so Pi-Bolt does not load that file (integration-file.ts) and
  * reports for itself, as Herdr's "Add Herdr support to your agent" describes: its own source and agent name, its own resume
- * command. Outside Herdr (HERDR_ENV, HERDR_SOCKET_PATH and HERDR_PANE_ID unset) it does nothing. Disable it with
+ * command. Outside Herdr (HERDR_ENV and HERDR_PANE_ID unset) it does nothing. Reports go over Herdr's socket, or on
+ * Windows through the `herdr` executable (transport.ts). Disable it with
  * `-builtin:herdr` in the `extensions` setting.
  *
  * Only the interactive session reports: print, JSON and RPC runs, and subagents (sessions without a UI), would otherwise
  * take over the pane of the session that started them.
  */
 
-import net from "node:net";
 import { isAbsolute } from "node:path";
 import { COMMAND_NAME } from "../../config.ts";
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
+import { type HerdrRequest, type HerdrTransport, herdrFromEnvironment } from "./transport.ts";
 
 const SOURCE = "pi-bolt";
 const AGENT = "pi-bolt";
 
 type AgentState = "working" | "blocked" | "idle";
-
-interface Herdr {
-	endpoint: string;
-	paneId: string;
-}
-
-function herdrFromEnvironment(env: NodeJS.ProcessEnv = process.env): Herdr | undefined {
-	const socketPath = env.HERDR_SOCKET_PATH;
-	const paneId = env.HERDR_PANE_ID;
-	if (env.HERDR_ENV !== "1" || !socketPath || !paneId) return undefined;
-	// On Windows Herdr's socket is a named pipe of that name.
-	const endpoint = process.platform === "win32" ? `\\\\.\\pipe\\${socketPath}` : socketPath;
-	return { endpoint, paneId };
-}
 
 /**
  * pi-herdr (an extension that runs agents in Herdr panes) also reports this pane's state, as `pi`, and the last report holds
@@ -46,37 +33,9 @@ export function quietOtherHerdrReporters(env: NodeJS.ProcessEnv = process.env): 
 	if (herdrFromEnvironment(env)) env.PI_HERDR_NO_SELF_REPORT ??= "1";
 }
 
-/** Send one request; true when Herdr answered. Never throws, never keeps Pi-Bolt running. */
-function sendOnce(endpoint: string, request: unknown, timeoutMs: number): Promise<boolean> {
-	return new Promise((resolve) => {
-		let done = false;
-		let socket: net.Socket | undefined;
-		const timeout = setTimeout(() => finish(false), timeoutMs);
-		timeout.unref?.();
-		function finish(answered: boolean) {
-			if (done) return;
-			done = true;
-			clearTimeout(timeout);
-			socket?.destroy();
-			resolve(answered);
-		}
-		try {
-			socket = net.createConnection(endpoint);
-		} catch {
-			finish(false);
-			return;
-		}
-		socket.unref?.();
-		socket.on("error", () => finish(false));
-		socket.on("connect", () => socket?.write(`${JSON.stringify(request)}\n`));
-		socket.on("data", () => finish(true));
-		socket.on("end", () => finish(false));
-	});
-}
-
-async function send(endpoint: string, request: unknown): Promise<void> {
-	if (await sendOnce(endpoint, request, 500)) return;
-	await sendOnce(endpoint, request, 1500);
+async function send(transport: HerdrTransport, request: HerdrRequest): Promise<void> {
+	if (await transport(request, 500)) return;
+	await transport(request, 1500);
 }
 
 /**
@@ -101,11 +60,14 @@ function hasControlCharacter(text: string): boolean {
 	return false;
 }
 
-export function createHerdrExtension(env: NodeJS.ProcessEnv = process.env): ExtensionFactory {
+export function createHerdrExtension(
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): ExtensionFactory {
 	return (pi) => {
-		const herdr = herdrFromEnvironment(env);
+		const herdr = herdrFromEnvironment(env, platform);
 		if (!herdr) return;
-		const { endpoint, paneId } = herdr;
+		const { transport, paneId } = herdr;
 
 		// Herdr ignores a report whose number is not above the last one from this source, across restarts of Pi-Bolt too.
 		let seq = Date.now() * 1000;
@@ -145,7 +107,7 @@ export function createHerdrExtension(env: NodeJS.ProcessEnv = process.env): Exte
 
 		// One report in flight at a time; only the newest waiting one is sent.
 		let inFlight = false;
-		let queued: Record<string, unknown> | undefined;
+		let queued: HerdrRequest | undefined;
 		async function drain() {
 			if (inFlight) return;
 			inFlight = true;
@@ -153,7 +115,7 @@ export function createHerdrExtension(env: NodeJS.ProcessEnv = process.env): Exte
 				while (queued) {
 					const request = queued;
 					queued = undefined;
-					await send(endpoint, request);
+					await send(transport, request);
 				}
 			} finally {
 				inFlight = false;
@@ -175,7 +137,6 @@ export function createHerdrExtension(env: NodeJS.ProcessEnv = process.env): Exte
 			last = next;
 			const argv = resumeArgv(sessionFile);
 			queued = {
-				id: `${SOURCE}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
 				method: "pane.report_agent",
 				params: {
 					pane_id: paneId,
@@ -258,14 +219,12 @@ export function createHerdrExtension(env: NodeJS.ProcessEnv = process.env): Exte
 			if (event.reason !== "quit") return;
 			queued = undefined;
 			// One short try: Herdr also notices the exit once the pane is back at its shell prompt.
-			await sendOnce(
-				endpoint,
+			await transport(
 				{
-					id: `${SOURCE}:release:${Date.now()}`,
 					method: "pane.release_agent",
 					params: { pane_id: paneId, source: SOURCE, agent: AGENT, seq: nextSeq() },
 				},
-				300,
+				500,
 			);
 		});
 	};
