@@ -79,19 +79,18 @@ def add_ids(body):
 
 
 def sections_for_search(page, body):
-    """One entry per h2 section (and the page's opening), for the search box."""
+    """One entry per h2 and h3 section (and the page's opening), with all of its text, for the search box. (The box matches
+    against the whole text and shows a snippet around the match.)"""
     entries = []
-    parts = re.split(r'(<h2[^>]*\bid="[^"]+"[^>]*>.*?</h2>)', body, flags=re.S)
-    lead = text_of(parts[0])
-    entries.append({"title": page["title"], "section": "", "url": page["file"], "text": lead[:600]})
+    parts = re.split(r'(<h[23][^>]*\bid="[^"]+"[^>]*>.*?</h[23]>)', body, flags=re.S)
+    entries.append({"title": page["title"], "section": "", "url": page["file"], "text": text_of(parts[0])})
     for i in range(1, len(parts), 2):
         m = re.search(r'\bid="([^"]+)"', parts[i])
-        heading = text_of(re.sub(r'<a class="anchor".*?</a>', "", parts[i]))
         entries.append({
             "title": page["title"],
-            "section": heading,
+            "section": text_of(parts[i]),
             "url": f'{page["file"]}#{m.group(1)}',
-            "text": text_of(parts[i + 1])[:600],
+            "text": text_of(parts[i + 1]),
         })
     return entries
 

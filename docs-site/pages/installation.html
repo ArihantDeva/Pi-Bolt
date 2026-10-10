@@ -81,8 +81,12 @@ powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"</pre>
   <div data-tab="npm" data-title="npm">
 <pre data-label="Shell profile"><span class="c"># ~/.zshrc or ~/.bashrc; use x64-jit on Linux</span>
 export PIBOLT_VARIANT=arm64-jit</pre>
-    <p>The npm package reads <code>PIBOLT_VARIANT</code> every time it runs, so keep it set in your shell profile. If it is unset
-      later, the next run switches back to the default build.</p>
+    <p>On macOS and Linux, the npm package reads <code>PIBOLT_VARIANT</code> every time it runs, so keep it set in your shell
+      profile. If it is unset later, the next run switches back to the default build.</p>
+    <p>On Windows, the npm package picks the build when it is installed or updated. Set the variable first, then install:</p>
+<pre data-label="PowerShell">$env:PIBOLT_VARIANT = "x64-jit"
+npm install -g --allow-scripts=pi-bolt pi-bolt</pre>
+    <p>To change builds later, set or clear <code>PIBOLT_VARIANT</code> and run the install again.</p>
   </div>
 </div>
 <p><code>pi-bolt update</code> keeps the build you chose.</p>
