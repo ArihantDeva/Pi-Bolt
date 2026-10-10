@@ -36,6 +36,21 @@ describe("ProjectTrustStore", () => {
 		expect(store.get(childDir)).toBe(true);
 	});
 
+	it.skipIf(process.platform !== "win32")(
+		"on Windows, trusts a folder whatever the letter case it is given in",
+		() => {
+			const store = new ProjectTrustStore(agentDir);
+			store.set(cwd, true);
+			expect(store.get(cwd.toUpperCase())).toBe(true);
+			expect(store.get(cwd.toLowerCase())).toBe(true);
+			// One entry for the folder: deciding again in other letter case replaces it.
+			store.set(cwd.toUpperCase(), false);
+			expect(store.get(cwd)).toBe(false);
+			store.set(cwd.toLowerCase(), null);
+			expect(store.get(cwd)).toBeNull();
+		},
+	);
+
 	it("detects trust-requiring project resources", () => {
 		const originalHome = process.env.HOME;
 		process.env.HOME = tempDir;

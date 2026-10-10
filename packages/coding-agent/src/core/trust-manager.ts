@@ -42,12 +42,24 @@ function normalizeCwd(cwd: string): string {
 	return canonicalizePath(resolvePath(cwd));
 }
 
+/**
+ * The keys of `data` that are the path `key`: on Windows, whose paths do not depend on letter case, every key that differs
+ * from it only in case (a shell may give the same folder as c:\work or C:\Work, and the trust given to one is the other's).
+ */
+function trustKeysFor(data: TrustFile, key: string): string[] {
+	if (process.platform !== "win32") return key in data ? [key] : [];
+	const lower = key.toLowerCase();
+	return Object.keys(data).filter((candidate) => candidate.toLowerCase() === lower);
+}
+
 function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustStoreEntry | null {
 	let currentDir = normalizeCwd(cwd);
 	while (true) {
-		const value = data[currentDir];
-		if (value === true || value === false) {
-			return { path: currentDir, decision: value };
+		for (const key of trustKeysFor(data, currentDir)) {
+			const value = data[key];
+			if (value === true || value === false) {
+				return { path: key, decision: value };
+			}
 		}
 
 		const parentDir = dirname(currentDir);
@@ -234,9 +246,11 @@ export class ProjectTrustStore {
 			const data = readTrustFile(this.trustPath);
 			for (const { path, decision } of decisions) {
 				const key = normalizeCwd(path);
-				if (decision === null) {
-					delete data[key];
-				} else {
+				// (On Windows the same folder spelled with other letter case is replaced, not kept beside it.)
+				for (const existing of trustKeysFor(data, key)) {
+					delete data[existing];
+				}
+				if (decision !== null) {
 					data[key] = decision;
 				}
 			}
