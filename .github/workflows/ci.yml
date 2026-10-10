@@ -9,6 +9,9 @@ name: ci
 on:
   push:
     branches: [pi-bolt]
+    # Documentation and benchmark data build nothing. (A release commit changes VERSION too, so it is built; pull requests
+    # always are, as their checks are required.)
+    paths-ignore: ["**.md", "docs/**", "bench/results/**", "site/**"]
   pull_request:
     branches: [pi-bolt]
   workflow_dispatch:
@@ -18,7 +21,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A pull request's newer push replaces its build; every build of pi-bolt runs to the end (the badge and tag read them).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:

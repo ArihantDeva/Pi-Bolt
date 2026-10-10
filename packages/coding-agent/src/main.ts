@@ -7,7 +7,7 @@
 
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
-import { setCapabilityOverrides } from "@earendil-works/pi-tui";
+import { setCapabilityOverrides, ttiTrace } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {
@@ -573,6 +573,7 @@ export interface MainOptions {
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	ttiTrace("main.entered");
 	resetTimings();
 	// Pi-Bolt reports to Herdr itself (extensions/herdr); keep pi-herdr's report of the same pane out of its way.
 	if (PIBOLT) quietOtherHerdrReporters();
@@ -632,6 +633,7 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	time("parseArgs");
+	ttiTrace("args.parsed");
 
 	if (parsed.version) {
 		console.log(
@@ -676,6 +678,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
 	const startupSettingsDiagnostics = collectSettingsDiagnostics(startupSettingsManager);
+	ttiTrace("settings.loaded");
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
 	// Runs before any runtime services are created so the chosen settings apply everywhere.
@@ -721,11 +724,23 @@ export async function main(args: string[], options?: MainOptions) {
 		sessionManager.appendSessionInfo(name);
 	}
 	time("createSessionManager");
+	ttiTrace("session.ready");
 
 	const trustStore = new ProjectTrustStore(agentDir);
 	const sessionCwd = sessionManager.getCwd();
+	// The session's directory is checked once at startup, here or for the initial runtime, whichever asks first: the check walks
+	// every ancestor directory, and both ask about the same one a moment apart. Later runtimes (a reload, another session) check
+	// again.
+	let sessionCwdHasTrustRequiringResources: boolean | undefined;
+	const hasTrustRequiringResourcesAtStartup = (dir: string): boolean => {
+		if (dir !== sessionCwd) return hasTrustRequiringProjectResources(dir);
+		if (sessionCwdHasTrustRequiringResources === undefined) {
+			sessionCwdHasTrustRequiringResources = hasTrustRequiringProjectResources(dir);
+		}
+		return sessionCwdHasTrustRequiringResources;
+	};
 	const autoTrustOnReloadCwd =
-		parsed.projectTrustOverride === undefined && !hasTrustRequiringProjectResources(sessionCwd)
+		parsed.projectTrustOverride === undefined && !hasTrustRequiringResourcesAtStartup(sessionCwd)
 			? sessionCwd
 			: undefined;
 	const trustPromptMode: AppMode = parsed.help || parsed.listModels !== undefined ? "print" : appMode;
@@ -745,7 +760,9 @@ export async function main(args: string[], options?: MainOptions) {
 		const isInitialRuntime = sessionStartEvent === undefined;
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
-		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
+		const hasTrustRequiringResources = isInitialRuntime
+			? hasTrustRequiringResourcesAtStartup(cwd)
+			: hasTrustRequiringProjectResources(cwd);
 		const shouldResolveProjectTrust =
 			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustRequiringResources;
 		const projectTrusted = shouldResolveProjectTrust
@@ -856,6 +873,7 @@ export async function main(args: string[], options?: MainOptions) {
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
 		});
+		ttiTrace("session.created");
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
 			created.session.setThinkingLevel(created.session.thinkingLevel);
@@ -912,6 +930,7 @@ export async function main(args: string[], options?: MainOptions) {
 	setThemeJsonValidator(validateThemeJson);
 	initTheme(settingsManager.getTheme(), appMode === "interactive");
 	time("initTheme");
+	ttiTrace("theme.ready");
 
 	// Show deprecation warnings in interactive mode
 	if (appMode === "interactive" && deprecationWarnings.length > 0) {
@@ -969,6 +988,7 @@ export async function main(args: string[], options?: MainOptions) {
 			tuiMode: parsed.tuiMode,
 			initialThemeSetting: parsed.useTheme,
 		});
+		ttiTrace("interactive.created");
 		if (startupBenchmark) {
 			await interactiveMode.init();
 			time("interactiveMode.init");

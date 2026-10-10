@@ -16,6 +16,8 @@ each table.
 - [0.7.3 against 0.7.2](#073-against-072)
 - [Results](#results)
 - [macOS on Apple silicon](#macos-on-apple-silicon)
+- [Windows x64](#windows-x64)
+- [Against PiG and oh-my-pi](#against-pig-and-oh-my-pi)
 - [With a real model](#with-a-real-model)
 - [Setup and method](#setup-and-method)
 - [In a real terminal (tmux)](#in-a-real-terminal-tmux)
@@ -151,6 +153,74 @@ release builds, launcher included. The helper adds 0.3 ms to `pi -p` (1%; nothin
 each program Pi starts takes 1.4 ms more to start and be waited for (`spawnSync` of `/usr/bin/true`: 2.1 ms against 0.7). None of
 the scenarios above starts a program. The programs' CPU time is not counted in Pi's on macOS (`wait4` counts a process's
 children; the programs are the helper's).
+
+## Windows x64
+
+The full suite (`bench\run-suite.ps1`) on Windows 11 25H2 (26200) on an Intel Core i5-1335U laptop (16 GB, on AC, best
+performance, Defender real-time protection on): Pi-Bolt 0.8.0 from `1d373d18b` (Pi 1.1.0; the runtime `8bcf03bc0` with ThinLTO and
+Control Flow Guard, Pi compiled ahead of time for this CPU, JIT off, the prebuilt heap laid out by the Pi 1.1.0 profile), Pi
+1.1.0 as released on stock Bun 1.4.2, and Pi 1.1.0's bundle on Node 22.23.3 and Node 24.21.0. Medians of 11 runs (2 warm-up),
+4 long sessions of 75 prompts, 5 streaming rounds; streaming runs in a ConPTY rather than tmux (`bench\conpty_check.py`: ConPTY
+passes frames on at about 16 ms, which is the floor of the frame times). Raw data and charts:
+[`bench/results/2026-10-10-windows-0.8.0`](../bench/results/2026-10-10-windows-0.8.0).
+
+| | Pi-Bolt 0.8.0 | Pi 1.1.0 on Bun 1.4.2 | Node 22 | Node 24 |
+|---|---:|---:|---:|---:|
+| Launch to interactive (TUI) | **92 ms** | 177 ms | 345 ms | 311 ms |
+| `pi --version` | **35 ms** | 98 ms | 242 ms | 219 ms |
+| `pi -p`: one prompt, 4 tool calls | **113 ms** | 203 ms | 438 ms | 383 ms |
+| Time per prompt, 4.2M-token session | **400 ms** | 506 ms | 816 ms | 794 ms |
+| CPU, interactive session (5 prompts) | **291 ms** | 805 ms | 1,206 ms | 1,125 ms |
+| CPU, `pi -p` | **92 ms** | 329 ms | 582 ms | 544 ms |
+| CPU, `pi --version` | **17 ms** | 133 ms | 277 ms | 268 ms |
+| CPU per prompt, 4.2M-token session | **166 ms** | 298 ms | 684 ms | 634 ms |
+| Peak working set, interactive session | **95 MB** | 164 MB | 165 MB | 178 MB |
+| Peak private working set, interactive session | **56 MB** | 126 MB | 132 MB | 138 MB |
+| Peak private bytes (commit), interactive session | **113 MB** | 345 MB | 176 MB | 197 MB |
+| Private working set, TUI streaming in a ConPTY | **32 MB** | 97 MB | 105 MB | 60 MB |
+| Private working set, end of 4.2M-token session | **159 MB** | 248 MB | 391 MB | 413 MB |
+| Private bytes, end of 4.2M-token session | **245 MB** | 465 MB | 437 MB | 467 MB |
+| CPU, streaming replies (ConPTY) | **840 ms** | 982 ms | 1,468 ms | 1,285 ms |
+| Frame time p99, streaming replies | **17 ms** | 17 ms | 20 ms | 19 ms |
+| Frame time p99 / longest stall, 50 KB file written | **18 / 107 ms** | 59 / 3,612 ms | 75 / 2,727 ms | 64 / 858 ms |
+| Frame time p99 / longest stall, 200 KB file written | **18 / 63 ms** | 154 / 43,934 ms | 302 / 57,962 ms | 71 / 46,595 ms |
+| GC pause p99, 20,000-char answer / longest GC pause | 2.9 / 6.3 ms | 4.3 / 11 ms | **1.6 / 3.6 ms** | 1.6 / 8.4 ms |
+
+Pi-Bolt is the fastest and uses the least memory in every row but the garbage collector's pauses, where Node is shorter (its
+p99 by about a millisecond, its longest pause by 2.7 ms).
+
+These come from memory committed on demand, the prebuilt heap laid out in first-use order, and the runtime's code laid out in
+the order it runs ([WINDOWS.md](WINDOWS.md)). Each 50 KB and 200 KB step ends with a `bash` tool call. The only `bash.exe` on
+this machine is the WSL launcher with no distribution installed, which takes about 0.1 s to start and fail. That is Pi-Bolt's
+longest stall of the 50 KB step, and every build pays it.
+
+Plugins: the example plugin's loop takes 41 ms compiled into the executable. Loaded at run time it takes 756 ms with the JIT off,
+and 32 ms in the build with the JIT on, as on Bun (32 ms).
+
+**What an executable costs Windows when it is not running.** Windows charges an image's uninitialized sections to the system's
+commit for as long as it keeps the image cached, after the process has exited (process memory does not show it;
+[WINDOWS.md](WINDOWS.md#what-was-measured)). `bench/image_commit.py`, medians of 5: Pi on Bun 1 MB; Pi-Bolt 33 MB (the 32 MB of the
+region that has to be in the image); before that was fixed, 1,029 MB.
+
+
+## Against PiG and oh-my-pi
+
+Pi-Bolt 0.7.3 against two other fast builds of Pi, on the same machines with the same tools: [PiG](https://github.com/MichaelKinsy/PiG)
+0.4.1 (`@pi-in-go/pig`), the Go port of Pi, based on Pi 1.0.3, and [oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7
+(`omp`), a fork of Pi that runs on Bun. Each run interleaves Pi-Bolt, Pi 1.1.0 on stock Bun and on Node with them; the tables in
+the [README](../README.md#against-pig-and-oh-my-pi) take the medians of 21 runs (`bench/benchmark.py`), the mean of two rounds
+for long answers and large files, and the medians of the long sessions (75 prompts) and the tmux rounds. PiG reads its own
+names for Pi's settings (`PIG_HOME`, `PIG_CODING_AGENT_DIR`, `PIG_OFFLINE`) and oh-my-pi reads `models.yml`; `bench/harness.py`
+gives both the same local fake model as the others.
+
+oh-my-pi compacts a long conversation on its own: by prompt 25 it sends 0.5 MB where the others send 5.6 MB, and it stops
+answering the scripted session after that, so it is left out of the long session. On Linux, PiG and oh-my-pi were measured in two
+runs, each with Pi-Bolt and Pi on Bun; Pi-Bolt's figures agree between them within the usual variation (its memory at the end of
+the long session varied most, 89 to 240 MB over seven sessions; the table takes the PiG run's, 142 MB).
+
+Raw data: [`bench/results/2026-10-10-linux-vs-pig-0.4.1`](../bench/results/2026-10-10-linux-vs-pig-0.4.1),
+[`bench/results/2026-10-10-linux-vs-omp-18.8.7`](../bench/results/2026-10-10-linux-vs-omp-18.8.7) and
+[`bench/results/2026-10-10-darwin-arm64-0.7.3-vs-pig-omp`](../bench/results/2026-10-10-darwin-arm64-0.7.3-vs-pig-omp).
 
 ## With a real model
 

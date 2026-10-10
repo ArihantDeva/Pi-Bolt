@@ -7,20 +7,23 @@
   <a href="https://github.com/opensec-git/Pi-Bolt/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/opensec-git/Pi-Bolt/ci.yml?branch=pi-bolt&event=push&style=flat-square&label=ci" /></a>
   <a href="https://github.com/opensec-git/Pi-Bolt/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/opensec-git/Pi-Bolt?style=flat-square&color=2a78d6" /></a>
   <a href="https://www.npmjs.com/package/pi-bolt"><img alt="npm" src="https://img.shields.io/npm/v/pi-bolt?style=flat-square&logo=npm&logoColor=white&color=2a78d6" /></a>
-  <a href="https://github.com/earendil-works/pi/releases/tag/v1.1.0"><img alt="Pi 1.1.0" src="https://img.shields.io/badge/pi-1.1.0-f0b03a?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/pi-bolt"><img alt="npm downloads" src="https://img.shields.io/npm/dm/pi-bolt?style=flat-square&color=2a78d6" /></a>
+  <a href="https://github.com/opensec-git/Pi-Bolt/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/opensec-git/Pi-Bolt?style=flat-square&color=f0b03a" /></a>
+  <a href="sources.json"><img alt="The Pi release Pi-Bolt is built on" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fopensec-git%2FPi-Bolt%2Fpi-bolt%2Fsources.json&query=%24.pi.tag&label=pi&color=f0b03a&style=flat-square" /></a>
   <a href="#requirements"><img alt="Linux x86-64" src="https://img.shields.io/badge/linux-x86--64-444?style=flat-square&logo=linux&logoColor=white" /></a>
   <a href="#requirements"><img alt="macOS Apple silicon" src="https://img.shields.io/badge/macOS-Apple%20silicon-444?style=flat-square&logo=apple&logoColor=white" /></a>
+  <a href="#requirements"><img alt="Windows x64" src="https://img.shields.io/badge/windows-x64-444?style=flat-square&logo=windows&logoColor=white" /></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1baf7a?style=flat-square" /></a>
 </p>
 
 <h1 align="center">Pi-Bolt</h1>
 
 <p align="center"><b>The <a href="https://github.com/earendil-works/pi">Pi</a> coding agent, compiled ahead of time to native code.</b><br>
-One executable for Linux x86-64 and macOS on Apple silicon. No JIT, no Node.js or Bun required.</p>
+One executable for Linux x86-64, macOS on Apple silicon and Windows x64. No JIT, no Node.js or Bun required.</p>
 
 Pi-Bolt is the Pi you already use, with the same commands, sessions, settings, providers and extensions. Every function is
-compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. It starts three times
-sooner than Pi on Bun, uses about a third of its CPU over a session, and handles long answers and large files ten to forty
+compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. It starts two to three
+times sooner than Pi on Bun, uses about a third of its CPU over a session, and handles long answers and large files ten to forty
 times more cheaply.
 
 <picture>
@@ -40,7 +43,14 @@ lower is better. See [Benchmarks](#benchmarks).</sub>
 curl -fsSL https://pi-bolt.opensec.in/install.sh | sh
 ```
 
-or `npm install -g pi-bolt`. Then run `pi-bolt` in your project. Your Pi configuration in `~/.pi/agent` is used as is; new to
+On Windows, in PowerShell:
+
+```powershell
+powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"
+```
+
+or `npm install -g --allow-scripts=pi-bolt pi-bolt` (the flag lets npm run the script that puts the Windows executable in
+place). Then run `pi-bolt` in your project. Your Pi configuration in `~/.pi/agent` is used as is; new to
 Pi? Run `/login` to connect a provider. `pi-bolt update` installs the latest release.
 
 The installer verifies the release signature and offers two optional extensions by OpenSec:
@@ -50,17 +60,32 @@ The installer verifies the release signature and offers two optional extensions 
 | [`opensec-pi-subagents`](https://www.npmjs.com/package/opensec-pi-subagents) | Specialized agents in separate sessions, parallel workflows and scheduled jobs |
 | [`opensec-pi-todo`](https://www.npmjs.com/package/opensec-pi-todo) | A todo list for the model, shown as a live panel above the editor |
 
+### JIT build, for heavy plugins
+
+The default build has no JIT: Pi's own code is compiled machine code, and an extension loaded at run time is interpreted. Light
+extensions don't notice. For extensions that do heavy work (search, parsing) or use `bun:ffi` (such as pi-fff), install the JIT
+build. Pi itself stays compiled, so it is within about 5% of the default.
+
+```bash
+curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=arm64-jit sh   # macOS
+curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=x64-jit sh     # Linux
+```
+
+On Windows, run `$env:PIBOLT_VARIANT = "x64-jit"` before the PowerShell command. With npm, keep `PIBOLT_VARIANT` set in your
+shell profile; it is read on every run. `pi-bolt --version` then ends in `JIT on`, and `pi-bolt update` keeps the build you chose.
+
 <details>
 <summary>Manual download</summary>
 
 Download a build from the [latest release](https://github.com/opensec-git/Pi-Bolt/releases/latest), check it against
-`SHA256SUMS`, unpack it and run `./pi`.
+`SHA256SUMS`, unpack it and run `./pi` (on Windows, `pi-bolt.exe`).
 
 | Download | For |
 |---|---|
 | `pi-bolt-linux-x64.tar.xz` | **Linux**, CPUs with AVX2 (Intel Haswell, AMD Zen and later) |
 | `pi-bolt-linux-x64-baseline.tar.xz` | Linux, any x86-64 CPU |
 | `pi-bolt-darwin-arm64.tar.xz` | **macOS**, Apple silicon |
+| `pi-bolt-win32-x64.zip` | **Windows** x64; compiled code on CPUs with AVX2, bytecode on others |
 
 `-jit` builds are for heavy use of plugins loaded at run time; the runtime archive is for [compiling plugins in](docs/PLUGINS.md).
 
@@ -70,7 +95,11 @@ Download a build from the [latest release](https://github.com/opensec-git/Pi-Bol
 
 - **Linux** x86-64 with glibc 2.17 or later (Ubuntu 20.04+, Debian 11+, RHEL/Rocky 8+, Amazon Linux 2). musl is not supported.
 - **macOS** 13 or later on Apple silicon. Install with the installer or npm ([Troubleshooting](docs/TROUBLESHOOTING.md#macos)).
-- Windows and Linux on ARM64 are not available yet.
+- **Windows** 10 (1809) or later, or Windows 11, on x64. Install with the installer or npm ([docs/WINDOWS.md](docs/WINDOWS.md)).
+- Linux and Windows on ARM64 are not available yet.
+
+Pi-Bolt installs next to Pi as `pi-bolt`, so both can stay installed. Running the installer again updates, reinstalls or
+uninstalls it.
 
 ## Benchmarks
 
@@ -101,6 +130,54 @@ across the builds; lower is better.
 | CPU, one prompt (`pi -p`) | **58 ms** | 59 ms | 236 ms | 525 ms |
 | Ready to type | **46 ms** | 43 ms | 101 ms | 347 ms |
 
+**Windows x64** (Intel Core i5-1335U laptop; Pi-Bolt 0.8.0, Pi 1.1.0 as released)
+
+| Benchmark | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 24 |
+|---|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.7 s** | 38.1 s | 26.6 s |
+| CPU, streaming a 60,000-character answer | **6.5 s** | 41.1 s | 32.6 s |
+| Memory after a 4.2M-token session | **159 MB** | 248 MB | 413 MB |
+| Memory of a session in a terminal (ConPTY) | **32 MB** | 97 MB | 60 MB |
+| CPU, interactive session (5 prompts) | **291 ms** | 805 ms | 1,125 ms |
+| CPU, one prompt (`pi -p`) | **92 ms** | 329 ms | 544 ms |
+| Ready to type | **92 ms** | 177 ms | 311 ms |
+
+### Against PiG and oh-my-pi
+
+Pi-Bolt 0.7.3 against two other fast Pi builds: [PiG](https://github.com/MichaelKinsy/PiG) 0.4.1, the Go port of Pi
+(based on Pi 1.0.3), and [oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7, a fork of Pi on Bun. Same machines and
+method as above; 0.8.0 measures within a few percent of 0.7.3.
+
+**Linux x86-64** (AMD EPYC 7B13)
+
+| Benchmark | Pi-Bolt 0.7.3 | PiG 0.4.1 | oh-my-pi 18.8.7 |
+|---|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.8 s** | 101 s | 3.8 s |
+| CPU, streaming a 60,000-character answer | 4.1 s | 24.6 s | **3.3 s** |
+| Memory after a 4.2M-token session | **142 MB** | 344 MB | – |
+| Memory of a session in tmux | **27 MB** | 40 MB | 329 MB |
+| CPU, interactive session (5 prompts) | **324 ms** | 3,155 ms | 3,397 ms |
+| CPU, one prompt (`pi -p`) | **87 ms** | 306 ms | 1,823 ms |
+| Peak memory, one prompt (`pi -p`) | 126 MB | **58 MB** | 475 MB |
+| Ready to type | 49 ms | **43 ms** | 1,088 ms |
+
+**macOS** (Apple M5)
+
+| Benchmark | Pi-Bolt 0.7.3 | PiG 0.4.1 | oh-my-pi 18.8.7 |
+|---|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.5 s** | 67 s | 2.5 s |
+| CPU, streaming a 60,000-character answer | 5.2 s | 17.0 s | **5.1 s** |
+| Memory after a 4.2M-token session | **46 MB** | 329 MB | – |
+| Memory of a session in tmux | **25 MB** | 48 MB | 317 MB |
+| CPU, interactive session (5 prompts) | **95 ms** | 1,355 ms | 1,383 ms |
+| CPU, one prompt (`pi -p`) | **31 ms** | 132 ms | 592 ms |
+| Peak memory, one prompt (`pi -p`) | 75 MB | **49 MB** | 421 MB |
+| Ready to type | 25 ms | **20 ms** | 564 ms |
+
+PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with as little CPU or a
+little less. Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files
+fastest. oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–).
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-long-dark.svg">
   <img alt="Long answers and large files, Pi-Bolt 0.7.3 vs Pi-Bolt 0.7.0 vs Bun 1.4.2 vs Node 24: CPU streaming a 20,000-character answer 1.1 / 1.2 / 10.7 / 8.0 s; a 60,000-character answer 4.3 / 4.5 / 44.4 / 42.3 s; share of a core while streaming 9 / 9 / 88 / 84%; writing a 200 KB file through a tool call 0.8 / 0.9 / 30.0 / 39.4 s" src="docs/images/bench-long-light.svg">
@@ -126,7 +203,8 @@ across the builds; lower is better.
 
 </details>
 
-Method, raw data and the macOS charts: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Method, raw data and the macOS and Windows charts: [docs/BENCHMARKS.md](docs/BENCHMARKS.md). (Memory on Windows is the private
+working set.)
 
 ## Plugins
 
@@ -168,8 +246,8 @@ agents it supports need only their own CLIs). Pi-Bolt turns off pi-herdr's own r
 4. **A training profile** orders the code so that startup touches as few pages as possible.
 
 The compiler builds on [oven-sh/WebKit#743](https://github.com/oven-sh/WebKit/pull/743). Pi-Bolt ports it to x86-64 and macOS
-and adds its own code generation and runtime work ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)). `packages/` is Pi
-[v1.1.0](https://github.com/earendil-works/pi/releases/tag/v1.1.0) with Pi-Bolt's changes on top; the engine changes are in
+and adds its own code generation and runtime work ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)). `packages/` is the Pi release named
+in [`sources.json`](sources.json) with Pi-Bolt's changes on top; the engine changes are in
 `patches/`.
 
 ## Documentation
@@ -194,6 +272,15 @@ tests/aot/run.sh                    # engine tests
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately, as described in [SECURITY.md](SECURITY.md).
+
+## Star history
+
+<a href="https://www.star-history.com/#opensec-git/pi-bolt&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=opensec-git/pi-bolt&type=Date&theme=dark">
+    <img alt="Star history of Pi-Bolt" src="https://api.star-history.com/svg?repos=opensec-git/pi-bolt&type=Date" width="600">
+  </picture>
+</a>
 
 ## License
 
