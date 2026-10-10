@@ -272,7 +272,7 @@ jobs:
       - name: Build and package
         run: |
           # Each build is made twice, and released only if its prebuilt heap is the same both times (-VerifyDeterminism). That
-          # check sometimes fails on one record of the heap (docs/RESUME.md), which package-release.ps1 says with exit code 3:
+          # check sometimes fails on one record of the heap (docs/WINDOWS.md, "The release's determinism check"), which package-release.ps1 says with exit code 3:
           # only that is tried again, up to three times. Any other failure ends the job.
           for ($try = 1; $try -le 3; $try++) {
             & scripts\package-release.ps1

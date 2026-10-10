@@ -99,6 +99,18 @@ that; it has none). The plan: build twice with `BUN_JSC_numberOfAOTCompilerThrea
 threads); make each round read a snapshot and merge its results in unit order; make the rule monotone; sort the worklist; seal
 `ClassesOfProgram`; then require identical output from 1, 2 and the default number of threads.
 
+*The release's determinism check.* `-VerifyDeterminism` fails in about one build of three on one stretch of the data arena
+(`.pbheap` part 0, around +0x19087ec): 16-byte records `[u32 key][u32 x][u32 7][u32 value]` whose values (all keys but 1) are
+larger by exactly 0x14 in one of the two builds. That is an index into something whose order depends on the run (likely the
+compiler's slot order, keyed by addresses), consistent within a build, not across builds. `package-release.ps1` says so with
+exit code 3, and the release workflow builds again for that failure only: a release ships only a build whose two copies agreed.
+What the object is (`describeBuiltAddress` of that offset, with `BUN_STATIC_HEAP_VERBOSE=1`) and making its order stable is
+open.
+
+*The collector's timer.* Windows keeps a collection every second while Pi waits and mimalloc's default purge delay. macOS's
+choices (a 12 MB first heap budget, a collection every 5 seconds) were measured here: 10 MB less at the TUI's peak, but twice
+the collections and 40% more CPU while a long answer streams.
+
 ## What was measured
 
 A test executable with a 128 MB section appended after linking, with 48,526 pointers spread like Pi's heap (35% of its 16 KB

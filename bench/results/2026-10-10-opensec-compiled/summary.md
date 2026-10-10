@@ -1,6 +1,6 @@
 # OpenSec's extensions compiled in: what they cost (2026-10-10)
 
-Windows 11, the machine in `../2026-10-10-windows/environment.txt`. Both builds use runtime `Bun 1.4.3-canary.1+1ad2e13f5`, JIT
+Windows 11, the machine in `../2026-10-10-windows-0.8.0/environment.txt`. Both builds use runtime `Bun 1.4.3-canary.1+1ad2e13f5`, JIT
 off, and the model is bench's local fake model on 127.0.0.1.
 
 - **without**: `scripts\build-pi.ps1` (the build that `out\pi-bolt.old-20261010125512` keeps).

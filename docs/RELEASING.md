@@ -166,7 +166,7 @@ its compiled code from its own file (and the `-jit` build `com.apple.security.cs
 `release` builds them on GitHub's Windows runners, on the Windows runtime: `scripts\package-release.ps1` makes
 `pi-bolt-win32-x64.zip` (JIT off) and `pi-bolt-win32-x64-jit.zip` (JIT on, for extensions that do heavy JavaScript work at run
 time: [PLUGINS.md](PLUGINS.md)). Each is built twice to check that its prebuilt heap does not depend on where the runtime was
-loaded (`-VerifyDeterminism`); that check sometimes fails on one record of the heap (docs/RESUME.md), and `release` builds
+loaded (`-VerifyDeterminism`); that check sometimes fails on one record of the heap ([WINDOWS.md](WINDOWS.md#the-design)), and `release` builds
 again, up to three times, so that only a build whose two copies agreed is released. Each archive is then tested as unpacked:
 `tests\pi\run.ps1`, `scripts\windows-selftest.ps1`, and `tests\runtime\run.ps1`.
 
