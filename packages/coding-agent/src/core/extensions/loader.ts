@@ -77,7 +77,9 @@ function withoutJitOnlyPackages(modules: Record<string, unknown>): Record<string
 		Object.defineProperty(result, name, {
 			enumerable: false,
 			get() {
-				throw new Error(`${name} needs the JIT (bun:ffi), which this build of Pi-Bolt does not have: install the -jit build`);
+				throw new Error(
+					`${name} needs the JIT (bun:ffi), which this build of Pi-Bolt does not have: install the -jit build`,
+				);
 			},
 		});
 	}
