@@ -120,6 +120,16 @@ if ($r.Code -eq 0 -and $r.Text -match '(?m)^workdir-programs: planted=ENOENT who
 	$script:status = 1
 }
 
+# A repository's .pi/settings.json is not used before the project is trusted: its sessionDir (a \\host\share, say, which Windows
+# would connect to at once) is neither created nor written to.
+$repo = Join-Path $home_ 'untrusted-repo'
+$elsewhere = Join-Path $home_ 'sessions-elsewhere'
+New-Item -ItemType Directory -Force -Path (Join-Path $repo '.pi') | Out-Null
+[IO.File]::WriteAllText((Join-Path $repo '.pi\settings.json'), (@{ sessionDir = $elsewhere } | ConvertTo-Json))
+$r = Invoke-Pi @('--model', 'none/none', '-p', 'hi') @{} $Pi $repo
+if (-not (Test-Path -LiteralPath $elsewhere)) { Write-Host 'PASS an untrusted project''s sessionDir is not used' }
+else { Write-Host "FAIL an untrusted project's sessionDir was created ($elsewhere)"; $script:status = 1 }
+
 # Bedrock, the proxy agents and the OAuth flows are loaded when they are first used, with the builtin modules they import. A request
 # that can reach nothing has to fail as a connection that is refused, not as code that is missing or broken.
 function Test-Bedrock([string]$name, [hashtable]$vars) {

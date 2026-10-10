@@ -10,3 +10,9 @@ restoreSandboxEnv();
 if (process.platform === "win32" && !process.env.NoDefaultCurrentDirectoryInExePath) {
 	process.env.NoDefaultCurrentDirectoryInExePath = "1";
 }
+
+// A Pi-Bolt executable starts its runtime with --smol (scripts/build-pi.*: --compile-exec-argv), which is in effect before any
+// of this runs. It is not an argument of Pi's, nor one a program started as `process.execPath ...process.execArgv` (fork(), an
+// extension starting Pi again) accepts: "Unknown option: --smol". Left out of execArgv, as a program run by Bun sees it.
+const smol = process.execArgv.indexOf("--smol");
+if (smol !== -1) process.execArgv.splice(smol, 1);
