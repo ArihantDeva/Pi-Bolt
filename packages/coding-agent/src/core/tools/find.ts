@@ -40,6 +40,61 @@ export type FindToolInput = Static<typeof findSchema>;
 
 const DEFAULT_LIMIT = 1000;
 
+/**
+ * A glob of fd's (`**`, `*`, `?`, `[...]`, `{a,b}`, `/`) as a regular expression over a whole Windows path: `/` is either
+ * separator, `**` any number of folders, `*` and `?` stay within one name. For fd's --full-path, where its glob mode cannot
+ * match Windows paths.
+ */
+export function globToWindowsPathRegex(glob: string): string {
+	const sep = String.raw`[\\/]`;
+	const notSep = String.raw`[^\\/]`;
+	let out = "";
+	let braces = 0;
+	for (let i = 0; i < glob.length; i++) {
+		const c = glob[i];
+		if (c === "*" && glob[i + 1] === "*") {
+			const atStart = i === 0 || glob[i - 1] === "/";
+			if (atStart && glob[i + 2] === "/") {
+				out += `(?:.*${sep})?`; // "**/": no folder or any number of them
+				i += 2;
+			} else if (atStart && i + 2 === glob.length) {
+				out += ".*"; // a trailing "**": everything below
+				i += 1;
+			} else {
+				out += ".*";
+				i += 1;
+			}
+		} else if (c === "*") {
+			out += `${notSep}*`;
+		} else if (c === "?") {
+			out += notSep;
+		} else if (c === "/") {
+			out += sep;
+		} else if (c === "[") {
+			const end = glob.indexOf("]", i + 2);
+			if (end === -1) {
+				out += "\\[";
+			} else {
+				let body = glob.slice(i + 1, end);
+				if (body.startsWith("!")) body = `^${body.slice(1)}`;
+				out += `[${body.replaceAll("\\", "\\\\")}]`;
+				i = end;
+			}
+		} else if (c === "{") {
+			out += "(?:";
+			braces++;
+		} else if (c === "}" && braces > 0) {
+			out += ")";
+			braces--;
+		} else if (c === "," && braces > 0) {
+			out += "|";
+		} else {
+			out += c.replace(/[.+^$()|\\{}]/g, "\\$&");
+		}
+	}
+	return `^${out}$`;
+}
+
 export interface FindToolDetails {
 	truncation?: TruncationResult;
 	resultLimitReached?: number;
@@ -207,9 +262,13 @@ export function createFindToolDefinition(
 							if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
 								effectivePattern = `**/${pattern}`;
 							}
-							// fd matches full paths using native separators on Windows.
-							if (process.platform === "win32")
-								effectivePattern = effectivePattern.replaceAll("/", String.raw`[/\\]`);
+							// Windows: fd matches a full path with its backslashes, and its glob takes neither `/` nor `\` for them
+							// (`[/\\]` in their place stops `**` spanning folders, and lets `*` cross them). The same pattern as a
+							// regular expression, with `[\\/]` for a separator.
+							if (process.platform === "win32") {
+								args.splice(args.indexOf("--glob"), 1);
+								effectivePattern = globToWindowsPathRegex(effectivePattern);
+							}
 						}
 						args.push("--", effectivePattern, searchPath);
 
