@@ -18,7 +18,7 @@ your machine will differ, the ratios less so.)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/opensec-git/Pi-Bolt/HEAD/docs/images/bench-hero-dark.svg">
-  <img alt="Pi-Bolt 0.7.3 vs Pi-Bolt 0.7.0 vs Bun 1.4.2 vs Node 24: ready to type 47 / 48 / 143 / 334 ms; CPU per session 309 / 328 / 913 / 1,312 ms; CPU while streaming 332 / 362 / 646 / 564 ms; memory after a long session 139 / 198 / 296 / 537 MB" src="https://raw.githubusercontent.com/opensec-git/Pi-Bolt/HEAD/docs/images/bench-hero-light.svg">
+  <img alt="Pi-Bolt 0.8.0 vs Pi on Bun 1.4.2 vs Pi on Node 24: ready to type 45 / 128 / 316 ms; CPU per session 294 / 871 / 1,241 ms; CPU while streaming 348 / 572 / 528 ms; memory after a long session 187 / 275 / 576 MB" src="https://raw.githubusercontent.com/opensec-git/Pi-Bolt/HEAD/docs/images/bench-hero-light.svg">
 </picture>
 
 ## Install
