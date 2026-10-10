@@ -263,7 +263,7 @@ test("Windows: a build from npm that does not match the checksum is not used: Gi
 	const { promise, log } = run(pkgDir, { fetch, key: signer.key });
 	assert.deepEqual(await promise, { variant: "x64", from: "GitHub", signed: true });
 	assert.ok(!existsSync(join(pkgDir, "bin", "evil.dll")));
-	assert.match(log.join("\n"), /the download from npm failed; downloading from GitHub instead/);
+	assert.match(log.join("\n"), /not available from npm; downloading from GitHub instead/);
 });
 
 test("Windows: PIBOLT_SOURCE=npm refuses when npm does not have the build", async (t) => {

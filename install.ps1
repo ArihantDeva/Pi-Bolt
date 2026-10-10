@@ -421,7 +421,7 @@ function Install-PiBoltRelease($state) {
 			if (-not $from) {
 				if ($state.Source -eq 'npm') { Stop-PiBolt "npm does not have Pi-Bolt $($state.Version), or its download does not match the release's checksum" }
 				Clear-PiBoltProgress
-				Write-Host "  ${dim}the download from npm failed; downloading from GitHub instead$reset"
+				Write-Host "  ${dim}not available from npm; downloading from GitHub instead$reset"
 			}
 		} elseif ($state.Source -eq 'npm') {
 			Stop-PiBolt 'PIBOLT_SOURCE=npm needs the release from GitHub (no PIBOLT_DOWNLOAD_BASE)'

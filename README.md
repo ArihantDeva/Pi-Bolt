@@ -49,7 +49,8 @@ On Windows, in PowerShell:
 powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"
 ```
 
-or `npm install -g pi-bolt`. Then run `pi-bolt` in your project. Your Pi configuration in `~/.pi/agent` is used as is; new to
+or `npm install -g --allow-scripts=pi-bolt pi-bolt` (the flag lets npm run the script that puts the Windows executable in
+place). Then run `pi-bolt` in your project. Your Pi configuration in `~/.pi/agent` is used as is; new to
 Pi? Run `/login` to connect a provider. `pi-bolt update` installs the latest release.
 
 The installer verifies the release signature and offers two optional extensions by OpenSec:

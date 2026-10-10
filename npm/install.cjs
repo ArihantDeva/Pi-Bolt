@@ -494,7 +494,7 @@ async function installWindows({
 			fs.rmSync(tgz, { force: true });
 			if (!from) {
 				if (source === "npm") fail(`npm does not have Pi-Bolt ${version}, or its download does not match the release's checksum. Nothing was installed.`);
-				log("pi-bolt: the download from npm failed; downloading from GitHub instead");
+				log("pi-bolt: not available from npm; downloading from GitHub instead");
 			}
 		}
 		if (!from) {

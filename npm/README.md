@@ -24,7 +24,7 @@ your machine will differ, the ratios less so.)
 ## Install
 
 ```bash
-npm install -g pi-bolt
+npm install -g --allow-scripts=pi-bolt pi-bolt
 ```
 
 With other package managers:
