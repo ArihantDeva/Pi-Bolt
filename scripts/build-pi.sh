@@ -77,6 +77,9 @@ stage_assets() {
 	local dir="$1" root
 	root="$(realpath "$PI_DIR")"
 	cp "$AGENT/package.json" "$AGENT/README.md" "$AGENT/CHANGELOG.md" "$dir/"
+	# Pi's documentation and example extensions: Pi points the model (its system prompt) and the user (the first run, /login) at
+	# them, next to the README.
+	cp -R "$AGENT/docs" "$AGENT/examples" "$dir/"
 	mkdir -p "$dir/theme" "$dir/assets" "$dir/export-html/vendor" "$dir/native/$PIBOLT_OS/prebuilds"
 	cp "$AGENT"/src/modes/interactive/theme/*.json "$dir/theme/"
 	cp "$AGENT"/src/modes/interactive/assets/* "$dir/assets/"
