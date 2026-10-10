@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
@@ -200,12 +201,84 @@ export function sanitizeBinaryOutput(str: string): string {
  */
 const trackedDetachedChildPids = new Set<number>();
 
+/**
+ * Windows, in a runtime with Bun's FFI (Pi-Bolt, Pi on Bun): a job object for each shell a tool starts, so that stopping the
+ * command (Escape, its timeout, Pi exiting) ends everything it started. `taskkill /T` alone walks the tree by parent process,
+ * and misses a process whose parent has exited (Git Bash's `sleep 25; echo x`, `cd web && npm run dev`: a dev server left
+ * holding its port), or one started while it walks. The job is only ended when the command is stopped; one that finishes
+ * leaves what it started in the background as before (no kill-on-close). Not available (Node, or a call that fails):
+ * taskkill only, as before.
+ */
+interface WindowsJobs {
+	attach(pid: number): unknown;
+	terminate(job: unknown): void;
+	close(job: unknown): void;
+}
+let windowsJobs: WindowsJobs | null | undefined;
+const windowsJobOfPid = new Map<number, unknown>();
+
+function getWindowsJobs(): WindowsJobs | null {
+	if (windowsJobs !== undefined) return windowsJobs;
+	windowsJobs = null;
+	if (process.platform !== "win32" || !("Bun" in globalThis)) return null;
+	try {
+		const { dlopen, FFIType } = createRequire(import.meta.url)("bun:ffi");
+		const { symbols: kernel32 } = dlopen("kernel32.dll", {
+			CreateJobObjectW: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
+			OpenProcess: { args: [FFIType.u32, FFIType.bool, FFIType.u32], returns: FFIType.ptr },
+			AssignProcessToJobObject: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.bool },
+			TerminateJobObject: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.bool },
+			CloseHandle: { args: [FFIType.ptr], returns: FFIType.bool },
+		});
+		const PROCESS_TERMINATE = 0x0001;
+		const PROCESS_SET_QUOTA = 0x0100;
+		windowsJobs = {
+			attach(pid) {
+				const job = kernel32.CreateJobObjectW(null, null);
+				if (!job) return undefined;
+				const processHandle = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid);
+				const assigned = processHandle ? kernel32.AssignProcessToJobObject(job, processHandle) : false;
+				if (processHandle) kernel32.CloseHandle(processHandle);
+				if (!assigned) {
+					kernel32.CloseHandle(job);
+					return undefined;
+				}
+				return job;
+			},
+			terminate(job) {
+				kernel32.TerminateJobObject(job, 1);
+			},
+			close(job) {
+				kernel32.CloseHandle(job);
+			},
+		};
+	} catch {
+		windowsJobs = null;
+	}
+	return windowsJobs;
+}
+
 export function trackDetachedChildPid(pid: number): void {
 	trackedDetachedChildPids.add(pid);
+	if (process.platform === "win32") {
+		try {
+			const job = getWindowsJobs()?.attach(pid);
+			if (job) windowsJobOfPid.set(pid, job);
+		} catch {
+			// No job: taskkill alone ends the tree.
+		}
+	}
 }
 
 export function untrackDetachedChildPid(pid: number): void {
 	trackedDetachedChildPids.delete(pid);
+	const job = windowsJobOfPid.get(pid);
+	if (job !== undefined) {
+		windowsJobOfPid.delete(pid);
+		try {
+			getWindowsJobs()?.close(job);
+		} catch {}
+	}
 }
 
 export function killTrackedDetachedChildren(): void {
@@ -220,6 +293,13 @@ export function killTrackedDetachedChildren(): void {
  */
 export function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
+		// Everything the tool's shell started, if it is in a job of its own (see getWindowsJobs); then taskkill, for what is not.
+		const job = windowsJobOfPid.get(pid);
+		if (job !== undefined) {
+			try {
+				getWindowsJobs()?.terminate(job);
+			} catch {}
+		}
 		// Use the trusted System32 executable so cleanup does not depend on PATH.
 		try {
 			const child = spawn(
