@@ -131,13 +131,44 @@ it the executable runs from bytecode, with one notice. The `-jit` build also nee
 which runs from either; `pi-spawn` starts Pi's programs (above). Link `pi` (as the installer does) rather than copy it alone: it
 starts the `pi-bin` beside its real path. `BUN_STATIC_HEAP_VERBOSE=1 pi --version` reports on `pi-bin`. Re-sign `pi-bin` (above); the launcher needs nothing.
 
+## Windows
+
+**`pi-bolt` is not found after installing.** The installer adds `%USERPROFILE%\.pi-bolt\pi-bolt-win32-x64` to your user PATH,
+which terminals opened afterwards have: open a new one. With `npm install -g pi-bolt`, npm's global folder (`npm prefix -g`) must
+be on PATH, and npm must run the package's install script (`npm install -g pi-bolt --allow-scripts=pi-bolt` on npm 11.19 and
+later).
+
+**The bash tool says "No bash shell found", or answers "Windows Subsystem for Linux has no installed distributions".** Pi's
+bash tool runs Git Bash. Install [Git for Windows](https://git-scm.com/download/win); Pi-Bolt finds it in Program Files, in
+`%LOCALAPPDATA%\Programs\Git` (installed for one user), scoop's, or through the `git.exe` on PATH (a portable Git). WSL's
+`bash.exe` is used only when there is no other bash. Or set `shellPath` in `~\.pi\agent\settings.json` to a `bash.exe` of your
+choice. The PowerShell tool needs nothing.
+
+**Pasting several lines sends each line as its own prompt.** The console window of Windows 10 (conhost) does not mark a paste as
+one, so Pi sees the lines as typed, each ending with Enter. Use Windows Terminal (the default on Windows 11; on Windows 10 from
+the Microsoft Store), or VS Code's terminal, which do.
+
+**Characters like `é` from a Windows program come out as `?` through the bash tool.** Programs such as `cmd.exe` write in the
+console's code page, not UTF-8, and the bash tool reads UTF-8. The PowerShell tool reads them correctly.
+
+**A program in your project folder is not run by its name.** A command named without a path (`git`, `npm`) is looked up on
+PATH only, never in the working directory, so a repository cannot put its own `git.cmd` in front of yours. Run a program of the
+project by its path: `.\tools\build.cmd`.
+
+**SmartScreen warns about `pi-bolt.exe` downloaded with a browser.** The executable has no Authenticode signature yet. The
+installers check the release's own signature and do not mark what they download; install with them rather than from the browser.
+
+**A crash on Windows.** The text Pi-Bolt prints includes an `Args:` line with the whole command line, `-p` prompt included:
+remove anything private from it before you post it.
+
 ## Reporting a problem
 
 Please [open an issue](https://github.com/opensec-git/Pi-Bolt/issues/new) with:
 
 - the output of `BUN_STATIC_HEAP_VERBOSE=1 pi-bolt --version`;
 - your distribution, `ldd --version | head -1`, and the CPU model (`grep -m1 "model name" /proc/cpuinfo`); on macOS, `sw_vers` and
-  `sysctl -n machdep.cpu.brand_string`;
+  `sysctl -n machdep.cpu.brand_string`; on Windows, `winver`'s version and build, the terminal (Windows Terminal, the console
+  window, VS Code), and the CPU (`Get-CimInstance Win32_Processor | Select-Object Name` in PowerShell);
 - whether the problem also happens with `BUN_AOT=0 pi-bolt`, and with stock Pi.
 
 If it only happens with the compiled code, it is a Pi-Bolt bug. If it also happens with stock Pi, report it to
