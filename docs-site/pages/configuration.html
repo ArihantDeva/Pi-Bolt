@@ -1,0 +1,46 @@
+<!-- {"title": "Configuration", "description": "Pi-Bolt reads Pi's configuration. Where it lives, and the environment variables that are specific to Pi-Bolt."} -->
+<p class="eyebrow">Guides</p>
+<h1>Configuration</h1>
+<p class="lede">Pi-Bolt has no configuration of its own: it reads Pi's. A few environment variables control the Pi-Bolt
+  executable itself, for diagnostics and tuning.</p>
+
+<h2>Pi's configuration</h2>
+<p>Pi-Bolt and Pi share the agent directory, <code>~/.pi/agent</code>, and a project's <code>.pi</code> folder:</p>
+<div class="table"><table>
+  <thead><tr><th>File or folder</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td><code>settings.json</code></td><td>Settings: default model, theme, extensions on and off, and more</td></tr>
+    <tr><td><code>auth.json</code>, <code>models.json</code></td><td>Logins and API keys; custom providers and models</td></tr>
+    <tr><td><code>sessions/</code></td><td>Saved sessions</td></tr>
+    <tr><td><code>extensions/</code>, <code>prompts/</code></td><td>Your extensions and prompt templates</td></tr>
+    <tr><td><code>mcp.json</code></td><td>MCP servers</td></tr>
+  </tbody>
+</table></div>
+<p>Pi's <a href="https://pi.dev/docs/latest/configuration">Configuration</a>, <a href="https://pi.dev/docs/latest/settings">Settings</a>
+  and <a href="https://pi.dev/docs/latest/environment-variables">Environment variables</a> pages apply to Pi-Bolt as written.
+  <code>PI_CODING_AGENT_DIR</code> moves the agent directory, and <code>PI_OFFLINE=1</code> (or <code>--offline</code>) turns off
+  network operations at startup.</p>
+
+<h2>Pi-Bolt's environment variables</h2>
+<p>These are read by the Pi-Bolt executable at run time.</p>
+<div class="table"><table>
+  <thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>PIBOLT_VARIANT</code></td><td>The build the installer or the npm package installs. See <a href="builds.html">Choose a build</a>.</td></tr>
+    <tr><td><code>PIBOLT_HOME</code></td><td>npm package: where downloaded builds are kept. Default: <code>~/.pi-bolt</code>.</td></tr>
+    <tr><td><code>BUN_AOT=0</code></td><td>Ignore the compiled code and run Pi from bytecode. Use it to tell whether a problem comes from the compiled code.</td></tr>
+    <tr><td><code>BUN_STATIC_HEAP_VERBOSE=1</code></td><td>Report how the compiled code and prebuilt heap were loaded.</td></tr>
+    <tr><td><code>PI_TIMING=1</code></td><td>Pi's startup timings, including each extension's factory.</td></tr>
+    <tr><td><code>PI_TUI_SCROLL_ROWS=0</code></td><td>Redraw every changed row instead of scrolling rows that only moved, for a terminal that does not scroll a region correctly.</td></tr>
+    <tr><td><code>BUN_CONFIG_HTTP_KEEPALIVE_TIMEOUT=N</code></td><td>Seconds an idle connection to a server waits to be reused when the server does not say. Default: 4, as in Node.</td></tr>
+    <tr><td><code>BUN_JSC_numberOfGCMarkers=N</code></td><td>Threads that mark during a garbage collection. Default: 2.</td></tr>
+    <tr><td><code>MIMALLOC_PURGE_HOLES_MIN_INTERVAL=N</code></td><td>Milliseconds between returns of freed memory to the system. Default: 250. Lower returns memory sooner, for more CPU.</td></tr>
+    <tr><td><code>JITI_FS_CACHE=false</code></td><td>Do not keep the transpiled source of run-time extensions (kept in <code>cache/jiti</code> of the agent directory).</td></tr>
+  </tbody>
+</table></div>
+<p>The installer has its own variables; see <a href="installation.html#installer-options">Installer options</a>.</p>
+
+<h2>.env files</h2>
+<p>Pi-Bolt does not read a <code>.env</code> file from the working directory. Pi on Bun does, because Bun loads one into every
+  program's environment; Pi on Node does not. A project's <code>.env</code> (its API keys, its proxy settings) belongs to the
+  project. Set what Pi should see in the shell that starts it.</p>

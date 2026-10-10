@@ -1,0 +1,116 @@
+<!-- {"title": "Benchmarks", "description": "Pi-Bolt against Pi on Bun and Node, PiG and oh-my-pi on Linux, macOS and Windows: startup, CPU, memory, long answers and large files."} -->
+<p class="eyebrow">Reference</p>
+<h1>Benchmarks</h1>
+<p class="lede">Pi-Bolt against Pi as released, on stock Bun and on Node, on three machines. Medians of fresh processes,
+  interleaved across the builds. Lower is better in every row.</p>
+
+<h2>How it is measured</h2>
+<ul>
+  <li><strong>The same work for every build.</strong> Each build runs the same prompts against a local server that replays the
+    same model responses, so there is no network or provider variance.</li>
+  <li><strong>Pi as released.</strong> "Pi on Bun" and "Pi on Node" are Pi 1.1.0 built from its release tag, not Pi-Bolt's
+    tree.</li>
+  <li><strong>Interleaved.</strong> Builds take turns, so a change in the machine's state affects all of them alike.</li>
+  <li><strong>CPU time</strong> is user plus system time of the process. <strong>Memory</strong> is the process's own memory:
+    the pages it wrote, not file pages it shares with the system.</li>
+</ul>
+<p>The benchmark scripts, the method in full and the raw data are in the repository:
+  <a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
+
+<h2>Linux</h2>
+<p>AMD EPYC 7B13, pinned to four cores. Pi 1.1.0 as released.</p>
+<div class="table"><table>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.7.3</th><th class="n">Pi-Bolt 0.7.0</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 24</th></tr></thead>
+  <tbody>
+    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.8 s</td><td class="n">0.9 s</td><td class="n">30.0 s</td><td class="n">39.4 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">4.3 s</td><td class="n">4.5 s</td><td class="n">44.4 s</td><td class="n">42.3 s</td></tr>
+    <tr><td>Memory after a 4.2M-token session</td><td class="n best">139 MB</td><td class="n">198 MB</td><td class="n">296 MB</td><td class="n">537 MB</td></tr>
+    <tr><td>Memory of a session in tmux</td><td class="n best">28 MB</td><td class="n">28 MB</td><td class="n">87 MB</td><td class="n">93 MB</td></tr>
+    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">309 ms</td><td class="n">328 ms</td><td class="n">913 ms</td><td class="n">1,312 ms</td></tr>
+    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">85 ms</td><td class="n">89 ms</td><td class="n">333 ms</td><td class="n">645 ms</td></tr>
+    <tr><td>Ready to type</td><td class="n best">47 ms</td><td class="n">48 ms</td><td class="n">143 ms</td><td class="n">334 ms</td></tr>
+  </tbody>
+</table></div>
+
+<h2>macOS</h2>
+<p>Apple M5 (MacBook Air). Pi 1.1.0 as released.</p>
+<div class="table"><table>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.7.3</th><th class="n">Pi-Bolt 0.7.0</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 26</th></tr></thead>
+  <tbody>
+    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.5 s</td><td class="n">0.5 s</td><td class="n">22.1 s</td><td class="n">26.6 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">7.0 s</td><td class="n best">6.6 s</td><td class="n">38.4 s</td><td class="n">37.8 s</td></tr>
+    <tr><td>Memory after a 4.2M-token session</td><td class="n best">39 MB</td><td class="n">41 MB</td><td class="n">91 MB</td><td class="n">2,441 MB</td></tr>
+    <tr><td>Memory of a session in tmux</td><td class="n">25 MB</td><td class="n best">24 MB</td><td class="n">68 MB</td><td class="n">152 MB</td></tr>
+    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">175 ms</td><td class="n">185 ms</td><td class="n">555 ms</td><td class="n">915 ms</td></tr>
+    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">58 ms</td><td class="n">59 ms</td><td class="n">236 ms</td><td class="n">525 ms</td></tr>
+    <tr><td>Ready to type</td><td class="n">46 ms</td><td class="n best">43 ms</td><td class="n">101 ms</td><td class="n">347 ms</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Windows</h2>
+<p>Intel Core i5-1335U laptop. Pi-Bolt 0.8.0, Pi 1.1.0 as released. Memory on Windows is the private working set.</p>
+<div class="table"><table>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.0</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 24</th></tr></thead>
+  <tbody>
+    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.7 s</td><td class="n">38.1 s</td><td class="n">26.6 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">6.5 s</td><td class="n">41.1 s</td><td class="n">32.6 s</td></tr>
+    <tr><td>Memory after a 4.2M-token session</td><td class="n best">159 MB</td><td class="n">248 MB</td><td class="n">413 MB</td></tr>
+    <tr><td>Memory of a session in a terminal (ConPTY)</td><td class="n best">32 MB</td><td class="n">97 MB</td><td class="n">60 MB</td></tr>
+    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">291 ms</td><td class="n">805 ms</td><td class="n">1,125 ms</td></tr>
+    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">92 ms</td><td class="n">329 ms</td><td class="n">544 ms</td></tr>
+    <tr><td>Ready to type</td><td class="n best">92 ms</td><td class="n">177 ms</td><td class="n">311 ms</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Against PiG and oh-my-pi</h2>
+<p>Pi-Bolt 0.7.3 against two other fast Pi builds: <a href="https://github.com/MichaelKinsy/PiG">PiG</a> 0.4.1, a port of Pi to Go
+  (based on Pi 1.0.3), and <a href="https://github.com/can1357/oh-my-pi">oh-my-pi</a> 18.8.7, a fork of Pi with many more
+  built-in features, on Bun. Same machines and method; 0.8.0 measures within a few percent of 0.7.3.</p>
+<div class="tabs" data-group="bench">
+  <div data-tab="linux" data-title="Linux">
+<div class="table"><table>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.7.3</th><th class="n">PiG 0.4.1</th><th class="n">oh-my-pi 18.8.7</th></tr></thead>
+  <tbody>
+    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.8 s</td><td class="n">101 s</td><td class="n">3.8 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">4.1 s</td><td class="n">24.6 s</td><td class="n best">3.3 s</td></tr>
+    <tr><td>Memory after a 4.2M-token session</td><td class="n best">142 MB</td><td class="n">344 MB</td><td class="n">–</td></tr>
+    <tr><td>Memory of a session in tmux</td><td class="n best">27 MB</td><td class="n">40 MB</td><td class="n">329 MB</td></tr>
+    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">324 ms</td><td class="n">3,155 ms</td><td class="n">3,397 ms</td></tr>
+    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">87 ms</td><td class="n">306 ms</td><td class="n">1,823 ms</td></tr>
+    <tr><td>Peak memory, one prompt (<code>-p</code>)</td><td class="n">126 MB</td><td class="n best">58 MB</td><td class="n">475 MB</td></tr>
+    <tr><td>Ready to type</td><td class="n">49 ms</td><td class="n best">43 ms</td><td class="n">1,088 ms</td></tr>
+  </tbody>
+</table></div>
+  </div>
+  <div data-tab="macos" data-title="macOS">
+<div class="table"><table>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.7.3</th><th class="n">PiG 0.4.1</th><th class="n">oh-my-pi 18.8.7</th></tr></thead>
+  <tbody>
+    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.5 s</td><td class="n">67 s</td><td class="n">2.5 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">5.2 s</td><td class="n">17.0 s</td><td class="n best">5.1 s</td></tr>
+    <tr><td>Memory after a 4.2M-token session</td><td class="n best">46 MB</td><td class="n">329 MB</td><td class="n">–</td></tr>
+    <tr><td>Memory of a session in tmux</td><td class="n best">25 MB</td><td class="n">48 MB</td><td class="n">317 MB</td></tr>
+    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">95 ms</td><td class="n">1,355 ms</td><td class="n">1,383 ms</td></tr>
+    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">31 ms</td><td class="n">132 ms</td><td class="n">592 ms</td></tr>
+    <tr><td>Peak memory, one prompt (<code>-p</code>)</td><td class="n">75 MB</td><td class="n best">49 MB</td><td class="n">421 MB</td></tr>
+    <tr><td>Ready to type</td><td class="n">25 ms</td><td class="n best">20 ms</td><td class="n">564 ms</td></tr>
+  </tbody>
+</table></div>
+  </div>
+</div>
+<p>PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with as little CPU or a
+  little less. Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files
+  fastest. oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–).</p>
+
+<h2>Why a large file write takes so long on stock Pi</h2>
+<p>The 30 seconds are not the disk. A model writes a file by streaming the <code>write</code> tool call's arguments, the whole
+  file, a few characters at a time, so a 200 KB file arrives in thousands of chunks. Stock Pi parses and redraws the whole tool
+  call again for every chunk: each chunk costs more than the last, and the total grows with the square of the file's size.
+  Pi-Bolt processes only the new part of each chunk.</p>
+<p>In the benchmark the model streams as fast as it can, so the cost shows as wall time. With a real model, which streams more
+  slowly, it shows as CPU: about 40 seconds of it for a 200 KB file on stock Pi.</p>
+
+<div class="callout">
+  <span class="title">Measurements, not guarantees</span>
+  Each table comes from one machine. On other hardware the times differ; what carries over is the comparison.
+</div>
