@@ -43,6 +43,7 @@ import { parseStreamingJson, parseStreamingJsonWhileStreaming } from "../utils/j
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { markCachedString, stringifyRequestBody } from "../utils/request-json.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import {
@@ -369,10 +370,14 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 			}
+			// The body as the SDK would write it (JSON.stringify), with the JSON of long strings from finished messages
+			// cached; the SDK sends a string body as it is when the request has a content type.
+			const body = stringifyRequestBody(params);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
+				...(body === undefined ? {} : { body, headers: { "content-type": "application/json" } }),
 			};
 			const { data: openaiStream, response } = await retryProviderRequest(
 				() => client.chat.completions.create(params, requestOptions).withResponse(),
@@ -1269,10 +1274,9 @@ export function convertMessages(
 			}
 		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				params.push({
-					role: "user",
-					content: sanitizeSurrogates(msg.content),
-				});
+				const userMessage = { role: "user" as const, content: sanitizeSurrogates(msg.content) };
+				markCachedString(userMessage, "content", userMessage.content, msg, params);
+				params.push(userMessage);
 			} else {
 				const content: ChatCompletionContentPart[] = msg.content
 					.filter((item) => item.type !== "text" || item.text.length > 0)
@@ -1411,6 +1415,31 @@ export function convertMessages(
 			if (!hasContent && !assistantMsg.tool_calls) {
 				continue;
 			}
+			const firstTextBlock = msg.content.find(isTextContentBlock);
+			if (typeof assistantMsg.content === "string" && firstTextBlock) {
+				markCachedString(assistantMsg, "content", assistantMsg.content, firstTextBlock, params);
+			}
+			const firstThinkingBlock = nonEmptyThinkingBlocks.at(0);
+			for (const field of OPENAI_COMPLETIONS_REASONING_FIELDS) {
+				const reasoning = assistantMsg[field];
+				if (typeof reasoning === "string" && firstThinkingBlock) {
+					markCachedString(assistantMsg, field, reasoning, firstThinkingBlock, params);
+				}
+			}
+			assistantMsg.tool_calls?.forEach((toolCall, index) => {
+				if (toolCall.type === "function") {
+					markCachedString(
+						toolCall.function,
+						"arguments",
+						toolCall.function.arguments,
+						toolCalls[index],
+						params,
+						assistantMsg,
+						assistantMsg.tool_calls as object,
+						toolCall,
+					);
+				}
+			});
 			params.push(assistantMsg);
 		} else if (msg.role === "toolResult") {
 			const imageBlocks: Array<{ type: "image_url"; image_url: { url: string } }> = [];
@@ -1419,11 +1448,11 @@ export function convertMessages(
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
 				const toolMsg = transformedMessages[j] as ToolResultMessage;
 
-				// Extract text and image content
-				const textResult = toolMsg.content
-					.filter(isTextContentBlock)
-					.map((block) => block.text)
-					.join("\n");
+				// Extract text and image content. One text block, the usual case, is taken as it is: its string is then
+				// the same from one request to the next, which the cache of its JSON (markCachedString) compares first.
+				const textBlocks = toolMsg.content.filter(isTextContentBlock);
+				const textResult =
+					textBlocks.length === 1 ? textBlocks[0].text : textBlocks.map((block) => block.text).join("\n");
 				const hasImages = toolMsg.content.some((c) => c.type === "image");
 
 				// Always send tool result with text (or placeholder if only images)
@@ -1437,6 +1466,9 @@ export function convertMessages(
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
 					(toolResultMsg as any).name = toolMsg.toolName;
+				}
+				if (hasText) {
+					markCachedString(toolResultMsg, "content", toolResultMsg.content as string, textBlocks[0], params);
 				}
 				params.push(toolResultMsg);
 
