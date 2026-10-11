@@ -21,6 +21,10 @@ if [ ! -x "$DIR/pi" ]; then
 	PIBOLT_LAUNCHER=1 PIBOLT_VERSION="bolt-v$VERSION" PIBOLT_VARIANT="$VARIANT" PIBOLT_INSTALL="$HOME_DIR/npm/$VERSION" \
 		sh "$here/../install.sh" 1>&2
 	printf '\n' >&2
+	# The versions installed before this one are not run again (a running one keeps its files until it exits).
+	for old in "$HOME_DIR"/npm/*; do
+		case "${old##*/}" in "$VERSION") ;; [0-9]*.[0-9]*.[0-9]*) rm -rf "$old" 2>/dev/null || true ;; esac
+	done
 fi
 # (So that `pi-bolt update` knows to say: update the package.)
 PIBOLT_NPM=1 exec "$DIR/pi" "$@"

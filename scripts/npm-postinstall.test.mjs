@@ -516,6 +516,25 @@ test("the placeholder, run without the install script: on Linux it starts the la
 	assert.equal(linux.status, 0);
 });
 
+test("the launcher's first run of a version removes the versions installed before it", { skip: (!findSh() || process.platform === "win32") && "no sh" }, (t) => {
+	const pkgDir = makePackage(t);
+	const home = join(pkgDir, "home");
+	// The installer, as far as the launcher sees it: it puts the build where PIBOLT_INSTALL says.
+	writeFileSync(
+		join(pkgDir, "install.sh"),
+		'mkdir -p "$PIBOLT_INSTALL/pi-bolt-linux-x64" && printf \'#!/bin/sh\\necho "the build: $*"\\n\' > "$PIBOLT_INSTALL/pi-bolt-linux-x64/pi" && chmod 755 "$PIBOLT_INSTALL/pi-bolt-linux-x64/pi"\n',
+	);
+	mkdirSync(join(home, "npm", "0.7.4", "pi-bolt-linux-x64"), { recursive: true });
+	mkdirSync(join(home, "npm", "notes"), { recursive: true });
+	const result = spawnSync("sh", [join(pkgDir, "bin", "pi-bolt"), "--version"], {
+		encoding: "utf8",
+		env: { ...process.env, PIBOLT_HOME: home, PIBOLT_VARIANT: "x64", PATH: `${fakeUname(pkgDir, "Linux")}:${process.env.PATH}` },
+	});
+	assert.equal(result.stdout, "the build: --version\n", result.stderr);
+	assert.equal(result.status, 0);
+	assert.deepEqual(readdirSync(join(home, "npm")).sort(), [VERSION, "notes"]);
+});
+
 test("an archive entry's name: inside its folder, with / between its parts and no \\, :, .. or empty part", () => {
 	for (const name of ["pi-bolt-win32-x64/pi-bolt.exe", "pi-bolt-win32-x64/", "a/b/c.txt"]) assert.equal(install.isSafeEntryName(name), true, name);
 	for (const name of ["", "/x", "C:/x", "a/../x", "a//x", "./x", "a\\x", "pi-bolt-win32-x64/..\\..\\x", "a\0x"]) {
