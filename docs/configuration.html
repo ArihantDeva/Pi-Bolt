@@ -86,6 +86,10 @@
   and <a href="https://pi.dev/docs/latest/environment-variables">Environment variables</a> pages apply to Pi-Bolt as written.
   <code>PI_CODING_AGENT_DIR</code> moves the agent directory, and <code>PI_OFFLINE=1</code> (or <code>--offline</code>) turns off
   network operations at startup.</p>
+<p>Pi-Bolt never changes what Pi loads. It reads the packages in <code>settings.json</code>'s <code>packages</code> as Pi does
+  until you install or remove one with <code>pi-bolt</code>; from then on it keeps a list of its own, <code>piBolt.packages</code>
+  (made from <code>packages</code>), which Pi does not read. OpenSec's extensions are only ever in that list. See
+  <a href="https://github.com/opensec-git/Pi-Bolt#pi-and-pi-bolt-side-by-side">Pi and Pi-Bolt side by side</a>.</p>
 
 <h2 id="pi-bolt-s-environment-variables">Pi-Bolt's environment variables<a class="anchor" href="#pi-bolt-s-environment-variables" aria-label="Link to this section">#</a></h2>
 <p>These are read by the Pi-Bolt executable at run time.</p>
