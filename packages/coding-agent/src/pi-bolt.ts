@@ -20,12 +20,13 @@ export const PIBOLT: PiBoltBuild | undefined = parse(typeof PIBOLT_BUILD === "st
 export const PIBOLT_INSTALL_URL =
 	process.platform === "win32" ? "https://pi-bolt.opensec.in/install.ps1" : "https://pi-bolt.opensec.in/install.sh";
 // TLS 1.2 before the first download: Windows PowerShell 5.1 on an older Windows 10 offers only TLS 1.0 by default, which the
-// site refuses, and the installer turns it on only once it is running.
+// site refuses, and the installer turns it on only once it is running. Only for the update's own process: the command shown to
+// users is the plain one (README), which Windows' antivirus does not mistake for a downloader.
 const WINDOWS_TLS12 =
 	"[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072";
 export const PIBOLT_INSTALL_COMMAND =
 	process.platform === "win32"
-		? `powershell -c "${WINDOWS_TLS12}; irm ${PIBOLT_INSTALL_URL} | iex"`
+		? `powershell -c "irm ${PIBOLT_INSTALL_URL} | iex"`
 		: `curl -fsSL ${PIBOLT_INSTALL_URL} | sh`;
 /** The installer as a command to spawn (with piBoltUpdateEnvironment()): it exits non-zero if it did not install. */
 export function piBoltInstallerProcess(): { command: string; args: string[] } {
