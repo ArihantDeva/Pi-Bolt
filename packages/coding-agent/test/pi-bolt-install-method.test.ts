@@ -1,4 +1,6 @@
-import { homedir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -88,7 +90,34 @@ describe("piBoltInstallerProcess", () => {
 			);
 		} else {
 			expect(command).toBe("sh");
-			expect(args).toEqual(["-c", "curl -fsSL https://pi-bolt.opensec.in/install.sh | sh"]);
+			expect(args[0]).toBe("-c");
+			expect(args[1]).toContain("curl -fsSL https://pi-bolt.opensec.in/install.sh");
+			expect(args[1]).toContain("wget -qO- https://pi-bolt.opensec.in/install.sh");
 		}
 	});
+
+	it.skipIf(process.platform === "win32")(
+		"downloads with wget where there is no curl; a failed download fails",
+		() => {
+			const { args } = piBoltInstallerProcess();
+			const bin = mkdtempSync(join(tmpdir(), "pi-bolt-installer-"));
+			try {
+				// A PATH with only sh and a wget that prints a tiny installer: no curl.
+				symlinkSync("/bin/sh", join(bin, "sh"));
+				const env = { PATH: bin };
+				writeFileSync(join(bin, "wget"), "#!/bin/sh\nprintf 'echo installed-by-wget\\n'\n", { mode: 0o755 });
+				const withWget = spawnSync("/bin/sh", args, { env, encoding: "utf8" });
+				expect(withWget.status).toBe(0);
+				expect(withWget.stdout.trim()).toBe("installed-by-wget");
+				writeFileSync(join(bin, "wget"), "#!/bin/sh\nexit 4\n", { mode: 0o755 });
+				expect(spawnSync("/bin/sh", args, { env, encoding: "utf8" }).status).toBe(1);
+				rmSync(join(bin, "wget"));
+				const neither = spawnSync("/bin/sh", args, { env, encoding: "utf8" });
+				expect(neither.status).toBe(1);
+				expect(neither.stderr).toContain("curl or wget is needed");
+			} finally {
+				rmSync(bin, { recursive: true, force: true });
+			}
+		},
+	);
 });
