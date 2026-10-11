@@ -13,6 +13,19 @@
 #   --profile DIR     the training profile (bytecode order + regular expressions). Default: profiles/pi-<version> if there is one
 #   --plugins FILE    compile Pi extensions into the executable: FILE is a manifest module whose default export is the list of
 #                     extension factories (see docs/PLUGINS.md and examples/plugins/plugins.ts). Its folder is built along with it.
+#   --plugins-from-installed
+#                     compile in the extensions installed on this machine: the agent directory's extensions folder and the
+#                     paths in its `extensions` setting, plus the packages `pi install` installed. The manifest is generated
+#                     into $PIBOLT_WORK/plugins first (scripts/gen-plugin-manifest.mjs). NOT this repository's own
+#                     .pi/extensions, which hold test extensions. Not with --plugins
+#   --plugins-only LIST
+#                     with --plugins-from-installed: only these extensions, by name, separated by commas
+#   --plugins-exclude LIST
+#                     with --plugins-from-installed: every extension except these, separated by commas
+#   --plugins-agent-dir DIR
+#                     with --plugins-from-installed: the agent directory to read. Default: ~/.pi/agent
+#   --plugins-no-packages
+#                     with --plugins-from-installed: leave out the packages `pi install` installed
 #   --plugin-worker PATH
 #                     a worker script a plugin starts, relative to the manifest's folder (repeatable)
 #   --keep-bytecode   keep the bytecode in the prebuilt heap (by default it is left out, which is what lets the compiler inline
@@ -23,6 +36,7 @@
 source "$(dirname "$0")/lib/common.sh"
 
 PI_DIR="$PIBOLT_PI"; OUT=""; JIT=off; CPU=native; PROFILE=""; PLUGINS=""; PLUGIN_WORKERS=(); KEEP_BYTECODE=""; STABLE=""
+FROM_INSTALLED=""; PLUGINS_ONLY=""; PLUGINS_EXCLUDE=""; PLUGINS_AGENT_DIR=""; PLUGINS_NO_PACKAGES=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--pi) PI_DIR="$2"; shift ;;
@@ -31,10 +45,15 @@ while [ $# -gt 0 ]; do
 	--cpu) CPU="$2"; shift ;;
 	--profile) PROFILE="$2"; shift ;;
 	--plugins) PLUGINS="$2"; shift ;;
+	--plugins-from-installed) FROM_INSTALLED=1 ;;
+	--plugins-only) PLUGINS_ONLY="$2"; shift ;;
+	--plugins-exclude) PLUGINS_EXCLUDE="$2"; shift ;;
+	--plugins-agent-dir) PLUGINS_AGENT_DIR="$2"; shift ;;
+	--plugins-no-packages) PLUGINS_NO_PACKAGES=1 ;;
 	--plugin-worker) PLUGIN_WORKERS+=("$2"); shift ;;
 	--keep-bytecode) KEEP_BYTECODE=1 ;;
 	--stable) STABLE=1 ;;
-	-h | --help) sed -n '2,22p' "$0"; exit 0 ;;
+	-h | --help) sed -n '2,35p' "$0"; exit 0 ;;
 	*) die "unknown option $1" ;;
 	esac
 	shift
@@ -43,6 +62,13 @@ done
 [ "$CPU" = native ] || [ "$CPU" = baseline ] || die "--cpu takes native or baseline"
 # (On ARM64 there is one build: every Apple silicon CPU has what the compiler uses, and the executable checks it at launch.)
 [ "$CPU" = native ] || [ "$PIBOLT_ARCH" = x64 ] || die "--cpu baseline is for x86-64 only"
+[ -z "$FROM_INSTALLED" ] || [ -z "$PLUGINS" ] || die "--plugins-from-installed and --plugins are two ways to say the same thing: use one"
+if [ -z "$FROM_INSTALLED" ]; then
+	[ -z "$PLUGINS_ONLY" ] || die "--plugins-only needs --plugins-from-installed"
+	[ -z "$PLUGINS_EXCLUDE" ] || die "--plugins-exclude needs --plugins-from-installed"
+	[ -z "$PLUGINS_AGENT_DIR" ] || die "--plugins-agent-dir needs --plugins-from-installed"
+	[ -z "$PLUGINS_NO_PACKAGES" ] || die "--plugins-no-packages needs --plugins-from-installed"
+fi
 
 AGENT="$(pi_agent_dir "$PI_DIR")"
 VERSION="$(pi_version "$AGENT")"
@@ -59,6 +85,19 @@ PIBOLT_VERSION="$(cat "$PIBOLT_ROOT/VERSION")"
 CPU_VARIANT=$PIBOLT_ARCH; [ "$CPU" = baseline ] && CPU_VARIANT=$PIBOLT_ARCH-baseline; [ "$JIT" = on ] && CPU_VARIANT=$PIBOLT_ARCH-jit
 OUT="$(abspath "${OUT:-$PIBOLT_ROOT/out/pi-bolt}")"
 PROFILE="$(abspath "${PROFILE:-$PIBOLT_ROOT/profiles/pi-$VERSION}")"
+
+# The manifest for this machine's extensions, generated before anything is built.
+if [ -n "$FROM_INSTALLED" ]; then
+	need node
+	GEN_ARGS=()
+	[ -z "$PLUGINS_ONLY" ] || GEN_ARGS+=(--only "$PLUGINS_ONLY")
+	[ -z "$PLUGINS_EXCLUDE" ] || GEN_ARGS+=(--exclude "$PLUGINS_EXCLUDE")
+	[ -z "$PLUGINS_AGENT_DIR" ] || GEN_ARGS+=(--agent-dir "$PLUGINS_AGENT_DIR")
+	[ -z "$PLUGINS_NO_PACKAGES" ] || GEN_ARGS+=(--no-packages)
+	log "the extensions installed on this machine:"
+	PLUGINS="$(node "$PIBOLT_ROOT/scripts/gen-plugin-manifest.mjs" --out "$PIBOLT_WORK/plugins" "${GEN_ARGS[@]}")"
+	[ -n "$PLUGINS" ] || die "no plugin manifest was generated"
+fi
 
 ENTRY=""
 if [ -n "$PLUGINS" ]; then

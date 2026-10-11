@@ -9,6 +9,17 @@
 #   -Profile DIR      the training profile (bytecode order + regular expressions). Default: profiles\pi-<version>
 #   -Plugins FILE     compile Pi extensions into the executable: FILE is a manifest module whose default export is the list of
 #                     extension factories (see docs\PLUGINS.md and examples\plugins\plugins.ts). Its folder is built along with it.
+#   -PluginsFromInstalled
+#                     compile in the extensions installed on this machine: the agent directory's extensions folder and the
+#                     paths in its `extensions` setting, plus the packages `pi install` installed. The manifest is generated
+#                     into .work\plugins first (scripts\gen-plugin-manifest.mjs). Not with -Plugins
+#   -PluginsOnly LIST only these extensions, by name, separated by commas (needs -PluginsFromInstalled)
+#   -PluginsExclude LIST
+#                     every extension except these, separated by commas (needs -PluginsFromInstalled)
+#   -PluginsAgentDir DIR
+#                     the agent directory to read. Default: ~\.pi\agent (needs -PluginsFromInstalled)
+#   -PluginsNoPackages
+#                     leave out the packages `pi install` installed (needs -PluginsFromInstalled)
 #   -PluginWorker PATH[,PATH...]
 #                     a worker script a plugin starts, relative to the manifest's folder (several: separated by commas)
 #   -KeepBytecode     keep the bytecode in the prebuilt heap
@@ -28,6 +39,11 @@ param(
 	[ValidateSet('native', 'baseline')][string]$Cpu = 'native',
 	[string]$Profile = '',
 	[string]$Plugins = '',
+	[switch]$PluginsFromInstalled,
+	[string]$PluginsOnly = '',
+	[string]$PluginsExclude = '',
+	[string]$PluginsAgentDir = '',
+	[switch]$PluginsNoPackages,
 	[string[]]$PluginWorker = @(),
 	[switch]$KeepBytecode,
 	[switch]$Stable,
@@ -121,6 +137,26 @@ function Stage-Plugins($manifest) {
 }
 
 $Entry = './dist/bun/cli.js'
+if ($PluginsFromInstalled -and $Plugins) { Die '-PluginsFromInstalled and -Plugins are two ways to say the same thing: use one' }
+if (-not $PluginsFromInstalled) {
+	if ($PluginsOnly) { Die '-PluginsOnly needs -PluginsFromInstalled' }
+	if ($PluginsExclude) { Die '-PluginsExclude needs -PluginsFromInstalled' }
+	if ($PluginsAgentDir) { Die '-PluginsAgentDir needs -PluginsFromInstalled' }
+	if ($PluginsNoPackages) { Die '-PluginsNoPackages needs -PluginsFromInstalled' }
+}
+# The manifest for this machine's extensions, generated before anything is built. The generator prints its path on stdout
+# and its summary on stderr, so only the path is captured.
+if ($PluginsFromInstalled) {
+	if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Die 'node is required for -PluginsFromInstalled' }
+	$genArgs = @('--out', (Join-Path $Work 'plugins'))
+	if ($PluginsOnly) { $genArgs += @('--only', $PluginsOnly) }
+	if ($PluginsExclude) { $genArgs += @('--exclude', $PluginsExclude) }
+	if ($PluginsAgentDir) { $genArgs += @('--agent-dir', $PluginsAgentDir) }
+	if ($PluginsNoPackages) { $genArgs += '--no-packages' }
+	Log 'the extensions installed on this machine:'
+	$Plugins = (& node (Join-Path $Root 'scripts\gen-plugin-manifest.mjs') @genArgs | Select-Object -Last 1)
+	if ($LASTEXITCODE -ne 0 -or -not $Plugins) { Die 'no plugin manifest was generated' }
+}
 # (-PluginWorker a,b through powershell -File arrives as one string.)
 $PluginWorker = @($PluginWorker | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 if ($Plugins) {
