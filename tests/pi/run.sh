@@ -25,7 +25,7 @@ run() {
 		echo "PASS $name ($runs runs${*:+, $*})"
 	else
 		echo "FAIL $name: $failed of $runs runs${*:+ ($*)}"
-		grep -m3 -i "segmentation\|panic\|error" <<<"$last" | sed 's/^/   /'
+		grep -m3 -i "^$name failed\|segmentation\|panic\|error" <<<"$last" | cut -c1-600 | sed 's/^/   /'
 		status=1
 	fi
 }
