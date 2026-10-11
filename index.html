@@ -175,7 +175,7 @@
     <nav class="top" aria-label="Main">
       <a href="#benchmarks">Benchmarks</a>
       <a href="#extensions">Extensions</a>
-      <a href="https://github.com/opensec-git/Pi-Bolt/tree/pi-bolt/docs">Docs</a>
+      <a href="docs/">Docs</a>
       <a class="gh" href="https://github.com/opensec-git/Pi-Bolt">GitHub</a>
     </nav>
   </div>
@@ -193,7 +193,7 @@
           <code id="cmd">curl -fsSL https://pi-bolt.opensec.in/install.sh | sh</code>
           <button class="copy" type="button" data-copy="cmd" aria-label="Copy the install command">Copy</button>
         </div>
-        <p class="alt">On Windows, in PowerShell: <code>powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"</code>. Or <code>npm install -g --allow-scripts=pi-bolt pi-bolt</code>. Then run <code>pi-bolt</code> in your project.</p>
+        <p class="alt">On Windows, in PowerShell: <code>powershell -c "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://pi-bolt.opensec.in/install.ps1 | iex"</code>. Or <code>npm install -g --allow-scripts=pi-bolt pi-bolt</code>. Then run <code>pi-bolt</code> in your project.</p>
       </div>
 
       <div class="race" aria-labelledby="race-title">
@@ -288,17 +288,18 @@
     <div>
       <h4>Use it</h4>
       <ul>
-        <li><a href="https://github.com/opensec-git/Pi-Bolt#getting-started">Getting started</a></li>
+        <li><a href="docs/quickstart.html">Getting started</a></li>
+        <li><a href="docs/">Documentation</a></li>
         <li><a href="https://github.com/opensec-git/Pi-Bolt/releases/latest">Latest release</a></li>
         <li><a href="https://www.npmjs.com/package/pi-bolt">npm package</a></li>
-        <li><a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/TROUBLESHOOTING.md">Troubleshooting</a></li>
+        <li><a href="docs/troubleshooting.html">Troubleshooting</a></li>
       </ul>
     </div>
     <div>
       <h4>Learn more</h4>
       <ul>
-        <li><a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/ARCHITECTURE.md">How it works</a></li>
-        <li><a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/PLUGINS.md">Compiling plugins in</a></li>
+        <li><a href="docs/how-it-works.html">How it works</a></li>
+        <li><a href="docs/extensions.html">Extensions</a></li>
         <li><a href="https://github.com/opensec-git/Pi-Bolt">Source on GitHub</a></li>
         <li><a href="https://github.com/opensec-git/Pi-Bolt/security/advisories/new">Report a vulnerability</a></li>
       </ul>

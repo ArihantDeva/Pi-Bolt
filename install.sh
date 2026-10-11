@@ -18,7 +18,7 @@
 #   PIBOLT_CONNECTIONS  connections to download over at once (default: 4; 1 for a single connection)
 #   PIBOLT_SOURCE    where to download the executable from: auto (npm, then GitHub; the default), npm or github
 #   PIBOLT_NPM_REGISTRY  the npm registry or mirror to use (default: https://registry.npmjs.org)
-#   PIBOLT_EXTENSIONS  yes or no: whether to install OpenSec's optional extensions (opensec-pi-subagents, opensec-pi-todo)
+#   PIBOLT_EXTENSIONS  yes or no: whether to install OpenSec's optional extensions (opensec-pi-subagents, opensec-pi-todo, opensec-pi-fff)
 #                    without asking. Without it the installer asks when it can; a run that cannot ask, or PIBOLT_YES=1,
 #                    installs none. They are installed at the versions the release pins (its extensions.txt, covered by the
 #                    signed checksums), and only if the registry's tarball has the pinned integrity.
@@ -524,9 +524,12 @@ verify_signature() {
 		return 0
 	fi
 	if exe=$(installed_pibolt); then
+		# (By its full path: it is run from the download's folder, below.)
+		case "$exe" in /*) ;; *) exe="$PWD/$exe" ;; esac
 		printf '%s\n' "$VERIFY_SCRIPT" >"$TMP/verify.js"
 		status=0
-		BUN_BE_BUN=1 "$exe" "$TMP/verify.js" "$TMP/SHA256SUMS" "$TMP/release.pub" "$TMP/SHA256SUMS.sig" >/dev/null 2>&1 || status=$?
+		# (Run in the download's own folder, which holds only the release's files.)
+		(cd "$TMP" && BUN_BE_BUN=1 "$exe" ./verify.js SHA256SUMS release.pub SHA256SUMS.sig) >/dev/null 2>&1 || status=$?
 		[ "$status" != 3 ] || fail "the release's signature does not verify: the download is not Pi-Bolt's. Nothing was installed."
 		if [ "$status" = 0 ]; then
 			SIGNED=1
@@ -598,10 +601,15 @@ download() {
 
 install_release() {
 	SIGNED="" UNSIGNED="" NOVERIFY=""
-	TMP="$(mktemp -d)"
+	# The download is kept next to where it is installed: a /tmp mounted noexec could not run the check of the executable
+	# below, and the last step is then a rename on the same file system.
+	mkdir -p "$INSTALL" 2>/dev/null || true
+	TMP="$(mktemp -d "$INSTALL/.download.XXXXXX" 2>/dev/null || mktemp -d)"
 	PIDS=""
 	SIG_PID=""
-	trap 'kill $PIDS $SIG_PID 2>/dev/null; rm -rf "$TMP"; finish_progress; exit 130' INT TERM
+	# (Whatever ends the script, a failed step too, takes the download with it.)
+	trap 'kill $PIDS $SIG_PID 2>/dev/null || true; rm -rf "$TMP"' EXIT
+	trap 'kill $PIDS $SIG_PID 2>/dev/null || true; rm -rf "$TMP"; finish_progress; exit 130' INT TERM
 	[ -t 1 ] && printf '%s[?25l' "$ESC"
 	if [ ! -t 1 ]; then
 		# Not a terminal (a log, CI): plain lines instead of an animated bar.
@@ -684,7 +692,7 @@ install_release() {
 	if [ -d "$INSTALL/$NAME" ]; then mv "$INSTALL/$NAME" "$INSTALL/$NAME.old"; fi
 	mv "$TMP/$NAME" "$INSTALL/$NAME"
 	rm -rf "$INSTALL/$NAME.old" "$TMP"
-	trap - INT TERM
+	trap - EXIT INT TERM
 	finish_progress
 	printf '  %s%s%s install complete %s(%s, %s MB from %s%s)%s\n' "$green" "$CHECK" "$reset" "$dim" "$PLATFORM-$VARIANT" "$(mb "${total:-0}")" "$FROM" "${SIGNED:+, signature verified}" "$reset"
 	[ -z "$UNSIGNED" ] || printf '  %snote: this release is not signed (it is from before Pi-Bolt signed releases); its checksum was verified%s\n' "$dim" "$reset"
@@ -770,7 +778,13 @@ shell_config_file() {
 	case "$(basename "${SHELL:-sh}")" in
 	zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
 	fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
-	bash) if [ -f "$HOME/.bashrc" ]; then printf '%s/.bashrc' "$HOME"; else printf '%s/.profile' "$HOME"; fi ;;
+	bash)
+		# A macOS terminal starts a login shell, which reads the first of these and not ~/.bashrc.
+		if [ "$PLATFORM" != darwin ] && [ -f "$HOME/.bashrc" ]; then printf '%s/.bashrc' "$HOME"
+		elif [ "$PLATFORM" = darwin ] && [ -f "$HOME/.bash_profile" ]; then printf '%s/.bash_profile' "$HOME"
+		elif [ "$PLATFORM" = darwin ] && [ -f "$HOME/.bash_login" ]; then printf '%s/.bash_login' "$HOME"
+		else printf '%s/.profile' "$HOME"; fi
+		;;
 	*) printf '%s/.profile' "$HOME" ;;
 	esac
 }
@@ -806,7 +820,8 @@ path_hint() {
 # The last field matches other extensions of the same kind (an extended regular expression on `pi-bolt list`): one of those
 # registers the same tools, so Pi would refuse to load both. A local checkout counts too, by its folder's name.
 EXTENSIONS="opensec-pi-subagents:run specialized agents in separate sessions:subagents|swarm
-opensec-pi-todo:a todo list for the model, shown above the editor:rpiv-todo|pi-todo"
+opensec-pi-todo:a todo list for the model, shown above the editor:rpiv-todo|pi-todo
+opensec-pi-fff:fast file and content search (find, grep, @-mentions):pi-fff"
 
 # pin_of PACKAGE: the release's line for it in extensions.txt ("NAME VERSION sha512-..."); false if there is none.
 pin_of() { printf '%s\n' "${PINS:-}" | grep -m 1 "^$1 "; }
@@ -870,7 +885,7 @@ offer_extensions() {
 	IFS=$old_ifs
 	[ -n "$wanted" ] || return 0
 	if [ -z "$choice" ]; then
-		printf '\n%sOptional extensions by OpenSec%s %s(Apache-2.0, built for Pi-Bolt)%s\n\n' "$bold" "$reset" "$dim" "$reset"
+		printf '\n%sOptional extensions by OpenSec%s %s(open source, built for Pi-Bolt)%s\n\n' "$bold" "$reset" "$dim" "$reset"
 		IFS=$newline
 		for entry in $EXTENSIONS; do
 			package=${entry%%:*} rest=${entry#*:}
