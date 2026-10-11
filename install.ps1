@@ -35,10 +35,9 @@ $PiBoltRepo = 'https://github.com/opensec-git/Pi-Bolt'
 # installation started from a PowerShell 7 prompt (which is how `pi-bolt update` starts this script when Pi-Bolt itself runs in
 # one, and how a user's own prompt runs it) then resolves names this script needs — Get-FileHash, Get-Acl and Set-Acl, from
 # Microsoft.PowerShell.Utility and Microsoft.PowerShell.Security — to PowerShell 7's copies of those modules, whose cmdlets are
-# built for .NET and do not load in it. Windows PowerShell reports "The term 'Get-FileHash' is not recognized", the checksum of
-# a good download does not match, and an installation to a folder outside the profile cannot limit who may change it. This
-# host's own module directory goes first, so its core modules win. Only this process is affected: what the installer starts,
-# and the rest of the machine, keep the module path they had.
+# built for .NET and do not load in it: Windows PowerShell reports "The term 'Get-FileHash' is not recognized" and the
+# installation stops. This host's own module directory goes first, so its core modules win. The change is this process's
+# environment (and so that of what it starts); the user's own settings are not changed.
 
 $env:PSModulePath = "$PSHOME\Modules;$env:PSModulePath"
 
