@@ -235,10 +235,10 @@ static int request(int helper, int status, const char* path, char** argv, uint32
         return -1;
     }
     tell(status, PIBOLT_SPAWN_STARTED, reply.value);
-    // The program has them now: they must close when it closes them (a pipe's reader sees its end).
+    // The program has them now: they must close when it closes them (a pipe's reader sees its end). (The status pipe stays
+    // open: what the program used goes there when it has exited.)
     for (int i = 2; i < message.nfds + 2; i++)
         close(fds[i]);
-    close(status);
     close(helper);
     return 0;
 }
@@ -273,6 +273,16 @@ int main(int argc, char** argv)
     struct pibolt_spawn_reply exited;
     if (readFully(stream, &exited, sizeof(exited)) || exited.kind != PIBOLT_SPAWN_EXITED)
         _exit(127);
+    struct pibolt_spawn_reply used;
+    struct pibolt_spawn_usage usage;
+    if (!readFully(stream, &used, sizeof(used)) && used.kind == PIBOLT_SPAWN_USAGE && !readFully(stream, &usage, sizeof(usage))) {
+        // (pi-bin may have stopped listening: that must not be how pi-spawn ends.)
+        struct sigaction ignore = { .sa_handler = SIG_IGN };
+        sigaction(SIGPIPE, &ignore, NULL);
+        tell(status, PIBOLT_SPAWN_USAGE, 0);
+        writeFully(status, &usage, sizeof(usage));
+    }
+    close(status);
     int wait = exited.value;
     if (WIFEXITED(wait))
         _exit(WEXITSTATUS(wait));

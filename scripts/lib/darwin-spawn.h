@@ -8,8 +8,10 @@
 // pi-spawn -> helper, a datagram on the helper's socket, with SCM_RIGHTS: a stream socket, which the rest goes over; the
 // directory to start the program in; then the files the program gets (`targets`: as which descriptor each).
 // pi-spawn -> helper's worker, on the stream: struct pibolt_spawn_params, then the path, the arguments and the environment.
-// worker -> pi-spawn, on the stream: struct pibolt_spawn_reply, `started` (or `failed`, `unavailable`) and then `exited`.
-// pi-spawn -> pi-bin, on the status pipe: the reply `started` or `failed`; nothing if pi-spawn started the program itself.
+// worker -> pi-spawn, on the stream: struct pibolt_spawn_reply, `started` (or `failed`, `unavailable`), then `exited`, then
+// `usage` followed by struct pibolt_spawn_usage.
+// pi-spawn -> pi-bin, on the status pipe: the reply `started` or `failed`; nothing if pi-spawn started the program itself. After
+// `started`, before pi-spawn exits: `usage` and what the program used (pi-bin's wait for pi-spawn sees only pi-spawn's own).
 #pragma once
 #include <stdint.h>
 
@@ -51,6 +53,15 @@ enum pibolt_spawn_reply_kind {
     PIBOLT_SPAWN_FAILED = 2, // value: errno, from posix_spawn
     PIBOLT_SPAWN_UNAVAILABLE = 3, // the helper cannot do it: pi-spawn starts the program itself
     PIBOLT_SPAWN_EXITED = 4, // value: the wait status
+    PIBOLT_SPAWN_USAGE = 5, // value: 0; struct pibolt_spawn_usage follows
+};
+
+// What the program used, as struct rusage has it (the rest of struct rusage: zero).
+struct pibolt_spawn_usage {
+    int64_t user_microseconds;
+    int64_t system_microseconds;
+    int64_t max_resident_bytes;
+    int64_t page_ins; // ru_majflt
 };
 
 struct pibolt_spawn_reply {
