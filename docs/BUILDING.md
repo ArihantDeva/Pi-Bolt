@@ -148,7 +148,8 @@ most, placed together at the front of the code with a linker order file, so that
 the executable (it maps less of it from disk on a cold start, and keeps less of it resident). The file is made after the build,
 from [`profiles/runtime-darwin-arm64.hints`](../profiles/runtime-darwin-arm64.hints) (the functions Pi entered, in first-entry
 order) and then Bun's own workloads (`.work/bun/scripts/orderfile`), and the runtime is linked again with it. The hints are
-names, so they hold from one build of the runtime to the next; record them again when what Pi runs has changed much:
+names, so they hold from one build of the runtime to the next; record them again when what Pi runs has changed much. They are
+part of the runtime stamp, so a release after a change to them needs its runtime built ([RELEASING.md](RELEASING.md#when-the-engine-changed)):
 
 ```bash
 scripts/train-runtime-hints.sh [--pi BUILD]   # traces sessions of out/pi-bolt (bench/orderfile_session.py) -> profiles/runtime-darwin-arm64.hints

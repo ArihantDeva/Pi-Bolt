@@ -74,8 +74,8 @@ each as it is, and that `extensions.txt` pins at least one extension and has no 
 
 The runtime (patched WebKit and Bun) takes about 32 GB of RAM, 40 GB of disk and an hour on 16 cores to build, more than
 GitHub's runners give. `release` therefore uses the previous release's runtimes when the engine is the same: `RUNTIME_STAMP`
-is the hash of the engine entries of `sources.json`, the patches and the runtime build scripts
-(`scripts/runtime-stamp.sh`). `ci` says when it differs. The previous release's stamp counts only as its signed `SHA256SUMS`
+is the hash of the engine entries of `sources.json`, the patches, the runtime build scripts and the linker-order hints
+they link with (`profiles/runtime-*.hints`) (`scripts/runtime-stamp.sh`). `ci` says when it differs. The previous release's stamp counts only as its signed `SHA256SUMS`
 gives it, for that release's version (releases before 0.8.0 did not sign it, so their runtimes are not reused). Runtimes
 uploaded to the draft are hashed by `release`'s first job and checked again by each build job before it uses one.
 
