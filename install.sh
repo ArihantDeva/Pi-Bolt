@@ -776,7 +776,13 @@ shell_config_file() {
 	case "$(basename "${SHELL:-sh}")" in
 	zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
 	fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
-	bash) if [ -f "$HOME/.bashrc" ]; then printf '%s/.bashrc' "$HOME"; else printf '%s/.profile' "$HOME"; fi ;;
+	bash)
+		# A macOS terminal starts a login shell, which reads the first of these and not ~/.bashrc.
+		if [ "$PLATFORM" != darwin ] && [ -f "$HOME/.bashrc" ]; then printf '%s/.bashrc' "$HOME"
+		elif [ "$PLATFORM" = darwin ] && [ -f "$HOME/.bash_profile" ]; then printf '%s/.bash_profile' "$HOME"
+		elif [ "$PLATFORM" = darwin ] && [ -f "$HOME/.bash_login" ]; then printf '%s/.bash_login' "$HOME"
+		else printf '%s/.profile' "$HOME"; fi
+		;;
 	*) printf '%s/.profile' "$HOME" ;;
 	esac
 }
