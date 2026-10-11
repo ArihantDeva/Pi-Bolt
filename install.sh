@@ -819,7 +819,7 @@ path_hint() {
 # itself, with npm where it is installed and otherwise with the package manager built into Pi-Bolt: nothing else is needed.
 # The last field matches other extensions of the same kind (an extended regular expression on `pi-bolt list`): one of those
 # registers the same tools, so Pi would refuse to load both. A local checkout counts too, by its folder's name.
-EXTENSIONS="opensec-pi-subagents:run specialized agents in separate sessions:subagents|swarm
+EXTENSIONS="opensec-pi-subagents:run specialized agents in separate sessions:subagents
 opensec-pi-todo:a todo list for the model, shown above the editor:rpiv-todo|pi-todo
 opensec-pi-fff:fast file and content search (find, grep, @-mentions):pi-fff"
 
