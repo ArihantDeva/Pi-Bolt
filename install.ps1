@@ -845,6 +845,10 @@ function Install-PiBolt {
 	}
 	Install-PiBoltRelease $state
 	$exe = Join-Path $state.Dir 'pi-bolt.exe'
+	# Pi-Bolt keeps the packages only it runs (OpenSec's extensions) out of Pi's list, which it does as it starts: once now, so
+	# that Pi, if it is started before Pi-Bolt, does not find them (an earlier installer put them there).
+	Push-Location -LiteralPath $state.Dir
+	try { & $exe list *> $null } catch { } finally { Pop-Location }
 	$word = if ($action -eq 'reinstall' -and $state.Installed -and $state.Installed -ne $state.Shown) { 'updated' } elseif ($action -eq 'reinstall') { 'reinstalled' } else { 'installed' }
 	Write-Host "`nPi-Bolt $($state.Shown) was $word successfully $dim(Pi $(& $exe --version))$reset."
 	Add-PiBoltToPath $state.Dir ([bool]$state.Existed)
