@@ -584,7 +584,21 @@ function parseEventType(eventTypeStr: string | undefined): KeyEventType {
 	return "press";
 }
 
+// One key press is matched against every keybinding: the input it arrived as is parsed once, not once per keybinding.
+let lastKittyData: string | undefined;
+let lastKittySequence: ParsedKittySequence | null = null;
+
 function parseKittySequence(data: string): ParsedKittySequence | null {
+	if (data !== lastKittyData) {
+		lastKittySequence = parseKittySequenceUncached(data);
+		lastKittyData = data;
+	} else if (lastKittySequence) {
+		_lastEventType = lastKittySequence.eventType;
+	}
+	return lastKittySequence;
+}
+
+function parseKittySequenceUncached(data: string): ParsedKittySequence | null {
 	// CSI u format with alternate keys (flag 4):
 	// \x1b[<codepoint>u
 	// \x1b[<codepoint>;<mod>u
@@ -693,7 +707,18 @@ function matchesKittySequence(data: string, expectedCodepoint: number, expectedM
 	return false;
 }
 
+let lastModifyOtherKeysData: string | undefined;
+let lastModifyOtherKeysSequence: ParsedModifyOtherKeysSequence | null = null;
+
 function parseModifyOtherKeysSequence(data: string): ParsedModifyOtherKeysSequence | null {
+	if (data !== lastModifyOtherKeysData) {
+		lastModifyOtherKeysSequence = parseModifyOtherKeysSequenceUncached(data);
+		lastModifyOtherKeysData = data;
+	}
+	return lastModifyOtherKeysSequence;
+}
+
+function parseModifyOtherKeysSequenceUncached(data: string): ParsedModifyOtherKeysSequence | null {
 	const match = data.match(/^\x1b\[27;(\d+);(\d+)~$/);
 	if (!match) return null;
 	const modValue = parseInt(match[1]!, 10);
@@ -785,19 +810,35 @@ function formatKeyNameWithModifiers(keyName: string, modifier: number): string |
 	return mods.length > 0 ? `${mods.join("+")}+${keyName}` : keyName;
 }
 
-function parseKeyId(
-	keyId: string,
-): { key: string; ctrl: boolean; shift: boolean; alt: boolean; super: boolean } | null {
+type ParsedKeyId = { key: string; modifier: number };
+
+/**
+ * Parsed key IDs, by ID. The IDs are the keybindings' keys (configurable, so they are not known in advance) and the
+ * few IDs code matches directly: a small set, matched on every key press.
+ */
+const parsedKeyIds = new Map<string, ParsedKeyId | null>();
+const MAX_PARSED_KEY_IDS = 512;
+
+function parseKeyId(keyId: string): ParsedKeyId | null {
+	let parsed = parsedKeyIds.get(keyId);
+	if (parsed === undefined) {
+		parsed = parseKeyIdUncached(keyId);
+		if (parsedKeyIds.size >= MAX_PARSED_KEY_IDS) parsedKeyIds.clear();
+		parsedKeyIds.set(keyId, parsed);
+	}
+	return parsed;
+}
+
+function parseKeyIdUncached(keyId: string): ParsedKeyId | null {
 	const parts = keyId.toLowerCase().split("+");
 	const key = parts[parts.length - 1];
 	if (!key) return null;
-	return {
-		key,
-		ctrl: parts.includes("ctrl"),
-		shift: parts.includes("shift"),
-		alt: parts.includes("alt"),
-		super: parts.includes("super"),
-	};
+	let modifier = 0;
+	if (parts.includes("shift")) modifier |= MODIFIERS.shift;
+	if (parts.includes("alt")) modifier |= MODIFIERS.alt;
+	if (parts.includes("ctrl")) modifier |= MODIFIERS.ctrl;
+	if (parts.includes("super")) modifier |= MODIFIERS.super;
+	return { key, modifier };
 }
 
 /**
@@ -821,12 +862,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 	const parsed = parseKeyId(keyId);
 	if (!parsed) return false;
 
-	const { key, ctrl, shift, alt, super: superModifier } = parsed;
-	let modifier = 0;
-	if (shift) modifier |= MODIFIERS.shift;
-	if (alt) modifier |= MODIFIERS.alt;
-	if (ctrl) modifier |= MODIFIERS.ctrl;
-	if (superModifier) modifier |= MODIFIERS.super;
+	const { key, modifier } = parsed;
 
 	switch (key) {
 		case "escape":
