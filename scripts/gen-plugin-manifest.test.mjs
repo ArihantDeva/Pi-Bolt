@@ -1,0 +1,340 @@
+/**
+ * Covers gen-plugin-manifest.mjs, and in particular the discovery rules it repeats from Pi.
+ *
+ * Those rules are Pi's: packages/coding-agent/src/core/extensions/loader.ts, `discoverExtensionsInDir` and
+ * `resolveExtensionEntries`. The generator cannot import them, because they are private to Pi and this script belongs to
+ * Pi-Bolt. `pi rules` below is therefore a case for every rule in Pi's own list, so that a change in Pi fails this test
+ * instead of quietly shortening a manifest. A plugin missing from a manifest still loads at run time, so a short manifest
+ * is invisible.
+ */
+
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { after, describe, it } from "node:test";
+import { defaultAgentDir, planPlugins, renderManifest, writePluginFolder } from "./gen-plugin-manifest.mjs";
+
+const temporary = [];
+function scratch(prefix = "pibolt-plugins-") {
+	const dir = mkdtempSync(join(tmpdir(), prefix));
+	temporary.push(dir);
+	return dir;
+}
+after(() => {
+	for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
+});
+
+/** An extension whose factory does nothing: discovery looks at where a file is, not at what is in it. */
+const FACTORY = "export default () => {};\n";
+
+function write(file, contents = FACTORY) {
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, contents);
+}
+
+/** An agent directory with a settings.json, as the generator reads it. */
+function agent(settings = {}) {
+	const dir = scratch();
+	mkdirSync(join(dir, "extensions"), { recursive: true });
+	writeFileSync(join(dir, "settings.json"), JSON.stringify(settings));
+	return dir;
+}
+
+function installPackage(agentDir, name, manifest, files) {
+	const dir = join(agentDir, "npm", "node_modules", ...name.split("/"));
+	write(join(dir, "package.json"), JSON.stringify({ name, version: "1.0.0", ...manifest }));
+	for (const file of files) write(join(dir, file));
+	return dir;
+}
+
+const names = (plan) => plan.plugins.map((plugin) => plugin.name);
+
+describe("pi rules", () => {
+	it("rule 1: a direct .ts or .js file in the folder", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "ban-sleep.ts"));
+		write(join(agentDir, "extensions", "legacy.js"));
+		write(join(agentDir, "extensions", "notes.md"), "# not an extension");
+
+		assert.deepEqual(names(planPlugins({ agentDir })).sort(), ["ban-sleep", "legacy"]);
+	});
+
+	it("rule 2: a subfolder with an index, .ts before .js", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "reader", "index.ts"));
+		write(join(agentDir, "extensions", "reader", "index.js"));
+
+		const plan = planPlugins({ agentDir });
+		assert.deepEqual(names(plan), ["reader"]);
+		assert.ok(plan.plugins[0].entry.endsWith("index.ts"));
+	});
+
+	it("rule 3: a package.json with a pi.extensions list, which wins over an index", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "tools", "index.ts"));
+		write(join(agentDir, "extensions", "tools", "src", "alpha.ts"));
+		write(join(agentDir, "extensions", "tools", "src", "beta.ts"));
+		write(
+			join(agentDir, "extensions", "tools", "package.json"),
+			JSON.stringify({ name: "tools", pi: { extensions: ["src/alpha.ts", "src/beta.ts"] } }),
+		);
+
+		assert.deepEqual(names(planPlugins({ agentDir })), ["tools-alpha", "tools-beta"]);
+	});
+
+	it("a declared entry that does not exist is ignored, and the folder falls back to its index", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "half", "index.ts"));
+		write(
+			join(agentDir, "extensions", "half", "package.json"),
+			JSON.stringify({ name: "half", pi: { extensions: ["src/absent.ts"] } }),
+		);
+
+		assert.deepEqual(names(planPlugins({ agentDir })), ["half"]);
+	});
+
+	it("does not recurse past one level", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "deep", "nested", "index.ts"));
+
+		assert.deepEqual(names(planPlugins({ agentDir })), []);
+	});
+
+	it("takes a symbolic link, as Pi does", () => {
+		const agentDir = agent();
+		const elsewhere = scratch("pibolt-elsewhere-");
+		write(join(elsewhere, "index.ts"));
+		symlinkSync(elsewhere, join(agentDir, "extensions", "linked"), "dir");
+
+		assert.deepEqual(names(planPlugins({ agentDir })), ["linked"]);
+	});
+});
+
+describe("where it looks", () => {
+	it("takes the agent directory, a project, and the extensions setting, in Pi's order", () => {
+		const outside = scratch("pibolt-configured-");
+		write(join(outside, "bridge", "index.ts"));
+		const agentDir = agent({ extensions: [join(outside, "bridge", "index.ts")] });
+		write(join(agentDir, "extensions", "global-one.ts"));
+		const project = scratch("pibolt-project-");
+		write(join(project, ".pi", "extensions", "project-one.ts"));
+
+		const plan = planPlugins({ agentDir, cwd: project });
+		assert.deepEqual(names(plan), ["project-one", "global-one", "bridge"]);
+		assert.deepEqual(
+			plan.plugins.map((plugin) => plugin.origin),
+			["project", "global", "configured"],
+		);
+	});
+
+	it("names a configured path after its folder, because `index` names nothing", () => {
+		const outside = scratch("pibolt-configured-");
+		for (const name of ["pap-code-bridge", "autolith-bridge"]) write(join(outside, name, "index.ts"));
+		const agentDir = agent({
+			extensions: [join(outside, "pap-code-bridge", "index.ts"), join(outside, "autolith-bridge", "index.ts")],
+		});
+
+		assert.deepEqual(names(planPlugins({ agentDir })), ["pap-code-bridge", "autolith-bridge"]);
+	});
+
+	it("does not read a project's settings, because it cannot tell whether the project is trusted", () => {
+		const agentDir = agent();
+		const project = scratch("pibolt-project-");
+		write(join(project, ".pi", "extensions", "trusted-folder.ts"));
+		const outside = scratch("pibolt-untrusted-");
+		write(join(outside, "from-project-settings.ts"));
+		writeFileSync(
+			join(project, ".pi", "settings.json"),
+			JSON.stringify({ extensions: [join(outside, "from-project-settings.ts")] }),
+		);
+
+		assert.deepEqual(names(planPlugins({ agentDir, cwd: project })), ["trusted-folder"]);
+	});
+
+	it("keeps a project and a global extension of the same name apart", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "preset", "index.ts"));
+		const project = scratch("pibolt-project-");
+		write(join(project, ".pi", "extensions", "preset", "index.ts"));
+
+		assert.deepEqual(names(planPlugins({ agentDir, cwd: project })), ["preset", "preset-global"]);
+	});
+});
+
+describe("packages installed with pi install", () => {
+	it("names a package after the package, not after its entry file", () => {
+		const agentDir = agent({ packages: ["npm:pi-provider-litellm"] });
+		installPackage(agentDir, "pi-provider-litellm", { pi: { extensions: ["./src/index.ts"] } }, ["src/index.ts"]);
+
+		const plan = planPlugins({ agentDir });
+		assert.deepEqual(names(plan), ["pi-provider-litellm"]);
+		assert.equal(plan.plugins[0].importPath, "./package-pi-provider-litellm/src/index.ts");
+	});
+
+	it("takes a pinned version and a scope, and flattens a name a setting could not carry", () => {
+		const agentDir = agent({ packages: ["npm:@scope/thing", "npm:pinned@2.13.0"] });
+		installPackage(agentDir, "@scope/thing", { pi: { extensions: ["./index.js"] } }, ["index.js"]);
+		installPackage(agentDir, "pinned", { pi: { extensions: ["./index.js"] } }, ["index.js"]);
+
+		assert.deepEqual(names(planPlugins({ agentDir })), ["scope-thing", "pinned"]);
+	});
+
+	it("copies the dependency closure, which is hoisted beside the package and not inside it", () => {
+		const agentDir = agent({ packages: ["npm:needs-deps"] });
+		installPackage(agentDir, "needs-deps", { pi: { extensions: ["./index.js"] }, dependencies: { direct: "1" } }, [
+			"index.js",
+		]);
+		installPackage(agentDir, "direct", { dependencies: { transitive: "1" } }, ["index.js"]);
+		installPackage(agentDir, "transitive", {}, ["index.js"]);
+		installPackage(agentDir, "unrelated", {}, ["index.js"]);
+
+		const plan = planPlugins({ agentDir });
+		assert.deepEqual(
+			plan.dependencies.map((dependency) => dependency.name).sort(),
+			["direct", "transitive"],
+		);
+
+		const out = join(scratch(), "folder");
+		writePluginFolder(plan, out);
+		assert.ok(readFileSync(join(out, "node_modules", "transitive", "index.js"), "utf8"));
+		assert.throws(() => readFileSync(join(out, "node_modules", "unrelated", "index.js"), "utf8"));
+	});
+
+	it("copies an installed optionalDependency, which the bundler still has to resolve", () => {
+		// pi-lens declares web-tree-sitter optional. Leaving it out failed the build; it did not degrade.
+		const agentDir = agent({ packages: ["npm:lens-like", "npm:opt-absent"] });
+		installPackage(
+			agentDir,
+			"lens-like",
+			{ pi: { extensions: ["./index.js"] }, optionalDependencies: { "tree-sitter-ish": "1" } },
+			["index.js"],
+		);
+		installPackage(agentDir, "tree-sitter-ish", {}, ["index.js"]);
+		installPackage(agentDir, "opt-absent", { pi: { extensions: ["./index.js"] }, optionalDependencies: { gone: "1" } }, [
+			"index.js",
+		]);
+
+		const plan = planPlugins({ agentDir });
+		assert.deepEqual(
+			plan.dependencies.map((dependency) => dependency.name),
+			["tree-sitter-ish"],
+		);
+	});
+
+	it("does not copy Pi's own packages, which would be a second Pi", () => {
+		const agentDir = agent({ packages: ["npm:peer-user"] });
+		installPackage(
+			agentDir,
+			"peer-user",
+			{ pi: { extensions: ["./index.js"] }, dependencies: { "@earendil-works/pi-tui": "1", typebox: "1" } },
+			["index.js"],
+		);
+		installPackage(agentDir, "@earendil-works/pi-tui", {}, ["index.js"]);
+		installPackage(agentDir, "typebox", {}, ["index.js"]);
+
+		assert.deepEqual(planPlugins({ agentDir }).dependencies, []);
+	});
+
+	it("passes over a Bun build that loads its core at run time, and says why", () => {
+		const agentDir = agent({ packages: ["npm:opensec-pi-todo"] });
+		const dir = installPackage(agentDir, "opensec-pi-todo", { pi: { extensions: ["./dist-bun/index.js"] } }, [
+			"dist-bun/index.js",
+			"dist-bun/core.cjs",
+		]);
+
+		const plan = planPlugins({ agentDir });
+		assert.deepEqual(plan.plugins, []);
+		assert.match(plan.skipped.find((entry) => entry.path === dir).reason, /vendoring/);
+	});
+
+	it("says so for a package that is absent, is not an npm source, or has no entry", () => {
+		const agentDir = agent({ packages: ["npm:absent", "git:https://example.invalid/x.git", "npm:no-entry"] });
+		installPackage(agentDir, "no-entry", {}, ["README.md"]);
+
+		const reasons = planPlugins({ agentDir }).skipped.map((entry) => entry.reason).join("\n");
+		assert.match(reasons, /not installed/);
+		assert.match(reasons, /only npm: packages/);
+		assert.match(reasons, /no entry point/);
+	});
+
+	it("leaves packages out with --no-packages", () => {
+		const agentDir = agent({ packages: ["npm:a-package"] });
+		write(join(agentDir, "extensions", "local.ts"));
+		installPackage(agentDir, "a-package", { pi: { extensions: ["./index.js"] } }, ["index.js"]);
+
+		assert.deepEqual(names(planPlugins({ agentDir, noPackages: true })), ["local"]);
+	});
+});
+
+describe("what it passes over", () => {
+	it("reports an empty folder, shared code, and a file that is not .ts or .js", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "real", "index.ts"));
+		mkdirSync(join(agentDir, "extensions", "ao-bridge"), { recursive: true });
+		write(join(agentDir, "extensions", "shared", "skills.ts"));
+		write(join(agentDir, "extensions", "notes.md"), "# notes");
+
+		const plan = planPlugins({ agentDir });
+		assert.deepEqual(names(plan), ["real"]);
+		const reasons = Object.fromEntries(plan.skipped.map((entry) => [entry.path, entry.reason]));
+		assert.equal(reasons[join(agentDir, "extensions", "ao-bridge")], "empty folder");
+		assert.match(reasons[join(agentDir, "extensions", "shared")], /shared code/);
+		assert.equal(reasons[join(agentDir, "extensions", "notes.md")], "not a .ts or .js file");
+	});
+});
+
+describe("the manifest and its folder", () => {
+	it("imports the type only, and names each plugin a replaceable built-in", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "pdf-reader", "index.ts"));
+
+		const text = renderManifest(planPlugins({ agentDir }));
+		assert.match(text, /^import type \{ InlineExtension \}/m);
+		assert.match(text, /^import pdfReader from "\.\/global\/pdf-reader\/index\.ts";$/m);
+		assert.match(text, /\{ name: "pdf-reader", builtin: true, replaceable: true, factory: pdfReader \},/);
+		// A value import would evaluate Pi's whole public API at every launch.
+		assert.doesNotMatch(text, /^import \{/m);
+	});
+
+	it("writes a manifest whose every import resolves to a file it copied", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "ban-sleep.ts"));
+		write(join(agentDir, "extensions", "pdf-reader", "index.ts"));
+
+		const out = join(scratch(), "folder");
+		const manifest = writePluginFolder(planPlugins({ agentDir }), out);
+		const imports = [...readFileSync(manifest, "utf8").matchAll(/^import \w+ from "\.\/(.+)";$/gm)];
+		assert.equal(imports.length, 2);
+		for (const [, path] of imports) assert.ok(readFileSync(join(out, path), "utf8"));
+	});
+
+	it("brings along a sibling that is not an extension itself", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "shared", "skills.ts"), "export const skills = [];\n");
+		write(join(agentDir, "extensions", "uses-shared", "index.ts"), 'import "../shared/skills.ts";\n');
+
+		const out = join(scratch(), "folder");
+		writePluginFolder(planPlugins({ agentDir }), out);
+		assert.ok(readFileSync(join(out, "global", "shared", "skills.ts"), "utf8"));
+	});
+
+	it("replaces its own output, and refuses a folder holding anything else", () => {
+		const agentDir = agent();
+		write(join(agentDir, "extensions", "alpha.ts"));
+		const plan = planPlugins({ agentDir });
+
+		const out = join(scratch(), "folder");
+		writePluginFolder(plan, out);
+		writeFileSync(join(out, "stale.txt"), "from an earlier run");
+		writePluginFolder(plan, out);
+		assert.throws(() => readFileSync(join(out, "stale.txt"), "utf8"));
+	});
+});
+
+describe("the agent directory", () => {
+	it("follows PI_CODING_AGENT_DIR, then ~/.pi/agent", () => {
+		assert.equal(defaultAgentDir({ PI_CODING_AGENT_DIR: "/somewhere/agent" }), "/somewhere/agent");
+		assert.match(defaultAgentDir({}), /[\\/]\.pi[\\/]agent$/);
+	});
+});

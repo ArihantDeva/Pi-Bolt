@@ -6,6 +6,7 @@ and how to write plugin code that the ahead-of-time compiler handles well.
 
 - [Short answer](#short-answer)
 - [Three ways to run a plugin](#three-ways-to-run-a-plugin)
+- [Compile in the plugins you already have](#compile-in-the-plugins-you-already-have)
 - [Compile plugins into the executable](#compile-plugins-into-the-executable)
 - [Compatibility checklist](#compatibility-checklist)
 - [Performance guide: code the AOT compiler handles well](#performance-guide)
@@ -70,6 +71,61 @@ versions the release pins. They are not compiled into the release executables. C
 with them (`scripts\train-heap.ps1 -Plugins plugins\opensec\plugins.ts`), then run
 `scripts\package-release.ps1 -WithOpenSec`. There, `-builtin:opensec-pi-todo` (or `-builtin:opensec-pi-subagents`) in the
 `extensions` list of `~/.pi/agent/settings.json` turns one off, and an npm copy of one replaces the compiled one.
+
+## Compile in the plugins you already have
+
+Step 1 below is four steps done by hand: repeat Pi's discovery rules, name each extension, copy its folder where the bundler
+can reach it, and bring its dependencies. `scripts/gen-plugin-manifest.mjs` does all four from what is installed on this
+machine, and `--plugins-from-installed` runs it as part of a build:
+
+```bash
+scripts/build-pi.sh --plugins-from-installed --out out/pi-bolt-plugins
+scripts/build-pi.sh --plugins-from-installed --plugins-only pdf-reader,preset
+scripts/gen-plugin-manifest.mjs --out plugins/mine      # the folder and its manifest, without a build
+```
+
+On Windows: `scripts\build-pi.ps1 -PluginsFromInstalled`, with `-PluginsOnly`, `-PluginsExclude`, `-PluginsAgentDir` and
+`-PluginsNoPackages`.
+
+It takes the agent directory's `extensions` folder, the paths in that directory's `extensions` setting, and the packages
+`pi install` installed. `--cwd DIR` adds a project's own `.pi/extensions`. A project's *settings* are not read, because Pi
+honours those only in a trusted project and a script cannot tell whether a project is trusted.
+
+The generated manifest names every plugin, so each is a built-in extension that
+[step 3](#3-turning-a-compiled-in-plugin-off-and-run-time-copies) can turn off. Whatever it writes is an ordinary manifest:
+read it, edit it, commit it, and build it with `--plugins`.
+
+### What it copies
+
+The copy is of the whole `extensions` folder, not of each entry. An extension that imports a sibling which is not an
+extension itself, such as a `shared/` folder with no `index.ts`, therefore keeps working.
+
+`pi install` hoists packages into one flat `node_modules`, so a package's dependencies are its siblings rather than inside
+it. The generator copies that dependency closure to a `node_modules` beside the manifest, which is the layout step 1
+expects. It copies only the dependencies of the packages being compiled in. An `optionalDependency` counts once it is
+installed, because the plugin then imports it like any other package.
+
+Pi's own packages are left out of every copy, so a plugin cannot carry a second Pi.
+
+### What it cannot do
+
+One kind of package cannot be compiled in. A package whose entry is a Bun build that loads its real code from a `core.cjs`
+sibling works out that path as it runs, and a compiled executable has no file there. Those need unwrapping and handing Pi's
+modules, which is a job for each package rather than a general one. [`plugins/opensec/`](../plugins/opensec) is the worked
+example. The generator names any it finds and says why, instead of leaving them out in silence.
+
+A large module is the other limit. The compiler refuses a module over 256 KB of bytecode, which a bundled `dist/index.js`
+passes easily. Leave such a plugin out with `--plugins-exclude`. Pull request #7 documents that limit and the three ways
+round it.
+
+### Whether it is worth it
+
+Compiling in removes the cost of *loading* a plugin, not the work its factory does. Measured on one machine with ten
+run-time extensions, loading them cost about 20 ms in total, and an extension whose factory waits for the network paid that
+on every start either way.
+
+On a **`-jit` build** the gain is smaller again, because extensions loaded at run time are JIT-compiled anyway. Read
+`PI_TIMING=1`'s per-entry lines before deciding that compiling in is the fix.
 
 ## Compile plugins into the executable
 
@@ -307,6 +363,7 @@ python3 bench/ui_check.py --project . --build plugins=out/pi-bolt-plugins/pi
 | Symptom | Cause and fix |
 |---|---|
 | `Could not resolve "./something"` during the build | A dynamic import or a file outside the manifest's folder. Use literal imports and keep the plugin's files under the manifest's folder. |
+| `Could not resolve "<package>"` for a plugin's own dependency | The manifest's folder has no `node_modules` entry for that package. Run `npm install` there. An `optionalDependency` counts: once it is installed, the plugin imports it like any other, so it must be in the folder too. |
 | A tool or command "conflicts" at startup | The plugin is also loaded at run time. Remove the run-time copy ([step 3](#3-remove-the-run-time-copies)). |
 | `ENOENT` for a file next to the plugin's source | Embed the file with an `import ... with { type: "text" }` or `{ type: "file" }`. |
 | A plugin's hot path is slow on the JIT-off build | Check it against the [performance guide](#performance-guide). As a stopgap, build with `--jit on`. |
