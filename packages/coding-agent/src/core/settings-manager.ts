@@ -434,12 +434,49 @@ export class InMemorySettingsStorage implements SettingsStorage {
 }
 
 /**
- * Pi-Bolt and Pi share one agent directory (auth, models, sessions, settings). Where both are used, they can still load
- * different packages: a list in `piBolt.packages` is Pi-Bolt's, read and written in place of `packages`, which Pi on Node or
- * Bun keeps using (it does not read `piBolt`). Without it, both use `packages`.
+ * Pi-Bolt and Pi share one agent directory (auth, models, sessions, settings), but Pi-Bolt never changes the packages Pi
+ * loads. A list in `piBolt.packages` is Pi-Bolt's, read and written in place of `packages`, which Pi keeps using (it does not
+ * read `piBolt`). Until Pi-Bolt changes its packages the first time, it reads `packages` as Pi does; that change makes
+ * `piBolt.packages` from Pi's list and changes only it.
  */
 function hasOwnPackageList(settings: Settings): boolean {
 	return PIBOLT !== undefined && Array.isArray(settings.piBolt?.packages);
+}
+
+/**
+ * OpenSec's extensions for Pi-Bolt are Bun builds, which Pi on Node cannot load; installers before Pi-Bolt 0.8.4 added them
+ * to `packages`, so Pi stopped at them. Pi-Bolt moves them to its own list (made from `packages` if there is none).
+ */
+const PIBOLT_ONLY_PACKAGE = /^npm:opensec-pi-(?:subagents|todo|fff)(?:@|$)/;
+
+function sourceOfPackage(entry: unknown): string | undefined {
+	if (typeof entry === "string") return entry;
+	if (typeof entry === "object" && entry !== null && typeof (entry as { source?: unknown }).source === "string") {
+		return (entry as { source: string }).source;
+	}
+	return undefined;
+}
+
+function isPiBoltOnlyPackage(entry: unknown): boolean {
+	const source = sourceOfPackage(entry);
+	return source !== undefined && PIBOLT_ONLY_PACKAGE.test(source);
+}
+
+/** `settings` with Pi-Bolt's only packages moved out of Pi's list, or undefined when Pi's list has none. */
+function withPiBoltOnlyPackagesMoved(settings: Record<string, unknown>): Record<string, unknown> | undefined {
+	const packages = settings.packages;
+	if (!Array.isArray(packages) || !packages.some(isPiBoltOnlyPackage)) return undefined;
+	const piBolt = (typeof settings.piBolt === "object" && settings.piBolt !== null ? settings.piBolt : {}) as {
+		packages?: unknown;
+	};
+	const own: unknown[] = Array.isArray(piBolt.packages) ? piBolt.packages : [...packages];
+	const ownSources = new Set(own.map(sourceOfPackage));
+	const moved = packages.filter((entry) => isPiBoltOnlyPackage(entry) && !ownSources.has(sourceOfPackage(entry)));
+	return {
+		...settings,
+		packages: packages.filter((entry) => !isPiBoltOnlyPackage(entry)),
+		piBolt: { ...piBolt, packages: [...own, ...moved] },
+	};
 }
 
 function runtimePackages(settings: Settings): Settings {
@@ -558,7 +595,21 @@ export class SettingsManager {
 		if (!content) {
 			return {};
 		}
-		const settings = JSON.parse(stripBom(content));
+		let settings = JSON.parse(stripBom(content));
+		if (PIBOLT !== undefined && scope === "global") {
+			const separated = withPiBoltOnlyPackagesMoved(settings);
+			if (separated) {
+				settings = separated;
+				try {
+					storage.withLock("global", (current) => {
+						const moved = current ? withPiBoltOnlyPackagesMoved(JSON.parse(stripBom(current))) : undefined;
+						return moved ? JSON.stringify(moved, null, 2) : undefined;
+					});
+				} catch {
+					// (Not written: Pi-Bolt still loads them from its list in memory, and moves them at a later start.)
+				}
+			}
+		}
 		return runtimePackages(SettingsManager.migrateSettings(settings));
 	}
 
@@ -789,8 +840,8 @@ export class SettingsManager {
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
-				if (field === "packages" && hasOwnPackageList(currentFileSettings)) {
-					// Pi-Bolt's own list changed; the one Pi uses stays as it is.
+				if (field === "packages" && PIBOLT !== undefined) {
+					// Pi-Bolt's own list changed (made from Pi's the first time); the one Pi uses stays as it is.
 					mergedSettings.piBolt = { ...currentFileSettings.piBolt, packages: value as PackageSource[] };
 					continue;
 				}
@@ -1265,8 +1316,8 @@ export class SettingsManager {
 	}
 
 	/**
-	 * The packages Pi itself loads from this scope's settings when Pi-Bolt keeps a list of its own (`piBolt.packages`), so
-	 * that removing a package from Pi-Bolt's list leaves files Pi still uses; otherwise none.
+	 * The packages Pi itself loads from this scope's settings, for Pi-Bolt, which changes only its own list: removing a
+	 * package from Pi-Bolt's list leaves files Pi still uses. In Pi itself, none.
 	 */
 	getPackagesKeptForPi(scope: SettingsScope): PackageSource[] {
 		if (scope === "project" && !this.projectTrusted) return [];
@@ -1282,7 +1333,7 @@ export class SettingsManager {
 		if (!content) return [];
 		try {
 			const settings = SettingsManager.migrateSettings(JSON.parse(stripBom(content)) as Record<string, unknown>);
-			return hasOwnPackageList(settings) ? [...(settings.packages ?? [])] : [];
+			return PIBOLT !== undefined ? [...(settings.packages ?? [])] : [];
 		} catch {
 			return [];
 		}

@@ -59,4 +59,60 @@ describe("Pi-Bolt's own package list", () => {
 		});
 		expect(SettingsManager.create(cwd, agentDir).getPackages()).toEqual(["npm:@juicesharp/rpiv-todo"]);
 	});
+
+	test("Pi-Bolt's first change makes its own list from Pi's, and leaves Pi's as it is", async () => {
+		const SettingsManager = await settingsManagerOf("0.8.4 arm64 jit-off");
+		const { cwd, agentDir, file } = agentDirWith({ packages: ["npm:pi-web-access"] });
+		const settings = SettingsManager.create(cwd, agentDir);
+		settings.setPackages(["npm:pi-web-access", "npm:another"]);
+		await settings.flush();
+		const written = JSON.parse(readFileSync(file, "utf8"));
+		expect(written.packages).toEqual(["npm:pi-web-access"]);
+		expect(written.piBolt.packages).toEqual(["npm:pi-web-access", "npm:another"]);
+		expect(SettingsManager.create(cwd, agentDir).getPackagesKeptForPi("global")).toEqual(["npm:pi-web-access"]);
+	});
+
+	test("OpenSec's extensions, which Pi on Node cannot load, move out of Pi's list into Pi-Bolt's", async () => {
+		const SettingsManager = await settingsManagerOf("0.8.4 arm64 jit-off");
+		const before = [
+			"npm:pi-web-access",
+			"npm:opensec-pi-subagents@0.20.0",
+			{ source: "npm:opensec-pi-todo@2.13.1" },
+			"npm:opensec-pi-fff",
+		];
+		const { cwd, agentDir, file } = agentDirWith({ packages: before, theme: "dark" });
+		expect(SettingsManager.create(cwd, agentDir).getPackages()).toEqual(before);
+		const written = JSON.parse(readFileSync(file, "utf8"));
+		expect(written.packages).toEqual(["npm:pi-web-access"]);
+		expect(written.piBolt.packages).toEqual(before);
+		expect(written.theme).toBe("dark");
+	});
+
+	test("with a list of its own already, they are added to it once", async () => {
+		const SettingsManager = await settingsManagerOf("0.8.4 arm64 jit-off");
+		const { cwd, agentDir, file } = agentDirWith({
+			packages: ["npm:@juicesharp/rpiv-todo", "npm:opensec-pi-subagents@0.20.0", "npm:opensec-pi-todo@2.13.1"],
+			piBolt: { packages: ["npm:opensec-pi-todo@2.13.1"] },
+		});
+		expect(SettingsManager.create(cwd, agentDir).getPackages()).toEqual([
+			"npm:opensec-pi-todo@2.13.1",
+			"npm:opensec-pi-subagents@0.20.0",
+		]);
+		const written = JSON.parse(readFileSync(file, "utf8"));
+		expect(written.packages).toEqual(["npm:@juicesharp/rpiv-todo"]);
+	});
+
+	test("Pi (not a Pi-Bolt build) changes nothing, and writes packages as before", async () => {
+		const SettingsManager = await settingsManagerOf(undefined);
+		const before = ["npm:pi-web-access", "npm:opensec-pi-todo@2.13.1"];
+		const { cwd, agentDir, file } = agentDirWith({ packages: before });
+		const settings = SettingsManager.create(cwd, agentDir);
+		expect(settings.getPackages()).toEqual(before);
+		expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ packages: before });
+		settings.setPackages(["npm:pi-web-access"]);
+		await settings.flush();
+		const written = JSON.parse(readFileSync(file, "utf8"));
+		expect(written.packages).toEqual(["npm:pi-web-access"]);
+		expect(written.piBolt).toBeUndefined();
+	});
 });
