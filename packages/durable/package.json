@@ -87,6 +87,7 @@
 		"bench:storage": "vitest bench --config vitest.benchmark.config.ts",
 		"bench:storage:memory": "node --conditions=source --experimental-strip-types test/storage-memory.ts",
 		"bench:tool-output": "node --conditions=source --experimental-strip-types --expose-gc test/tool-output-bench.ts",
+		"bench:document-append": "node --conditions=source --experimental-strip-types test/document-append-bench.ts",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [
