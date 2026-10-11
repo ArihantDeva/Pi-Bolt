@@ -46,8 +46,9 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       stamp: ${{ steps.check.outputs.stamp }}
       runtime_from: ${{ steps.check.outputs.runtime_from }}
-      # The SHA-256 of each runtime uploaded to the draft (when runtime_from is this tag), checked again where it is used: the
-      # build jobs run code from dependencies, with a token that may write to the draft.
+      # The SHA-256 of each runtime uploaded to the draft (only when those are used: the build jobs take the draft's runtime when
+      # it is set), checked again where it is used: the build jobs run code from dependencies, with a token that may write to the
+      # draft.
       runtime_sha_linux: ${{ steps.check.outputs.runtime_sha_linux }}
       runtime_sha_darwin: ${{ steps.check.outputs.runtime_sha_darwin }}
       runtime_sha_win32: ${{ steps.check.outputs.runtime_sha_win32 }}
@@ -153,7 +154,8 @@ jobs:
         run: brew install bash tmux xz
       - name: Runtime
         run: |
-          if [ "$RUNTIME_FROM" = "$TAG" ]; then
+          # (By whether prepare hashed a draft's runtime, not by RUNTIME_FROM: a dry run of the latest release has it as its own.)
+          if [ -n "$RUNTIME_SHA" ]; then
             # Uploaded to this tag's draft by the maintainer.
             mkdir -p .work/rt .work/runtime
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "pi-bolt-runtime-${{ matrix.platform }}.tar.gz" --dir .work/rt
@@ -240,7 +242,7 @@ jobs:
       - name: Runtime
         run: |
           New-Item -ItemType Directory -Force .work\rt, .work\runtime | Out-Null
-          if ($env:RUNTIME_FROM -eq $env:TAG) {
+          if ($env:RUNTIME_SHA) {
             # Uploaded to this tag's draft by the maintainer: the one the prepare job saw, before any build ran.
             gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --pattern pi-bolt-runtime-win32-x64.zip --dir .work\rt
             $sum = (Get-FileHash .work\rt\pi-bolt-runtime-win32-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
