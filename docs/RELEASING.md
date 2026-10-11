@@ -30,7 +30,7 @@ release key is a secret of the `release` environment, used only by `publish` run
 3. When `ci` passes, `tag` tags the commit `bolt-vX.Y.Z` and runs `release`, which builds and tests for about an hour and leaves
    a draft; `publish` then signs it and publishes it. `tag` leaves a version without its release notes untagged.
 4. Try every install, looking for "signature verified": `curl -fsSL https://pi-bolt.opensec.in/install.sh | sh`,
-   `npm install -g pi-bolt`, and on Windows `powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"`.
+   `npm install -g pi-bolt`, and on Windows `powershell -c "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://pi-bolt.opensec.in/install.ps1 | iex"`.
 
 By hand (with `AUTO_RELEASE` unset, or to redo a step): push the tag yourself
 (`git tag -a bolt-vX.Y.Z -m "Pi-Bolt X.Y.Z" && git push origin bolt-vX.Y.Z`), then, once the draft is there, run `publish` from
@@ -74,8 +74,8 @@ each as it is, and that `extensions.txt` pins at least one extension and has no 
 
 The runtime (patched WebKit and Bun) takes about 32 GB of RAM, 40 GB of disk and an hour on 16 cores to build, more than
 GitHub's runners give. `release` therefore uses the previous release's runtimes when the engine is the same: `RUNTIME_STAMP`
-is the hash of the engine entries of `sources.json`, the patches and the runtime build scripts
-(`scripts/runtime-stamp.sh`). `ci` says when it differs. The previous release's stamp counts only as its signed `SHA256SUMS`
+is the hash of the engine entries of `sources.json`, the patches, the runtime build scripts and the linker-order hints
+they link with (`profiles/runtime-*.hints`) (`scripts/runtime-stamp.sh`). `ci` says when it differs. The previous release's stamp counts only as its signed `SHA256SUMS`
 gives it, for that release's version (releases before 0.8.0 did not sign it, so their runtimes are not reused). Runtimes
 uploaded to the draft are hashed by `release`'s first job and checked again by each build job before it uses one.
 
@@ -84,6 +84,8 @@ When it changed, build the three runtimes by hand before tagging:
 1. On Linux x86-64: `scripts/toolchain/make-sysroot.sh` once, then `scripts/fetch-sources.sh` and `scripts/build-runtime.sh`
    ([BUILDING.md](BUILDING.md)). On a Mac with Apple silicon: `scripts/fetch-sources.sh` and `scripts/build-runtime.sh`. On
    Windows x64: `scripts\fetch-sources.ps1` and `scripts\build-runtime.ps1` ([WINDOWS.md](WINDOWS.md)).
+   `fetch-sources` stops when `.work/webkit` or `.work/bun` is not the pinned commit with the current patch applied (sources of
+   an earlier engine, or a fetch that stopped halfway): delete that folder and run it again.
 2. On each, `scripts/package-release.sh` (Windows: `scripts\package-release.ps1`) and keep `pi-bolt-runtime-<platform>.tar.gz`
    (Windows: `.zip`) from `dist/X.Y.Z`. Run `tests/aot/run.sh` and `tests/runtime/run.sh` there (Windows: the `.ps1` ones).
 3. Make a draft for the tag and upload all three: `gh release create bolt-vX.Y.Z --draft --title "Pi-Bolt X.Y.Z" --notes ""`,

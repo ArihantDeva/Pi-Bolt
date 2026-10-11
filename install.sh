@@ -524,9 +524,12 @@ verify_signature() {
 		return 0
 	fi
 	if exe=$(installed_pibolt); then
+		# (By its full path: it is run from the download's folder, below.)
+		case "$exe" in /*) ;; *) exe="$PWD/$exe" ;; esac
 		printf '%s\n' "$VERIFY_SCRIPT" >"$TMP/verify.js"
 		status=0
-		BUN_BE_BUN=1 "$exe" "$TMP/verify.js" "$TMP/SHA256SUMS" "$TMP/release.pub" "$TMP/SHA256SUMS.sig" >/dev/null 2>&1 || status=$?
+		# (Run in the download's own folder, which holds only the release's files.)
+		(cd "$TMP" && BUN_BE_BUN=1 "$exe" ./verify.js SHA256SUMS release.pub SHA256SUMS.sig) >/dev/null 2>&1 || status=$?
 		[ "$status" != 3 ] || fail "the release's signature does not verify: the download is not Pi-Bolt's. Nothing was installed."
 		if [ "$status" = 0 ]; then
 			SIGNED=1
@@ -598,10 +601,15 @@ download() {
 
 install_release() {
 	SIGNED="" UNSIGNED="" NOVERIFY=""
-	TMP="$(mktemp -d)"
+	# The download is kept next to where it is installed: a /tmp mounted noexec could not run the check of the executable
+	# below, and the last step is then a rename on the same file system.
+	mkdir -p "$INSTALL" 2>/dev/null || true
+	TMP="$(mktemp -d "$INSTALL/.download.XXXXXX" 2>/dev/null || mktemp -d)"
 	PIDS=""
 	SIG_PID=""
-	trap 'kill $PIDS $SIG_PID 2>/dev/null; rm -rf "$TMP"; finish_progress; exit 130' INT TERM
+	# (Whatever ends the script, a failed step too, takes the download with it.)
+	trap 'kill $PIDS $SIG_PID 2>/dev/null || true; rm -rf "$TMP"' EXIT
+	trap 'kill $PIDS $SIG_PID 2>/dev/null || true; rm -rf "$TMP"; finish_progress; exit 130' INT TERM
 	[ -t 1 ] && printf '%s[?25l' "$ESC"
 	if [ ! -t 1 ]; then
 		# Not a terminal (a log, CI): plain lines instead of an animated bar.
@@ -684,7 +692,7 @@ install_release() {
 	if [ -d "$INSTALL/$NAME" ]; then mv "$INSTALL/$NAME" "$INSTALL/$NAME.old"; fi
 	mv "$TMP/$NAME" "$INSTALL/$NAME"
 	rm -rf "$INSTALL/$NAME.old" "$TMP"
-	trap - INT TERM
+	trap - EXIT INT TERM
 	finish_progress
 	printf '  %s%s%s install complete %s(%s, %s MB from %s%s)%s\n' "$green" "$CHECK" "$reset" "$dim" "$PLATFORM-$VARIANT" "$(mb "${total:-0}")" "$FROM" "${SIGNED:+, signature verified}" "$reset"
 	[ -z "$UNSIGNED" ] || printf '  %snote: this release is not signed (it is from before Pi-Bolt signed releases); its checksum was verified%s\n' "$dim" "$reset"
@@ -770,7 +778,13 @@ shell_config_file() {
 	case "$(basename "${SHELL:-sh}")" in
 	zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
 	fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
-	bash) if [ -f "$HOME/.bashrc" ]; then printf '%s/.bashrc' "$HOME"; else printf '%s/.profile' "$HOME"; fi ;;
+	bash)
+		# A macOS terminal starts a login shell, which reads the first of these and not ~/.bashrc.
+		if [ "$PLATFORM" != darwin ] && [ -f "$HOME/.bashrc" ]; then printf '%s/.bashrc' "$HOME"
+		elif [ "$PLATFORM" = darwin ] && [ -f "$HOME/.bash_profile" ]; then printf '%s/.bash_profile' "$HOME"
+		elif [ "$PLATFORM" = darwin ] && [ -f "$HOME/.bash_login" ]; then printf '%s/.bash_login' "$HOME"
+		else printf '%s/.profile' "$HOME"; fi
+		;;
 	*) printf '%s/.profile' "$HOME" ;;
 	esac
 }

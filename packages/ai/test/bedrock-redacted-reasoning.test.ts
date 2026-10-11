@@ -62,7 +62,7 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import type { Context, Message, Model, ThinkingContent } from "../src/types.ts";
+import type { Context, Message, Model, ThinkingContent, ToolCall } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const gptModel: Model<"bedrock-converse-stream"> = {
@@ -265,5 +265,31 @@ describe("Bedrock redacted reasoning", () => {
 			{ reasoningContent: { redactedContent: bedrockMock.redactedBytes } },
 			{ toolUse: { toolUseId: "tool-1", name: "read", input: { path: "/tmp/a.txt" } } },
 		]);
+	});
+});
+
+describe("Bedrock tool call without contentBlockStop", () => {
+	beforeEach(() => {
+		bedrockMock.streamEvents = undefined;
+	});
+
+	it("parses all of the streamed arguments", async () => {
+		// Past 1 KB the arguments are parsed again only once they have grown by an eighth, so the last deltas would be lost.
+		const input = JSON.stringify({ content: "x".repeat(4000), path: "/tmp/a.txt" });
+		const deltas = input.match(/[\s\S]{1,100}/g)!;
+		bedrockMock.streamEvents = [
+			{ messageStart: { role: "assistant" } },
+			{ contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: "tool-1", name: "write" } } } },
+			...deltas.map((part) => ({
+				contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: part } } },
+			})),
+			{ messageStop: { stopReason: "tool_use" } },
+		];
+
+		const response = await streamBedrock(gptModel, helloContext).result();
+
+		const toolCall = response.content.find((c): c is ToolCall => c.type === "toolCall");
+		expect(toolCall?.arguments).toEqual(JSON.parse(input));
+		expect("partialJson" in toolCall!).toBe(false);
 	});
 });

@@ -697,6 +697,9 @@ function flushRedactedContent(block: Block): void {
  */
 function finalizeStreamingBlock(block: Block): void {
 	delete block.index;
+	// While streaming, the arguments are parsed only now and then: parse all that arrived before dropping the buffer.
+	if (block.type === "toolCall" && block.partialJson !== undefined)
+		block.arguments = parseStreamingJson(block.partialJson);
 	// partialJson is only a streaming scratch buffer; never persist it.
 	delete block.partialJson;
 	flushRedactedContent(block);

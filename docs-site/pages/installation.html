@@ -1,0 +1,154 @@
+<!-- {"title": "Installation", "description": "Install Pi-Bolt on macOS, Linux or Windows with the installer or npm, choose a build, verify it, update and uninstall."} -->
+<p class="eyebrow">Get started</p>
+<h1>Installation</h1>
+<p class="lede">Install Pi-Bolt with one command. The installer downloads the release for your system, checks its checksum and
+  signature, and puts <code>pi-bolt</code> on your PATH. It does not change your Pi installation.</p>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>macOS</strong> 13 or later on Apple silicon. There is no build for Intel Macs.</li>
+  <li><strong>Linux</strong> on x86-64 with glibc 2.17 or later. musl distributions such as Alpine are not supported.</li>
+  <li><strong>Windows</strong> 10 (1809) or later, or Windows 11, on x64.</li>
+</ul>
+<p>Pi-Bolt does not need Node.js, Bun or Pi. npm is only needed if you install with npm.</p>
+
+<h2>Install</h2>
+<div class="tabs" data-group="os">
+  <div data-tab="macos" data-title="macOS">
+<pre data-label="Terminal"><span class="p">$ </span>curl -fsSL https://pi-bolt.opensec.in/install.sh | sh</pre>
+  </div>
+  <div data-tab="linux" data-title="Linux">
+<pre data-label="Terminal"><span class="p">$ </span>curl -fsSL https://pi-bolt.opensec.in/install.sh | sh</pre>
+  </div>
+  <div data-tab="windows" data-title="Windows">
+<pre data-label="PowerShell">powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"</pre>
+    <p>On an older Windows 10 whose PowerShell only offers TLS 1.0, turn on TLS 1.2 first:</p>
+<pre data-label="PowerShell">powershell -c "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://pi-bolt.opensec.in/install.ps1 | iex"</pre>
+  </div>
+  <div data-tab="npm" data-title="npm">
+<pre data-label="Terminal"><span class="p">$ </span>npm install -g --allow-scripts=pi-bolt pi-bolt</pre>
+    <p><code>--allow-scripts=pi-bolt</code> lets npm run the package's install script, which puts the Windows executable in place.
+      On macOS and Linux, the first run of <code>pi-bolt</code> downloads the release that matches the package's version.</p>
+  </div>
+</div>
+
+<p>The installer:</p>
+<ol>
+  <li>Downloads the release for your platform and CPU, from the npm registry's CDN with GitHub as a fallback.</li>
+  <li>Checks it against the release's <code>SHA256SUMS</code>, and checks the Ed25519 signature of <code>SHA256SUMS</code>
+    against Pi-Bolt's release key. A download that does not verify is not installed. (On macOS and Linux, the signature check
+    needs OpenSSL 3 or an earlier Pi-Bolt; without either, the installer checks the checksums only and says so.)</li>
+  <li>Installs it to <code>~/.pi-bolt</code> and links <code>pi-bolt</code> into <code>~/.local/bin</code>. On Windows, it
+    installs to <code>%USERPROFILE%\.pi-bolt</code> and asks before adding it to your PATH. It needs no administrator
+    rights.</li>
+  <li>Offers two optional extensions by OpenSec, and installs them only if you say yes. See
+    <a href="extensions.html#opensec-extensions">OpenSec extensions</a>.</li>
+</ol>
+<p>Then run <code>pi-bolt</code> in a project. Continue with the <a href="quickstart.html">Quickstart</a>.</p>
+
+<div class="callout">
+  <span class="title"><code>pi-bolt: command not found</code>?</span>
+  <code>~/.local/bin</code> is not on your PATH. Add <code>export PATH="$HOME/.local/bin:$PATH"</code> to your shell profile and
+  open a new terminal.
+</div>
+
+<h2>Builds</h2>
+<p>Each platform has a default build and a JIT build. The installer picks the default build for your CPU. To choose another, set
+  <code>PIBOLT_VARIANT</code>. See <a href="builds.html">Choose a build</a> for when the JIT build is the better choice.</p>
+<div class="table"><table>
+  <thead><tr><th>Platform</th><th><code>PIBOLT_VARIANT</code></th><th>Build</th></tr></thead>
+  <tbody>
+    <tr><td>macOS</td><td><code>arm64</code></td><td>Default</td></tr>
+    <tr><td>macOS</td><td><code>arm64-jit</code></td><td>JIT on, for heavy run-time extensions</td></tr>
+    <tr><td>Linux</td><td><code>x64</code></td><td>Default, for CPUs with AVX2 (Intel Haswell, AMD Zen and later)</td></tr>
+    <tr><td>Linux</td><td><code>x64-baseline</code></td><td>Any x86-64 CPU. Picked automatically when the CPU has no AVX2.</td></tr>
+    <tr><td>Linux</td><td><code>x64-jit</code></td><td>JIT on</td></tr>
+    <tr><td>Windows</td><td><code>x64</code></td><td>Default. Runs compiled code on CPUs with AVX2, and bytecode on others.</td></tr>
+    <tr><td>Windows</td><td><code>x64-jit</code></td><td>JIT on</td></tr>
+  </tbody>
+</table></div>
+<div class="tabs" data-group="os">
+  <div data-tab="macos" data-title="macOS">
+<pre data-label="Terminal"><span class="p">$ </span>curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=arm64-jit sh</pre>
+  </div>
+  <div data-tab="linux" data-title="Linux">
+<pre data-label="Terminal"><span class="p">$ </span>curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=x64-jit sh</pre>
+  </div>
+  <div data-tab="windows" data-title="Windows">
+<pre data-label="PowerShell">$env:PIBOLT_VARIANT = "x64-jit"
+powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"</pre>
+  </div>
+  <div data-tab="npm" data-title="npm">
+<pre data-label="Shell profile"><span class="c"># ~/.zshrc or ~/.bashrc; use x64-jit on Linux</span>
+export PIBOLT_VARIANT=arm64-jit</pre>
+    <p>On macOS and Linux, the npm package reads <code>PIBOLT_VARIANT</code> every time it runs, so keep it set in your shell
+      profile. If it is unset later, the next run switches back to the default build.</p>
+    <p>On Windows, the npm package picks the build when it is installed or updated. Set the variable first, then install:</p>
+<pre data-label="PowerShell">$env:PIBOLT_VARIANT = "x64-jit"
+npm install -g --allow-scripts=pi-bolt pi-bolt</pre>
+    <p>To change builds later, set or clear <code>PIBOLT_VARIANT</code> and run the install again.</p>
+  </div>
+</div>
+<p><code>pi-bolt update</code> keeps the build you chose.</p>
+
+<h2>Verify the installation</h2>
+<pre data-label="Terminal"><span class="p">$ </span>pi-bolt --version
+1.1.0 (Pi-Bolt 0.8.0, darwin-arm64, JIT off)</pre>
+<p>The first number is the Pi release this build is made from. The rest is the Pi-Bolt release, the platform, and whether the JIT
+  is on. To check that Pi runs its compiled code, see
+  <a href="troubleshooting.html#check-the-compiled-code">Check the compiled code</a>.</p>
+
+<h2>Update</h2>
+<pre data-label="Terminal"><span class="p">$ </span>pi-bolt update          <span class="c"># Pi-Bolt only</span>
+<span class="p">$ </span>pi-bolt update --all    <span class="c"># Pi-Bolt and your extensions</span></pre>
+<p>With npm, run <code>npm update -g pi-bolt</code>; the next run downloads the new release. Running the installer again also
+  updates.</p>
+
+<h2>Uninstall</h2>
+<p>Run the installer again and choose <strong>uninstall</strong>. It removes the Pi-Bolt builds from <code>~/.pi-bolt</code> and
+  the <code>pi-bolt</code> link. With npm, run <code>npm uninstall -g pi-bolt</code>, then delete <code>~/.pi-bolt/npm</code>,
+  where the npm package keeps the release it downloaded.</p>
+<p>Your Pi configuration in <code>~/.pi/agent</code> belongs to Pi and is not removed.</p>
+
+<h2>Manual download</h2>
+<p>Download a build from the <a href="https://github.com/opensec-git/Pi-Bolt/releases/latest">latest release</a>, check it against
+  <code>SHA256SUMS</code>, unpack it, and run <code>./pi</code> (on Windows, <code>pi-bolt.exe</code>). Keep the unpacked folder
+  together: the executable uses the files around it for themes, HTML export and image tools. Link to the executable rather than
+  copying it.</p>
+<div class="table"><table>
+  <thead><tr><th>Download</th><th>For</th></tr></thead>
+  <tbody>
+    <tr><td><code>pi-bolt-darwin-arm64.tar.xz</code></td><td>macOS on Apple silicon</td></tr>
+    <tr><td><code>pi-bolt-linux-x64.tar.xz</code></td><td>Linux, CPUs with AVX2</td></tr>
+    <tr><td><code>pi-bolt-linux-x64-baseline.tar.xz</code></td><td>Linux, any x86-64 CPU</td></tr>
+    <tr><td><code>pi-bolt-win32-x64.zip</code></td><td>Windows x64</td></tr>
+  </tbody>
+</table></div>
+<p>The JIT builds are <code>pi-bolt-darwin-arm64-jit.tar.xz</code>, <code>pi-bolt-linux-x64-jit.tar.xz</code> and
+  <code>pi-bolt-win32-x64-jit.zip</code>. To check a download:</p>
+<pre data-label="Terminal"><span class="p">$ </span>sha256sum -c --ignore-missing SHA256SUMS</pre>
+<div class="callout warn">
+  <span class="title">macOS: downloaded with a browser</span>
+  A browser marks downloads as quarantined, and macOS then refuses Pi-Bolt's ad-hoc signed executable (<code>zsh: killed</code>,
+  or "cannot verify the developer"). Install with the installer or npm, which do not quarantine, or remove the attribute from
+  the unpacked folder: <code>xattr -dr com.apple.quarantine pi-bolt-darwin-arm64</code>.
+</div>
+
+<h2>Installer options</h2>
+<p>Set these in the environment of the installer: <code>curl ... | NAME=value sh</code> on macOS and Linux,
+  <code>$env:NAME = "value"</code> before the command on Windows.</p>
+<div class="table"><table>
+  <thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>PIBOLT_VARIANT</code></td><td>The build to install (see <a href="#builds">Builds</a>).</td></tr>
+    <tr><td><code>PIBOLT_VERSION</code></td><td>A release tag such as <code>bolt-v0.8.0</code>. Default: the latest release.</td></tr>
+    <tr><td><code>PIBOLT_INSTALL</code></td><td>Where to install. Default: <code>~/.pi-bolt</code> (Windows: <code>%USERPROFILE%\.pi-bolt</code>).</td></tr>
+    <tr><td><code>PIBOLT_BIN_DIR</code></td><td>macOS and Linux: where to link <code>pi-bolt</code>. Default: <code>~/.local/bin</code>.</td></tr>
+    <tr><td><code>PIBOLT_NO_PATH=1</code></td><td>Windows: do not add Pi-Bolt to your PATH.</td></tr>
+    <tr><td><code>PIBOLT_YES=1</code></td><td>Do not ask: take the default action, install no extensions, and do not offer to start Pi-Bolt.</td></tr>
+    <tr><td><code>PIBOLT_EXTENSIONS</code></td><td><code>yes</code> or <code>no</code>: whether to install OpenSec's optional extensions without asking.</td></tr>
+    <tr><td><code>PIBOLT_SOURCE</code></td><td>Where to download the executable from: <code>auto</code> (npm, then GitHub; the default), <code>npm</code> or <code>github</code>. Checksums and signatures always come from the GitHub release.</td></tr>
+    <tr><td><code>PIBOLT_NPM_REGISTRY</code></td><td>An npm registry or mirror. Default: <code>https://registry.npmjs.org</code>.</td></tr>
+    <tr><td><code>PIBOLT_CONNECTIONS</code></td><td>macOS and Linux: connections to download over at once. Default: 4.</td></tr>
+  </tbody>
+</table></div>

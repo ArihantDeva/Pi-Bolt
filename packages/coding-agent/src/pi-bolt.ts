@@ -48,7 +48,17 @@ export function piBoltInstallerProcess(): { command: string; args: string[] } {
 			],
 		};
 	}
-	return { command: "sh", args: ["-c", PIBOLT_INSTALL_COMMAND] };
+	// With curl or wget, whichever there is (the installer itself works with either); a failed download is an exit code too.
+	const url = PIBOLT_INSTALL_URL;
+	return {
+		command: "sh",
+		args: [
+			"-c",
+			`if command -v curl >/dev/null 2>&1; then s=$(curl -fsSL ${url}) || exit 1; ` +
+				`elif command -v wget >/dev/null 2>&1; then s=$(wget -qO- ${url}) || exit 1; ` +
+				`else echo "curl or wget is needed to download ${url}" >&2; exit 1; fi; printf '%s\\n' "$s" | sh`,
+		],
+	};
 }
 export const PIBOLT_RELEASES_URL = "https://github.com/opensec-git/Pi-Bolt/releases";
 export const PIBOLT_LATEST_RELEASE_API = "https://api.github.com/repos/opensec-git/Pi-Bolt/releases/latest";
@@ -91,13 +101,15 @@ export function piBoltInstallDir(): string | undefined {
 /**
  * The environment that makes the installer replace this installation with release `version`, keeping its variant and place.
  * The version is the one the update was decided on (not "latest" again), and what in the user's environment would change
- * where the release comes from (a mirror, which may be unsigned; the npm launcher's mode; the source) is left out.
+ * where the release comes from (a mirror, which may be unsigned; the npm launcher's mode; the source) is left out. PATH is
+ * left as the user set it: the installer would otherwise add this folder without asking (and take other variants off).
  */
 export function piBoltUpdateEnvironment(version: string): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		PIBOLT_YES: "1",
 		PIBOLT_NO_START: "1",
+		PIBOLT_NO_PATH: "1",
 		PIBOLT_VARIANT: PIBOLT?.variant ?? "x64",
 		PIBOLT_VERSION: `bolt-v${version}`,
 		PIBOLT_INSTALL: piBoltInstallDir() ?? process.env.PIBOLT_INSTALL ?? join(homedir(), ".pi-bolt"),

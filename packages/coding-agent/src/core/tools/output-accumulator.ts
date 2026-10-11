@@ -54,6 +54,8 @@ export class OutputAccumulator {
 	private tempFile: OutputFile | undefined;
 	/** The full output file was asked for and is missing output: not created, or a write to it failed. */
 	private tempFileFailed = false;
+	/** The full output file reached its size limit: the end of the output is only in memory. */
+	private tempFileCapped = false;
 
 	constructor(options: OutputAccumulatorOptions = {}) {
 		this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
@@ -124,6 +126,7 @@ export class OutputAccumulator {
 		const file = this.tempFile;
 		this.tempFile = undefined;
 		if (file?.failed) this.tempFileFailed = true;
+		if (file?.capped) this.tempFileCapped = true;
 		file?.close();
 	}
 
@@ -147,18 +150,27 @@ export class OutputAccumulator {
 		}
 		try {
 			const size = (await file.stat()).size;
-			if (size <= maxBytes) {
+			if (size <= maxBytes && !this.tempFileCapped) {
 				return { content: new TextDecoder().decode(await file.readFile()), truncated: false };
 			}
 			const headBytes = Math.floor(maxBytes / 2);
 			const tailBytes = maxBytes - headBytes;
 			const head = Buffer.alloc(headBytes);
-			const tail = Buffer.alloc(tailBytes);
-			await file.read(head, 0, headBytes, 0);
-			await file.read(tail, 0, tailBytes, size - tailBytes);
+			const { bytesRead } = await file.read(head, 0, headBytes, 0);
 			// Cut at character boundaries: streaming decode holds back an incomplete trailing sequence,
 			// and the tail skips leading continuation bytes.
-			const headText = new TextDecoder().decode(head, { stream: true });
+			const headText = new TextDecoder().decode(head.subarray(0, bytesRead), { stream: true });
+			if (this.tempFileCapped) {
+				// The file stops at its size limit, so its end is not the output's: that is the tail kept in memory.
+				const tailText = truncateTail(this.getSnapshotText(), {
+					maxLines: Number.MAX_SAFE_INTEGER,
+					maxBytes: tailBytes,
+				}).content;
+				const omitted = this.totalRawBytes - bytesRead - byteLength(tailText);
+				return { content: `${headText}\n\n[... ${omitted} bytes omitted ...]\n\n${tailText}`, truncated: true };
+			}
+			const tail = Buffer.alloc(tailBytes);
+			await file.read(tail, 0, tailBytes, size - tailBytes);
 			let tailStart = 0;
 			while (tailStart < tail.length && (tail[tailStart] & 0xc0) === 0x80) tailStart++;
 			const tailText = new TextDecoder().decode(tail.subarray(tailStart));

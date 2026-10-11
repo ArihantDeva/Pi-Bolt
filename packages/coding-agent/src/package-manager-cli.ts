@@ -8,6 +8,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -737,7 +738,9 @@ async function runPiBoltSelfUpdate(version: string): Promise<boolean> {
 	console.log(chalk.dim(`Updating Pi-Bolt to ${version} with ${PIBOLT_INSTALL_COMMAND}...`));
 	const status = await new Promise<number | null>((resolve, reject) => {
 		const installer = piBoltInstallerProcess();
+		// (From the home folder: the installer has nothing to do with the folder the update was asked for in.)
 		const child = spawnProcess(installer.command, installer.args, {
+			cwd: homedir(),
 			stdio: "inherit",
 			env: piBoltUpdateEnvironment(version),
 		});

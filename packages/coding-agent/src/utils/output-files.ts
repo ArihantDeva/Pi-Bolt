@@ -50,6 +50,7 @@ export class OutputFile {
 	private fd: number | undefined;
 	private error: Error | undefined;
 	private bytesWritten = 0;
+	private reachedMaxBytes = false;
 
 	constructor(path: string, maxBytes = MAX_OUTPUT_FILE_BYTES) {
 		this.path = path;
@@ -67,6 +68,11 @@ export class OutputFile {
 	/** Whether the file misses output: it was not created, or a write to it failed. */
 	get failed(): boolean {
 		return this.error !== undefined;
+	}
+
+	/** Whether the file reached its size limit: it ends with a note, and output written after that is not in it. */
+	get capped(): boolean {
+		return this.reachedMaxBytes;
 	}
 
 	/**
@@ -92,7 +98,10 @@ export class OutputFile {
 				offset += writeSync(this.fd, bytes, offset, bytes.length - offset);
 			}
 			this.bytesWritten += bytes.length;
-			if (full) this.closeFd();
+			if (full) {
+				this.reachedMaxBytes = true;
+				this.closeFd();
+			}
 		} catch (error) {
 			this.error = error instanceof Error ? error : new Error(String(error));
 			this.closeFd();

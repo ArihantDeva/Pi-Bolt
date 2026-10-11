@@ -148,7 +148,8 @@ most, placed together at the front of the code with a linker order file, so that
 the executable (it maps less of it from disk on a cold start, and keeps less of it resident). The file is made after the build,
 from [`profiles/runtime-darwin-arm64.hints`](../profiles/runtime-darwin-arm64.hints) (the functions Pi entered, in first-entry
 order) and then Bun's own workloads (`.work/bun/scripts/orderfile`), and the runtime is linked again with it. The hints are
-names, so they hold from one build of the runtime to the next; record them again when what Pi runs has changed much:
+names, so they hold from one build of the runtime to the next; record them again when what Pi runs has changed much. They are
+part of the runtime stamp, so a release after a change to them needs its runtime built ([RELEASING.md](RELEASING.md#when-the-engine-changed)):
 
 ```bash
 scripts/train-runtime-hints.sh [--pi BUILD]   # traces sessions of out/pi-bolt (bench/orderfile_session.py) -> profiles/runtime-darwin-arm64.hints
@@ -190,6 +191,25 @@ The engine itself was also checked against JavaScriptCore's own test suite, `JST
 ahead-of-time compilation, and the outputs are compared. 4,780 of the 4,786 tests that run behave the same. The 6 that differ
 inspect engine internals that do not exist without a JIT (tier-up and reoptimization counters, sampling-profiler frames), or run
 out of memory or stack at limits that differ by design.
+
+## On Windows
+
+The same steps, with the PowerShell scripts (Windows PowerShell 5.1 or PowerShell 7), from a shell with Visual Studio's
+environment loaded (`Launch-VsDevShell.ps1`):
+
+```powershell
+scripts\fetch-sources.ps1                      # WebKit and Bun at the pinned commits, with patches\*.patch applied
+scripts\build-runtime.ps1                      # the runtime -> .work\runtime\bun.exe (-Lto off for a faster build)
+npm ci --ignore-scripts; npm run build:offline # Pi
+scripts\build-pi.ps1                           # -> out\pi-bolt\pi.exe (-Jit on for the -jit build)
+scripts\package-release.ps1                    # the release's win32-x64 archives, the runtime and SHA256SUMS -> dist\<VERSION>\
+```
+
+The runtime needs Visual Studio 2022 (or its Build Tools) with the C++ workload, the Windows SDK and "C++ Clang tools for
+Windows", LLVM 23.1, CMake, Rust, Bun 1.4.2, Go, NASM, Ruby, Python 3 with the `py` launcher and Git for Windows: the head of
+`scripts\build-runtime.ps1` lists them. There is no `fetch-runtime.ps1`: take `pi-bolt-runtime-win32-x64.zip` from a release
+into `.work\runtime\` to build Pi without building the runtime. Tests: `tests\pi\run.ps1 out\pi-bolt\pi.exe` and
+`scripts\windows-selftest.ps1 -Pi out\pi-bolt\pi.exe`; the `bench\` tools run on Windows too (bench/README.md).
 
 ## Where things go
 

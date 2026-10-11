@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libproc.h>
+#include <mach/mach_time.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stddef.h>
@@ -34,11 +35,9 @@ static int readFully(int fd, void* buffer, size_t size)
     return 0;
 }
 
-static void reply(int stream, int kind, int value)
+static void writeFully(int stream, const void* data, size_t size)
 {
-    struct pibolt_spawn_reply message = { kind, value };
-    const char* at = (const char*)&message;
-    size_t size = sizeof(message);
+    const char* at = (const char*)data;
     while (size) {
         ssize_t wrote = write(stream, at, size);
         if (wrote < 0 && errno == EINTR)
@@ -48,6 +47,12 @@ static void reply(int stream, int kind, int value)
         at += wrote;
         size -= (size_t)wrote;
     }
+}
+
+static void reply(int stream, int kind, int value)
+{
+    struct pibolt_spawn_reply message = { kind, value };
+    writeFully(stream, &message, sizeof(message));
 }
 
 // Splits `size` bytes of NUL-terminated strings into a NULL-terminated array of `count` of them.
@@ -215,7 +220,20 @@ static void work(int stream, int directory, int count, int* fds, const int32_t* 
     siginfo_t info;
     while (waitid(P_PID, (id_t)pid, &info, WEXITED | WNOWAIT) < 0 && errno == EINTR) { }
     int status = info.si_code == CLD_EXITED ? (info.si_status & 0xff) << 8 : (info.si_status & 0x7f) | (info.si_code == CLD_DUMPED ? 0x80 : 0);
+    // (Read from the program's zombie, which WNOWAIT kept.)
+    struct pibolt_spawn_usage usage = { 0 };
+    struct rusage_info_v4 used;
+    if (!proc_pid_rusage(pid, RUSAGE_INFO_V4, (rusage_info_t*)&used)) {
+        mach_timebase_info_data_t base;
+        mach_timebase_info(&base);
+        usage.user_microseconds = (int64_t)(used.ri_user_time * base.numer / base.denom / 1000);
+        usage.system_microseconds = (int64_t)(used.ri_system_time * base.numer / base.denom / 1000);
+        usage.max_resident_bytes = (int64_t)used.ri_lifetime_max_phys_footprint;
+        usage.page_ins = (int64_t)used.ri_pageins;
+    }
     reply(stream, PIBOLT_SPAWN_EXITED, status);
+    reply(stream, PIBOLT_SPAWN_USAGE, 0);
+    writeFully(stream, &usage, sizeof(usage));
     // The program's pid stays taken until pi-spawn has exited (pi-bin may signal the pid until it learns that).
     char discard[64];
     for (;;) {
@@ -350,8 +368,15 @@ int pibolt_spawn_helper_start(void)
         return -1;
     int kept = fcntl(pair[0], F_DUPFD, PIBOLT_SPAWN_HELPER_MIN_FD);
     close(pair[0]);
-    if (kept < 0) {
-        close(pair[1]);
+    // The helper's end above 2 as well: the helper puts /dev/null on 0 to 2 (pi may be started with them closed).
+    int served = fcntl(pair[1], F_DUPFD, 3);
+    close(pair[1]);
+    pair[1] = served;
+    if (kept < 0 || served < 0) {
+        if (kept >= 0)
+            close(kept);
+        if (served >= 0)
+            close(served);
         return -1;
     }
     // Room for the requests of many programs started at once (macOS's default is about 4 KB).

@@ -1,7 +1,7 @@
 // Tests of the pi-bolt npm package's install script (npm/install.cjs), with a fake release signed with a key made here:
 // no network, no real release key.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -514,6 +514,31 @@ test("the placeholder, run without the install script: on Linux it starts the la
 	});
 	assert.equal(linux.stdout, "the build: --version\n", linux.stderr);
 	assert.equal(linux.status, 0);
+});
+
+test("the launcher's first run of a version removes the versions installed before it", { skip: (!findSh() || process.platform === "win32") && "no sh" }, (t) => {
+	const pkgDir = makePackage(t);
+	const home = join(pkgDir, "home");
+	// The installer, as far as the launcher sees it: it puts the build where PIBOLT_INSTALL says.
+	writeFileSync(
+		join(pkgDir, "install.sh"),
+		'mkdir -p "$PIBOLT_INSTALL/pi-bolt-linux-x64" && printf \'#!/bin/sh\\necho "the build: $*"\\n\' > "$PIBOLT_INSTALL/pi-bolt-linux-x64/pi" && chmod 755 "$PIBOLT_INSTALL/pi-bolt-linux-x64/pi"\n',
+	);
+	mkdirSync(join(home, "npm", "0.7.4", "pi-bolt-linux-x64"), { recursive: true });
+	mkdirSync(join(home, "npm", "notes"), { recursive: true });
+	// A session of 0.7.3 that is still running keeps its folder.
+	const running = join(home, "npm", "0.7.3", "pi-bolt-linux-x64");
+	mkdirSync(running, { recursive: true });
+	writeFileSync(join(running, "pi"), "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
+	const session = spawn(join(running, "pi"), [], { stdio: "ignore" });
+	t.after(() => session.kill());
+	const result = spawnSync("sh", [join(pkgDir, "bin", "pi-bolt"), "--version"], {
+		encoding: "utf8",
+		env: { ...process.env, PIBOLT_HOME: home, PIBOLT_VARIANT: "x64", PATH: `${fakeUname(pkgDir, "Linux")}:${process.env.PATH}` },
+	});
+	assert.equal(result.stdout, "the build: --version\n", result.stderr);
+	assert.equal(result.status, 0);
+	assert.deepEqual(readdirSync(join(home, "npm")).sort(), ["0.7.3", VERSION, "notes"]);
 });
 
 test("an archive entry's name: inside its folder, with / between its parts and no \\, :, .. or empty part", () => {
