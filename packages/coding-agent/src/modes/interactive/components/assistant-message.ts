@@ -129,6 +129,7 @@ export class AssistantMessageComponent extends Container {
 				this.contentContainer.addChild(
 					new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
 						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
+						complete: !this.isStreaming,
 					}),
 				);
 			} else if (content.type === "thinking") {
@@ -174,6 +175,7 @@ export class AssistantMessageComponent extends Container {
 									this.isStreaming,
 									this.markdownTransformers,
 								),
+								complete: !this.isStreaming,
 							},
 						);
 				this.contentContainer.addChild(
