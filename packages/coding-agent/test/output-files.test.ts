@@ -30,7 +30,9 @@ describe("OutputFile", () => {
 		const path = join(scratch(), "out.log");
 		const file = new OutputFile(path, 10);
 		file.write("12345678");
+		expect(file.capped).toBe(false);
 		file.write("abcdef");
+		expect(file.capped).toBe(true);
 		file.write("more");
 		file.close();
 		expect(readFileSync(path, "utf-8")).toBe("12345678ab\n[Output beyond 10 bytes was not saved]\n");
