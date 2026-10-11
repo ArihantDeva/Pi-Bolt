@@ -680,7 +680,7 @@ function Install-PiBoltExtensions($state) {
 	$exe = Join-Path $state.Dir 'pi-bolt.exe'
 	$sources = (Get-PiBoltPackageList $exe) -join "`n"
 	$extensions = @(
-		@{ Package = 'opensec-pi-subagents'; What = 'run specialized agents in separate sessions'; Kind = 'subagents|swarm' },
+		@{ Package = 'opensec-pi-subagents'; What = 'run specialized agents in separate sessions'; Kind = 'subagents' },
 		@{ Package = 'opensec-pi-todo'; What = 'a todo list for the model, shown above the editor'; Kind = 'rpiv-todo|pi-todo' },
 		@{ Package = 'opensec-pi-fff'; What = 'fast file and content search (find, grep, @-mentions)'; Kind = 'pi-fff' })
 	# Only the versions the release pins, and only with the integrity it says they have.
