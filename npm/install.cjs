@@ -340,6 +340,13 @@ async function extractZip(zipFile, top, dest) {
 	}
 }
 
+/** `url` without the slashes it ends with, if any ("http://mirror.test/pi-bolt//" -> "http://mirror.test/pi-bolt"). */
+function withoutTrailingSlashes(url) {
+	let end = url.length;
+	while (end > 0 && url[end - 1] === "/") end--;
+	return url.slice(0, end);
+}
+
 // --- Windows ------------------------------------------------------------------------------------------------------------
 
 function windowsProblems(env, release = os.release()) {
@@ -459,7 +466,7 @@ async function installWindows({
 	if (!["auto", "npm", "github"].includes(source)) fail("PIBOLT_SOURCE must be auto, npm or github");
 	let variant = env.PIBOLT_VARIANT || "";
 	if (variant && !VARIANTS.includes(variant)) fail("PIBOLT_VARIANT must be x64, x64-baseline or x64-jit");
-	const mirror = (env.PIBOLT_DOWNLOAD_BASE || "").replace(/\/+$/, "");
+	const mirror = withoutTrailingSlashes(env.PIBOLT_DOWNLOAD_BASE || "");
 	if (source === "npm" && mirror) fail("PIBOLT_SOURCE=npm needs the release from GitHub (no PIBOLT_DOWNLOAD_BASE)");
 	const base = mirror || `${REPO}/releases/download/bolt-v${version}`;
 	const bin = path.join(pkgDir, "bin");
@@ -482,7 +489,7 @@ async function installWindows({
 		let from = "";
 		if (source !== "github" && !mirror) {
 			// The npm package pi-bolt-win32-<variant> of the same version: a .tgz with the release's .zip in it.
-			const registry = (env.PIBOLT_NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/+$/, "");
+			const registry = withoutTrailingSlashes(env.PIBOLT_NPM_REGISTRY || "https://registry.npmjs.org");
 			const tgz = path.join(stage, "npm.tgz");
 			if (
 				(await download(fetchImpl, `${registry}/${name}/-/${name}-${version}.tgz`, tgz)) &&
@@ -582,6 +589,7 @@ module.exports = {
 	isSourceTree,
 	proxyOf,
 	windowsProblems,
+	withoutTrailingSlashes,
 };
 
 if (require.main === module) {
