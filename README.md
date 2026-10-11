@@ -190,6 +190,29 @@ scripts/build-pi.sh --plugins my-plugins/plugins.ts --out out/pi-bolt-plugins
 
 See [docs/PLUGINS.md](docs/PLUGINS.md).
 
+### Pi and Pi-Bolt side by side
+
+Pi-Bolt uses Pi's agent directory (`~/.pi/agent`: auth, models, sessions, settings), so by default a package installed with one
+is loaded by the other too. Two packages that provide the same tool, such as `@juicesharp/rpiv-todo` for Pi and
+`opensec-pi-todo` for Pi-Bolt, then cannot load together. To give Pi-Bolt a package list of its own, add `piBolt.packages` to
+`settings.json`:
+
+```json
+{
+  "packages": ["npm:@juicesharp/rpiv-todo"],
+  "piBolt": { "packages": ["npm:opensec-pi-todo"] }
+}
+```
+
+- Pi-Bolt then reads that list in place of `packages`, and `pi-bolt install` and `pi-bolt remove` change it; Pi keeps using
+  `packages` and does not read `piBolt`.
+- Each settings file counts on its own: the global one (`~/.pi/agent/settings.json`) and a project's (`.pi/settings.json`). A
+  file without `piBolt.packages` gives both its `packages`.
+- An empty list (`"piBolt": { "packages": [] }`) loads no packages from that file in Pi-Bolt.
+- Both lists install into the same folders (`~/.pi/agent/npm` and `~/.pi/agent/git`, or `.pi/npm` and `.pi/git` for a
+  project). Removing a package from Pi-Bolt's list keeps its files when Pi's list still has it. A package in both lists
+  should have the same version in both: each runtime installs the version its own list asks for over the other's.
+
 ## How it works
 
 <picture>
