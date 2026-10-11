@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libproc.h>
+#include <poll.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -275,7 +276,14 @@ int main(int argc, char** argv)
         _exit(127);
     struct pibolt_spawn_reply used;
     struct pibolt_spawn_usage usage;
-    if (!readFully(stream, &used, sizeof(used)) && used.kind == PIBOLT_SPAWN_USAGE && !readFully(stream, &usage, sizeof(usage))) {
+    // `usage` comes right after `exited` from a helper of 0.8.2 or later. A helper of an earlier release (that of a session
+    // started before Pi-Bolt was updated in place, which runs this pi-spawn from the new files) sends nothing more and waits
+    // for pi-spawn to exit: so only a short wait for it.
+    struct pollfd more = { .fd = stream, .events = POLLIN };
+    int ready;
+    while ((ready = poll(&more, 1, 250)) < 0 && errno == EINTR) { }
+    if (ready == 1 && (more.revents & POLLIN) && !readFully(stream, &used, sizeof(used)) && used.kind == PIBOLT_SPAWN_USAGE
+        && !readFully(stream, &usage, sizeof(usage))) {
         // (pi-bin may have stopped listening: that must not be how pi-spawn ends.)
         struct sigaction ignore = { .sa_handler = SIG_IGN };
         sigaction(SIGPIPE, &ignore, NULL);

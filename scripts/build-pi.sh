@@ -151,8 +151,11 @@ else
 	warn "no training profile at $PROFILE: building without one (run scripts/train-profile.sh for the fastest startup)"
 fi
 
+# Everything the compiler prints, for when the build stops: the reason is often an "AOT: " line, which is not shown otherwise.
+TEMP_DIR="${TMPDIR:-/tmp}"
+BUILD_LOG="${PIBOLT_BUILD_LOG:-$(mktemp "${TEMP_DIR%/}/pibolt-build.XXXXXX")}"
 log "Pi $VERSION, ahead of time: JIT $JIT, CPU $CPU, $([ -n "$KEEP_BYTECODE" ] && echo "bytecode kept" || echo "bytecode left out")$([ -n "$PLUGINS" ] && echo ", plugins from $PLUGINS") -> $OUT"
-(
+if ! (
 	cd "$AGENT" || exit 1
 	export BUN_JSC_useJIT=0 BUN_STATIC_HEAP=1 BUN_AOT=1
 	[ "$JIT" = off ] && export BUN_AOT_JIT=0
@@ -179,8 +182,12 @@ log "Pi $VERSION, ahead of time: JIT $JIT, CPU $CPU, $([ -n "$KEEP_BYTECODE" ] &
 	"$BUN" build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --compile-autoload-package-json \
 		--target="bun-$PIBOLT_PLATFORM" --bytecode --format=esm "${ORDER_ARGS[@]}" \
 		--define "PIBOLT_BUILD=\"$PIBOLT_VERSION $CPU_VARIANT jit-$JIT\"" \
-		--compile-exec-argv=--smol "${ENTRIES[@]}" --outfile "$OUT/pi" 2>&1 | tee "${PIBOLT_BUILD_LOG:-/dev/null}" | grep -v "^AOT: " | tail -3
-)
+		--compile-exec-argv=--smol "${ENTRIES[@]}" --outfile "$OUT/pi" 2>&1 | tee "$BUILD_LOG" | grep -v "^AOT: " | tail -3
+); then
+	tail -n 12 "$BUILD_LOG" >&2
+	die "the build stopped (above: the end of what the compiler printed; all of it: $BUILD_LOG)"
+fi
+[ -n "${PIBOLT_BUILD_LOG:-}" ] || rm -f "$BUILD_LOG"
 # macOS: pi is a launcher that starts the executable, pi-bin, at its linked address at once (scripts/lib/darwin-launcher.c): it
 # would otherwise start again itself, after a first load by dyld. The launcher also forks the helper that starts the programs
 # Pi starts, through pi-spawn (scripts/lib/darwin-spawn.h).

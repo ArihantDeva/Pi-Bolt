@@ -349,13 +349,21 @@ describe("Herdr's own Pi integration file", () => {
 		expect(await loadedCommands("0.7.5 arm64 jit-off", [herdrFile, other], dir)).toEqual(["other"]);
 	});
 
-	test("only Pi-Bolt has the built-in Herdr extension", async () => {
+	test("only Pi-Bolt has the built-in Herdr extension, and only in a Herdr pane", async () => {
+		const names = (list: { builtInExtensions: unknown[] }) =>
+			list.builtInExtensions.map((e) => (typeof e === "function" ? "" : (e as { name: string }).name));
+		vi.stubEnv("HERDR_ENV", "1");
+		vi.stubEnv("HERDR_PANE_ID", "p1");
+		vi.stubEnv("HERDR_SOCKET_PATH", "/tmp/herdr.sock");
 		vi.resetModules();
-		const pi = await import("../src/extensions/index.ts");
-		expect(pi.builtInExtensions.map((e) => (typeof e === "function" ? "" : e.name))).not.toContain("herdr");
+		expect(names(await import("../src/extensions/index.ts"))).not.toContain("herdr");
 		vi.resetModules();
 		(globalThis as { PIBOLT_BUILD?: string }).PIBOLT_BUILD = "0.7.5 arm64 jit-off";
-		const bolt = await import("../src/extensions/index.ts");
-		expect(bolt.builtInExtensions.map((e) => (typeof e === "function" ? "" : e.name))).toContain("herdr");
+		expect(names(await import("../src/extensions/index.ts"))).toContain("herdr");
+		vi.unstubAllEnvs();
+		vi.stubEnv("HERDR_ENV", undefined);
+		vi.resetModules();
+		expect(names(await import("../src/extensions/index.ts"))).not.toContain("herdr");
+		vi.unstubAllEnvs();
 	});
 });
