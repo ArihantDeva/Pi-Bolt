@@ -11,6 +11,15 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 // One function for every render: the Markdown component keeps what it rendered for as long as its style is the same.
 const thinkingTextColor = (text: string): string => theme.fg("thinkingText", text);
 
+/** A Markdown component of an assistant message, with what it was made from (AssistantMessageComponent.markdownFor()). */
+interface MarkdownBlock {
+	kind: "text" | "thinking";
+	text: string;
+	isStreaming: boolean;
+	outputPad: number;
+	component: Markdown;
+}
+
 /**
  * Component that renders a complete assistant message
  */
@@ -26,6 +35,15 @@ export class AssistantMessageComponent extends Container {
 	private isStreaming = false;
 	private contentIsStale = false;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	/** The children's lines with the prompt markers added, and the lines they were added to. */
+	private markedFrom?: string[];
+	private markedLines: string[] = [];
+	/**
+	 * The Markdown components of the content, with what they were made from. A rebuild with the same text takes the
+	 * component again instead of making a new one, which would parse its text again and render it from nothing: on
+	 * invalidate() (theme changes), and while a reply streams, for every block but the one growing.
+	 */
+	private markdownBlocks: MarkdownBlock[] = [];
 
 	constructor(
 		message?: AssistantMessage,
@@ -81,16 +99,21 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
-	override render(width: number): string[] {
+	override renderShared(width: number): string[] {
 		if (this.contentIsStale && this.lastMessage) this.buildContent(this.lastMessage);
-		const lines = super.render(width);
+		const lines = super.renderShared(width);
 		if (this.hasToolCalls || lines.length === 0) {
 			return lines;
 		}
-
-		lines[0] = OSC133_ZONE_START + lines[0];
-		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
-		return lines;
+		// The marked lines are kept with the lines they were made from: same lines, same array (renderShared()).
+		if (lines !== this.markedFrom) {
+			const marked = lines.slice();
+			marked[0] = OSC133_ZONE_START + marked[0];
+			marked[marked.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + marked[marked.length - 1];
+			this.markedFrom = lines;
+			this.markedLines = marked;
+		}
+		return this.markedLines;
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
@@ -106,8 +129,29 @@ export class AssistantMessageComponent extends Container {
 		this.buildContent(message);
 	}
 
+	/** A Markdown component for `text`: the one built for it before when nothing it was made with has changed. */
+	private markdownFor(
+		kind: MarkdownBlock["kind"],
+		text: string,
+		previous: MarkdownBlock[],
+		create: () => Markdown,
+	): Markdown {
+		const index = previous.findIndex(
+			(block) =>
+				block.kind === kind &&
+				block.text === text &&
+				block.isStreaming === this.isStreaming &&
+				block.outputPad === this.outputPad,
+		);
+		const component = index === -1 ? create() : previous.splice(index, 1)[0]!.component;
+		this.markdownBlocks.push({ kind, text, isStreaming: this.isStreaming, outputPad: this.outputPad, component });
+		return component;
+	}
+
 	private buildContent(message: AssistantMessage): void {
 		this.contentIsStale = false;
+		const previousBlocks = this.markdownBlocks;
+		this.markdownBlocks = [];
 		// Clear content container
 		this.contentContainer.clear();
 
@@ -126,11 +170,18 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
+				const text = content.text.trim();
 				this.contentContainer.addChild(
-					new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
-						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
-						complete: !this.isStreaming,
-					}),
+					this.markdownFor(
+						"text",
+						text,
+						previousBlocks,
+						() =>
+							new Markdown(text, this.outputPad, 0, this.markdownTheme, undefined, {
+								transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
+								complete: !this.isStreaming,
+							}),
+					),
 				);
 			} else if (content.type === "thinking") {
 				const thinkingBlocks: string[] = [];
@@ -158,25 +209,32 @@ export class AssistantMessageComponent extends Container {
 
 				const runIndex = thinkingRunIndex++;
 				const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
+				const thinkingText = hidden ? "" : thinkingBlocks.join("\n\n");
 				const thinkingComponent = hidden
 					? new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0)
-					: new Markdown(
-							thinkingBlocks.join("\n\n"),
-							this.outputPad,
-							0,
-							this.markdownTheme,
-							{
-								color: thinkingTextColor,
-								italic: true,
-							},
-							{
-								transform: createMarkdownTransform(
-									"assistant-thinking",
-									this.isStreaming,
-									this.markdownTransformers,
+					: this.markdownFor(
+							"thinking",
+							thinkingText,
+							previousBlocks,
+							() =>
+								new Markdown(
+									thinkingText,
+									this.outputPad,
+									0,
+									this.markdownTheme,
+									{
+										color: thinkingTextColor,
+										italic: true,
+									},
+									{
+										transform: createMarkdownTransform(
+											"assistant-thinking",
+											this.isStreaming,
+											this.markdownTransformers,
+										),
+										complete: !this.isStreaming,
+									},
 								),
-								complete: !this.isStreaming,
-							},
 						);
 				this.contentContainer.addChild(
 					new MouseRegion(thinkingComponent, (event) => {
