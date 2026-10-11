@@ -635,7 +635,7 @@ install_release() {
 			[ "${PIBOLT_SOURCE:-auto}" != npm ] || fail "download failed: $final"
 			rm -rf "$TMP/npm.tgz" "$TMP/package" "$TMP/$NAME.$ext"
 			finish_progress
-			printf '  %sthe download from npm failed; downloading from GitHub instead%s\n' "$dim" "$reset"
+			printf '  %snot available from npm; downloading from GitHub instead%s\n' "$dim" "$reset"
 			source=github
 			# shellcheck disable=SC2046 # three words
 			set -- $(probe "$BASE/$NAME.$ext")
