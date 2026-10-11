@@ -17,6 +17,7 @@ import type { ToolDefinition, ToolRenderContext, ToolRenderers } from "../../../
 export type { ToolRenderers };
 
 import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import { renderersMayHighlight } from "../../../core/tools/renderers/highlighting.ts";
 import { ensurePngTranscoder } from "../../../utils/image-convert.ts";
 import { liveTheme, theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -232,6 +233,11 @@ export class ToolExecutionComponent extends Container {
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
+	}
+
+	/** Whether this row may show code highlighted in one of `languages` (lowercase names). */
+	mayHighlight(languages: ReadonlySet<string>): boolean {
+		return renderersMayHighlight(this.toolDefinition, this.args, languages);
 	}
 
 	override renderShared(width: number): string[] {

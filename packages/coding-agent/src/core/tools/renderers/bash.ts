@@ -14,6 +14,7 @@ import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/t
 import type { BashToolDetails } from "../bash.ts";
 import { getTextOutput, invalidArgText, str } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
+import { declarePlainRenderers } from "./highlighting.ts";
 
 const BASH_PREVIEW_LINES = 5;
 export const BASH_UPDATE_THROTTLE_MS = 100;
@@ -111,7 +112,7 @@ function rebuildBashResultRenderComponent(
 
 /** Shell renderers are shared by bash and powershell, which differ only in the prompt they display. */
 export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> {
-	return {
+	const renderers: Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> = {
 		renderCall(args, _theme, context) {
 			const state = context.state;
 			if (context.executionStarted && state.startedAt === undefined) {
@@ -148,4 +149,6 @@ export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, a
 			return component;
 		},
 	};
+	declarePlainRenderers(renderers);
+	return renderers;
 }
