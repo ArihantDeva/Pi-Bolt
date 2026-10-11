@@ -12,6 +12,8 @@
 <span class="p">$ </span>pi-bolt update --extensions            <span class="c"># update them</span>
 <span class="p">$ </span>pi-bolt remove npm:opensec-pi-todo     <span class="c"># remove one</span>
 <span class="p">$ </span>pi-bolt config                         <span class="c"># turn resources on and off</span></pre>
+<p><code>pi-bolt install</code> and <code>pi-bolt remove</code> change Pi-Bolt's own package list, not Pi's: what you install
+  with <code>pi-bolt</code> does not load in Pi (see <a href="configuration.html">Configuration</a>).</p>
 <p>Pi-Bolt installs packages with its own package manager when npm is not installed. A run-time extension's own dependencies
   resolve as they do on Node, through its <code>package.json</code>. Writing extensions is covered by Pi's
   <a href="https://pi.dev/docs/latest/extensions">Extensions</a> guide.</p>
@@ -49,17 +51,20 @@
 <pre data-label="Shell profile">export PI_SUBAGENT_PI_BINARY=pi-bolt</pre>
 
 <h2 id="opensec-extensions">OpenSec extensions</h2>
-<p>The installer offers two extensions that OpenSec maintains for Pi-Bolt. They are prebuilt, so they load without being
-  transpiled, and the installer installs the versions each release pins.</p>
+<p>The installer offers three extensions that OpenSec maintains for Pi-Bolt. They are prebuilt for Pi-Bolt's runtime, so they
+  load without being transpiled; they are in Pi-Bolt's package list only, as Pi cannot run them. The installer installs the
+  versions each release pins.</p>
 <div class="table"><table>
   <thead><tr><th>Package</th><th>What it does</th></tr></thead>
   <tbody>
     <tr><td><a href="https://www.npmjs.com/package/opensec-pi-subagents"><code>opensec-pi-subagents</code></a></td><td>Specialized agents in separate sessions that inherit the parent's model and thinking level, with parallel workflows and scheduled jobs.</td></tr>
     <tr><td><a href="https://www.npmjs.com/package/opensec-pi-todo"><code>opensec-pi-todo</code></a></td><td>A todo list for the model, shown as a live panel above the editor. It survives <code>/reload</code> and compaction.</td></tr>
+    <tr><td><a href="https://www.npmjs.com/package/opensec-pi-fff"><code>opensec-pi-fff</code></a></td><td>Fast file and content search: find, grep and @-mentions, as fast on the default build as with the JIT. Not offered when <code>@ff-labs/pi-fff</code> is installed.</td></tr>
   </tbody>
 </table></div>
 <pre data-label="Terminal"><span class="p">$ </span>pi-bolt install npm:opensec-pi-subagents
-<span class="p">$ </span>pi-bolt install npm:opensec-pi-todo</pre>
+<span class="p">$ </span>pi-bolt install npm:opensec-pi-todo
+<span class="p">$ </span>pi-bolt install npm:opensec-pi-fff</pre>
 
 <h2>Compile extensions in</h2>
 <p>An extension compiled into the executable runs as machine code like Pi itself, with no startup cost. It needs a Pi-Bolt build

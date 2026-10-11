@@ -198,10 +198,17 @@ See [docs/PLUGINS.md](docs/PLUGINS.md).
 
 ### Pi and Pi-Bolt side by side
 
-Pi-Bolt uses Pi's agent directory (`~/.pi/agent`: auth, models, sessions, settings), so by default a package installed with one
-is loaded by the other too. Two packages that provide the same tool, such as `@juicesharp/rpiv-todo` for Pi and
-`opensec-pi-todo` for Pi-Bolt, then cannot load together. To give Pi-Bolt a package list of its own, add `piBolt.packages` to
-`settings.json`:
+Pi-Bolt uses Pi's agent directory (`~/.pi/agent`: auth, models, sessions, settings), so your Pi setup works in it as it is.
+It never changes what Pi loads:
+
+- Until you install or remove a package with `pi-bolt`, Pi-Bolt loads the packages in `settings.json`'s `packages`, as Pi does.
+- The first `pi-bolt install` or `pi-bolt remove` gives Pi-Bolt a list of its own, `piBolt.packages`, made from `packages`, and
+  changes only that list. Pi keeps using `packages` (it does not read `piBolt`). A package you install later with `pi install`
+  is Pi's; install it with `pi-bolt install` too to have it in Pi-Bolt.
+- OpenSec's extensions (`opensec-pi-subagents`, `opensec-pi-todo`, `opensec-pi-fff`) are Bun builds that only Pi-Bolt runs: they
+  are only ever in Pi-Bolt's list. Pi-Bolt moves them there from `packages`, where installers before 0.8.4 put them.
+
+So the two can load different packages, for example a todo list each:
 
 ```json
 {
@@ -210,10 +217,7 @@ is loaded by the other too. Two packages that provide the same tool, such as `@j
 }
 ```
 
-- Pi-Bolt then reads that list in place of `packages`, and `pi-bolt install` and `pi-bolt remove` change it; Pi keeps using
-  `packages` and does not read `piBolt`.
-- Each settings file counts on its own: the global one (`~/.pi/agent/settings.json`) and a project's (`.pi/settings.json`). A
-  file without `piBolt.packages` gives both its `packages`.
+- Each settings file counts on its own: the global one (`~/.pi/agent/settings.json`) and a project's (`.pi/settings.json`).
 - An empty list (`"piBolt": { "packages": [] }`) loads no packages from that file in Pi-Bolt.
 - Both lists install into the same folders (`~/.pi/agent/npm` and `~/.pi/agent/git`, or `.pi/npm` and `.pi/git` for a
   project). Removing a package from Pi-Bolt's list keeps its files when Pi's list still has it. A package in both lists
