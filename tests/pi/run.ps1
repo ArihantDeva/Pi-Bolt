@@ -22,7 +22,7 @@ Copy-Item -Path (Join-Path $here '*.js') -Destination $extensions
 $script:status = 0
 
 # Runs Pi with only what it needs in its environment (as run.sh's `env -i`), plus `$vars`.
-function Invoke-Pi([string[]]$arguments, [hashtable]$vars = @{}, [string]$exe = $Pi) {
+function Invoke-Pi([string[]]$arguments, [hashtable]$vars = @{}, [string]$exe = $Pi, [string]$cwd = $here) {
 	$keep = @{
 		SystemRoot = $env:SystemRoot; windir = $env:windir; PATH = "$env:SystemRoot\System32;$env:SystemRoot"; PATHEXT = $env:PATHEXT
 		TEMP = $env:TEMP; TMP = $env:TMP; USERPROFILE = $home_; HOME = $home_; APPDATA = (Join-Path $home_ 'AppData\Roaming')
@@ -33,7 +33,7 @@ function Invoke-Pi([string[]]$arguments, [hashtable]$vars = @{}, [string]$exe = 
 	$info = [Diagnostics.ProcessStartInfo]::new($exe)
 	$info.Arguments = ($arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
 	$info.UseShellExecute = $false; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true; $info.RedirectStandardInput = $true
-	$info.WorkingDirectory = $here
+	$info.WorkingDirectory = $cwd
 	$info.EnvironmentVariables.Clear()
 	foreach ($k in $keep.Keys) { if ($null -ne $keep[$k]) { $info.EnvironmentVariables[$k] = [string]$keep[$k] } }
 	$p = [Diagnostics.Process]::Start($info)
@@ -129,6 +129,32 @@ foreach ($dll in 'USERENV.dll', 'dbghelp.dll', 'IPHLPAPI.dll', 'CRYPT32.dll', 'W
 $r = Invoke-Pi @('-ne', '-e', (Join-Path $extensions 'builtin-modules.js'), '--offline', '--no-session', '-p', 'hi') @{} (Join-Path $planted 'pi.exe')
 if ($r.Code -eq 0 -and $r.Text -match '(?m)^builtin-modules: ') { Write-Host 'PASS DLLs next to the executable are not loaded in the place of the system''s' }
 else { Write-Host "FAIL with DLLs planted next to it, Pi did not run (exit $('{0:x}' -f $r.Code))"; $script:status = 1 }
+
+# A program named without a path comes from PATH, never from the working directory (a repository's own git.cmd): Pi starts in
+# a folder with a pibolt-planted.cmd that would write a marker. (This environment has no NoDefaultCurrentDirectoryInExePath,
+# as a user's has none: Pi sets it itself.)
+$project = Join-Path $home_ 'project'
+New-Item -ItemType Directory -Force -Path $project | Out-Null
+$marker = Join-Path $project 'PLANTED-RAN.txt'
+[IO.File]::WriteAllText((Join-Path $project 'pibolt-planted.cmd'), "@echo ran> `"$marker`"`r`n")
+$r = Invoke-Pi @('-ne', '-e', (Join-Path $extensions 'workdir-programs.js'), '--offline', '--no-session', '-p', 'hi') @{} $Pi $project
+if ($r.Code -eq 0 -and $r.Text -match '(?m)^workdir-programs: planted=ENOENT whoami=ok' -and -not (Test-Path -LiteralPath $marker)) {
+	Write-Host 'PASS a program named without a path is not taken from the working directory'
+} else {
+	Write-Host "FAIL a program in the working directory ran, or one on PATH did not (exit $('{0:x}' -f $r.Code), marker $(Test-Path -LiteralPath $marker))"
+	($r.Text -split "`n" | Where-Object { $_ -match 'workdir-programs' } | Select-Object -First 2) | ForEach-Object { Write-Host "   $_" }
+	$script:status = 1
+}
+
+# A repository's .pi/settings.json is not used before the project is trusted: its sessionDir (a \\host\share, say, which Windows
+# would connect to at once) is neither created nor written to.
+$repo = Join-Path $home_ 'untrusted-repo'
+$elsewhere = Join-Path $home_ 'sessions-elsewhere'
+New-Item -ItemType Directory -Force -Path (Join-Path $repo '.pi') | Out-Null
+[IO.File]::WriteAllText((Join-Path $repo '.pi\settings.json'), (@{ sessionDir = $elsewhere } | ConvertTo-Json))
+$r = Invoke-Pi @('--model', 'none/none', '-p', 'hi') @{} $Pi $repo
+if (-not (Test-Path -LiteralPath $elsewhere)) { Write-Host 'PASS an untrusted project''s sessionDir is not used' }
+else { Write-Host "FAIL an untrusted project's sessionDir was created ($elsewhere)"; $script:status = 1 }
 
 # Bedrock, the proxy agents and the OAuth flows are loaded when they are first used, with the builtin modules they import. A request
 # that can reach nothing has to fail as a connection that is refused, not as code that is missing or broken.

@@ -673,7 +673,17 @@ export async function main(args: string[], options?: MainOptions) {
 	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(cwd);
 	time("runMigrations");
 
-	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
+	// The startup settings (session directory, theme, first-time setup) take a project's own settings only once it is trusted,
+	// as the runtime's do: a repository's .pi/settings.json could otherwise point sessionDir anywhere before any trust decision
+	// (on Windows a \\host\share, which Windows connects to at once, with the user's credentials), and the session would be
+	// written there even if the user then declined to trust it. A project trusted during this run uses its sessionDir from the
+	// next one.
+	const startupCwdHasTrustRequiringResources =
+		parsed.projectTrustOverride === undefined ? hasTrustRequiringProjectResources(cwd) : undefined;
+	const startupProjectTrusted =
+		parsed.projectTrustOverride ??
+		(!startupCwdHasTrustRequiringResources || new ProjectTrustStore(agentDir).get(cwd) === true);
+	const startupSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: startupProjectTrusted });
 	const startupSettingsDiagnostics = collectSettingsDiagnostics(startupSettingsManager);
 	ttiTrace("settings.loaded");
 
@@ -728,7 +738,8 @@ export async function main(args: string[], options?: MainOptions) {
 	// The session's directory is checked once at startup, here or for the initial runtime, whichever asks first: the check walks
 	// every ancestor directory, and both ask about the same one a moment apart. Later runtimes (a reload, another session) check
 	// again.
-	let sessionCwdHasTrustRequiringResources: boolean | undefined;
+	let sessionCwdHasTrustRequiringResources: boolean | undefined =
+		sessionCwd === cwd ? startupCwdHasTrustRequiringResources : undefined;
 	const hasTrustRequiringResourcesAtStartup = (dir: string): boolean => {
 		if (dir !== sessionCwd) return hasTrustRequiringProjectResources(dir);
 		if (sessionCwdHasTrustRequiringResources === undefined) {

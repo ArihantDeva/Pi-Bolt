@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
@@ -6,9 +7,11 @@ import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
+	getMsysBash,
 	getShellConfig,
 	getShellEnv,
 	killProcessTree,
+	MSYS_SHELL_GROUP_VARIABLE,
 	type ShellConfig,
 	trackDetachedChildPid,
 	untrackDetachedChildPid,
@@ -109,10 +112,15 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			}
 
 			const commandFromStdin = shellConfig.commandTransport === "stdin";
+			// Windows, Git Bash (or MSYS2, Cygwin): a variable of this command's own that its processes inherit, by which
+			// stopping it finds them all (getMsysBash, killProcessTree).
+			const msysBash = getMsysBash(shellConfig.shell);
+			const msys = msysBash ? { bash: msysBash, group: randomUUID() } : undefined;
+			const shellEnv = env ?? getShellEnv();
 			const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
 				cwd,
 				detached: process.platform !== "win32",
-				env: env ?? getShellEnv(),
+				env: msys ? { ...shellEnv, [MSYS_SHELL_GROUP_VARIABLE]: msys.group } : shellEnv,
 				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
 				windowsHide: true,
 			});
@@ -120,7 +128,7 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				child.stdin?.on("error", () => {});
 				child.stdin?.end(command);
 			}
-			if (child.pid) trackDetachedChildPid(child.pid);
+			if (child.pid) trackDetachedChildPid(child.pid, msys);
 			let timedOut = false;
 			let timeoutHandle: NodeJS.Timeout | undefined;
 			const onAbort = () => {

@@ -72,6 +72,26 @@ describe.skipIf(process.platform === "win32")("DefaultPackageManager in a compil
 		);
 	});
 
+	it("passes --ignore-scripts to bun when npm_config_ignore_scripts says so, as the installers set it", async () => {
+		const previous = process.env.NPM_CONFIG_IGNORE_SCRIPTS;
+		process.env.NPM_CONFIG_IGNORE_SCRIPTS = "true";
+		try {
+			const { packageManager } = createPackageManager();
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.install("npm:@scope/pkg@1.2.3");
+
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				process.execPath,
+				["install", "@scope/pkg@1.2.3", "--cwd", join(agentDir, "npm"), "--omit=peer", "--ignore-scripts"],
+				{ env: BUILTIN_ENV },
+			);
+		} finally {
+			if (previous === undefined) delete process.env.NPM_CONFIG_IGNORE_SCRIPTS;
+			else process.env.NPM_CONFIG_IGNORE_SCRIPTS = previous;
+		}
+	});
+
 	it("keeps npm when npm is on PATH", async () => {
 		process.env.PATH = [emptyBinDir, npmBinDir].join(":");
 		const { packageManager } = createPackageManager();

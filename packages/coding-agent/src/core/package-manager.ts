@@ -1912,7 +1912,19 @@ export class DefaultPackageManager implements PackageManager {
 		// equivalent bun/pnpm settings) so package managers do not install or solve host-provided
 		// @earendil-works/pi-* peers. Stale auto-installed pi peers can otherwise block updates.
 		if (packageManagerName === "bun") {
-			return ["install", ...specs, "--cwd", installRoot, "--omit=peer"];
+			// (npm and pnpm read npm_config_ignore_scripts from the environment, as the installers set it so that nothing of a
+			// package runs before it is checked against its pin; Bun's installer only takes the flag.)
+			const ignoreScripts = /^(true|1)$/i.test(
+				process.env.npm_config_ignore_scripts ?? process.env.NPM_CONFIG_IGNORE_SCRIPTS ?? "",
+			);
+			return [
+				"install",
+				...specs,
+				"--cwd",
+				installRoot,
+				"--omit=peer",
+				...(ignoreScripts ? ["--ignore-scripts"] : []),
+			];
 		}
 		if (packageManagerName === "pnpm") {
 			return [

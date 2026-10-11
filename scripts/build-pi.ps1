@@ -140,6 +140,9 @@ foreach ($worker in $PluginWorker) { $Entries += "./.pibolt-plugins/src/$($worke
 
 function Stage-Assets($dir) {
 	Copy-Item (Join-Path $Agent 'package.json'), (Join-Path $Agent 'README.md'), (Join-Path $Agent 'CHANGELOG.md') $dir
+	# Pi's documentation and example extensions: Pi points the model (its system prompt) and the user (the first run, /login) at
+	# them, next to the README.
+	Copy-Item -Recurse -Force (Join-Path $Agent 'docs'), (Join-Path $Agent 'examples') $dir
 	New-Item -ItemType Directory -Force "$dir\theme", "$dir\assets", "$dir\export-html\vendor", "$dir\native\win32\prebuilds" | Out-Null
 	Copy-Item "$Agent\src\modes\interactive\theme\*.json" "$dir\theme"
 	Copy-Item "$Agent\src\modes\interactive\assets\*" "$dir\assets"

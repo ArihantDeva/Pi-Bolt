@@ -1,4 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { lstatSync, statSync } from "node:fs";
+import { delimiter, isAbsolute, join } from "node:path";
 import process from "node:process";
 import crossSpawn from "cross-spawn";
 import { type JsonRpcMessage, McpConnectionClosedError, parseJsonRpcMessage } from "../protocol/jsonrpc.ts";
@@ -14,16 +16,52 @@ const USE_PROCESS_GROUPS = process.platform !== "win32";
 const liveProcessGroups = new Set<number>();
 let exitHookInstalled = false;
 
+/** A file Windows can start: a regular file, or an app execution alias (a reparse point stat may refuse to follow). */
+function isProgramFile(file: string): boolean {
+	try {
+		const stats = statSync(file, { throwIfNoEntry: false });
+		if (stats) return stats.isFile();
+	} catch {}
+	try {
+		const link = lstatSync(file, { throwIfNoEntry: false });
+		return link !== undefined && !link.isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Windows: the file a server command named without a path is, from PATH's absolute directories only. cross-spawn finds one
+ * with `which`, which looks in the working directory (the project) first: a repository could put an npx.cmd or uvx.exe of
+ * its own there, and a server from the user's own configuration would run it. Found nowhere, a path that does not exist, so
+ * that the server fails to start as a missing command does. (cross-spawn still runs a .cmd through cmd.exe, escaped.)
+ */
+function resolveWindowsCommand(command: string, env: NodeJS.ProcessEnv): string {
+	if (/[\\/]/.test(command)) return command;
+	const pathKey = "PATH" in env ? "PATH" : Object.keys(env).find((key) => key.toLowerCase() === "path");
+	const dirs = (pathKey ? (env[pathKey] ?? "") : "")
+		.split(delimiter)
+		.map((dir) => dir.trim().replace(/^"(.*)"$/, "$1"))
+		.filter((dir) => dir && isAbsolute(dir));
+	const pathExtensions = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+	const extensions = command.includes(".") ? ["", ...pathExtensions] : pathExtensions;
+	for (const dir of dirs) {
+		for (const extension of extensions) {
+			const file = join(dir, command + extension);
+			if (isProgramFile(file)) return file;
+		}
+	}
+	return join(process.env.SystemRoot ?? "C:\\Windows", "pi-no-such-command", `${command}.exe`);
+}
+
 function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
 	const pid = child.pid;
 	if (process.platform === "win32" && pid !== undefined) {
 		if (child.exitCode !== null) return;
 		// Windows has no graceful signals, and cross-spawn runs `.cmd` shims through cmd.exe; killing only
-		// that would leave the server running.
-		spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on(
-			"error",
-			() => {},
-		);
+		// that would leave the server running. (taskkill by its path: a bare name could be found in the working directory.)
+		const taskkill = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+		spawn(taskkill, ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () => {});
 		return;
 	}
 	if (USE_PROCESS_GROUPS && pid !== undefined) {
@@ -97,7 +135,9 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 		if (this.closed) throw new McpConnectionClosedError();
 		this.started = true;
 		const env = this.options.inheritEnv === false ? { ...this.options.env } : { ...process.env, ...this.options.env };
-		const child = crossSpawn(this.options.command, this.options.args ?? [], {
+		const command =
+			process.platform === "win32" ? resolveWindowsCommand(this.options.command, env) : this.options.command;
+		const child = crossSpawn(command, this.options.args ?? [], {
 			cwd: this.options.cwd,
 			env,
 			stdio: ["pipe", "pipe", this.options.stderr === "inherit" ? "inherit" : "pipe"],

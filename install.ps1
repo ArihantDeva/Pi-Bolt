@@ -346,19 +346,35 @@ function Install-PiBoltFiles([string]$from, [string]$to) {
 # A folder Pi-Bolt is installed in outside the user's profile (PIBOLT_INSTALL=C:\tools\pi-bolt) inherits its parent's
 # permissions, and a folder made in C:\ lets every user change what is in it: anyone on the machine could then replace
 # pi-bolt.exe, which is on this user's PATH. Such a folder is made the user's, SYSTEM's and the Administrators' only.
-function Protect-PiBoltFolder([string]$dir) {
-	$inProfile = foreach ($root in $env:USERPROFILE, $env:LOCALAPPDATA) {
-		if ($root -and $dir.StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $true }
+function Test-PiBoltInProfile([string]$dir) {
+	foreach ($root in $env:USERPROFILE, $env:LOCALAPPDATA) {
+		if ($root -and $dir.StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
 	}
-	if ($inProfile) { return }
+	$false
+}
+function Get-PiBoltFolderOwners {
+	@([Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'), [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+}
+function Protect-PiBoltFolder([string]$dir) {
+	if (Test-PiBoltInProfile $dir) { return }
 	$acl = New-Object System.Security.AccessControl.DirectorySecurity
 	$acl.SetAccessRuleProtection($true, $false)
-	$owners = @([Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'), [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
-	foreach ($sid in $owners) {
+	foreach ($sid in Get-PiBoltFolderOwners) {
 		$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow'))
 	}
+	# (Not a note: a folder that others may still change is one they could put another pi-bolt.exe in.)
 	try { Set-Acl -LiteralPath $dir -AclObject $acl -ErrorAction Stop }
-	catch { Write-Host "  ${dim}note: could not limit who can change $dir ($($_.Exception.Message))$reset" }
+	catch { Stop-PiBolt "could not limit who can change $dir ($($_.Exception.Message)). Install in a folder of your own (PIBOLT_INSTALL), such as the default under your profile." }
+}
+# A folder outside the profile that is there already must be this user's, SYSTEM's or the Administrators': another user who made
+# it first (C:\ lets anyone make folders) would still own it, and could give themselves back the right to change it.
+function Assert-PiBoltFolderOwner([string]$dir) {
+	if ((Test-PiBoltInProfile $dir) -or -not (Test-Path -LiteralPath $dir)) { return }
+	$owner = (Get-Acl -LiteralPath $dir).GetOwner([Security.Principal.SecurityIdentifier])
+	if ((Get-PiBoltFolderOwners | ForEach-Object Value) -notcontains $owner.Value) {
+		$name = try { $owner.Translate([Security.Principal.NTAccount]).Value } catch { $owner.Value }
+		Stop-PiBolt "$dir belongs to $name, not to you: whoever owns it can change what is installed there. Choose another folder (PIBOLT_INSTALL)."
+	}
 }
 
 function Install-PiBoltRelease($state) {
@@ -443,6 +459,8 @@ function Install-PiBoltRelease($state) {
 		if ($LASTEXITCODE -ne 0) { Stop-PiBolt 'the downloaded executable does not run on this system' }
 		# (The folder that holds the variant's too, if the installer is making it: whoever may change that may rename the other.)
 		$madeInstall = -not (Test-Path -LiteralPath $state.Install)
+		Assert-PiBoltFolderOwner $state.Install
+		Assert-PiBoltFolderOwner $state.Dir
 		New-Item -ItemType Directory -Force -Path $state.Dir | Out-Null
 		if ($madeInstall) { Protect-PiBoltFolder $state.Install }
 		Protect-PiBoltFolder $state.Dir
@@ -584,8 +602,15 @@ function Test-PiBoltExtension([string]$registry, $extension) {
 
 # Whether what the package manager installed of an extension has the pinned integrity, by its lockfile (npm's, bun's or pnpm's,
 # in the folder Pi installs npm packages to; `pi-bolt list` says where): 'same', 'different', or 'unknown' (no lockfile).
+# `pi-bolt list`, run in Pi-Bolt's own folder: in a project with resources that need trust (the folder the installer was started
+# in), `list` loads the extensions to settle it, the one just installed among them, before its pin has been compared.
+function Get-PiBoltPackageList([string]$exe) {
+	Push-Location -LiteralPath (Split-Path $exe)
+	try { @(& $exe list 2>$null) } finally { Pop-Location }
+}
+
 function Test-PiBoltInstalledExtension([string]$exe, $extension) {
-	$lines = @(& $exe list 2>$null)
+	$lines = Get-PiBoltPackageList $exe
 	for ($i = 0; $i -lt $lines.Count - 1; $i++) {
 		if ($lines[$i] -match "^\s+npm:$([regex]::Escape($extension.Package))(@\S*)?\s*$") {
 			$root = Split-Path (Split-Path $lines[$i + 1].Trim()) # <root>\node_modules\<package>
@@ -608,7 +633,7 @@ function Install-PiBoltExtensions($state) {
 	if (-not $choice -and -not (Test-PiBoltCanAsk)) { return }
 	if ($choice -eq 'no') { return }
 	$exe = Join-Path $state.Dir 'pi-bolt.exe'
-	$sources = (& $exe list 2>$null) -join "`n"
+	$sources = (Get-PiBoltPackageList $exe) -join "`n"
 	$extensions = @(
 		@{ Package = 'opensec-pi-subagents'; What = 'run specialized agents in separate sessions'; Kind = 'subagents|swarm' },
 		@{ Package = 'opensec-pi-todo'; What = 'a todo list for the model, shown above the editor'; Kind = 'rpiv-todo|pi-todo' },
@@ -710,6 +735,10 @@ function Install-PiBolt {
 			if ($response.RequestMessage.RequestUri.AbsoluteUri -match '/tag/bolt-v(\d+\.\d+\.\d+)$') { $shown = $Matches[1] }
 		} catch { }
 		if (-not $shown) { Stop-PiBolt "could not find out which release is the latest ($PiBoltRepo/releases/latest): try again, or set PIBOLT_VERSION=bolt-vX.Y.Z" }
+	} else {
+		# A mirror says which release it serves: without the version asked for, its checksums would be taken for whichever release
+		# they are (an older one, signed all the same, installed as the latest).
+		Stop-PiBolt 'PIBOLT_DOWNLOAD_BASE needs PIBOLT_VERSION (the release it serves, such as bolt-v0.8.0)'
 	}
 	$base = "$PiBoltRepo/releases/download/bolt-v$shown"
 	if ($env:PIBOLT_DOWNLOAD_BASE) { $base = $env:PIBOLT_DOWNLOAD_BASE.TrimEnd('/') }
