@@ -593,7 +593,7 @@ if (require.main === module) {
 			console.error(`pi-bolt: downloads went through the proxy ${proxy.replace(/\/\/[^@/]*@/, "//")}; a Node.js older than 22.21 or 24.5 cannot use one (NODE_USE_ENV_PROXY)`);
 		}
 		if (process.platform === "win32") {
-			console.error('pi-bolt: Pi-Bolt was not installed. Try again, or install it with: powershell -c "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://pi-bolt.opensec.in/install.ps1 | iex"');
+			console.error('pi-bolt: Pi-Bolt was not installed. Try again, or install it with: powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"');
 		}
 		process.exitCode = 1;
 	});

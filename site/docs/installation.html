@@ -87,9 +87,11 @@
 <pre data-label="Terminal"><span class="p">$ </span>curl -fsSL https://pi-bolt.opensec.in/install.sh | sh</pre>
   </div>
   <div data-tab="windows" data-title="Windows">
-<pre data-label="PowerShell">powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"</pre>
-    <p>On an older Windows 10 whose PowerShell only offers TLS 1.0, turn on TLS 1.2 first:</p>
-<pre data-label="PowerShell">powershell -c "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://pi-bolt.opensec.in/install.ps1 | iex"</pre>
+<pre data-label="PowerShell">irm https://pi-bolt.opensec.in/install.ps1 | iex</pre>
+<pre data-label="Command Prompt">powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"</pre>
+    <p>On an older Windows 10 whose PowerShell only offers TLS 1.0, run these two lines in PowerShell instead:</p>
+<pre data-label="PowerShell">[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+irm https://pi-bolt.opensec.in/install.ps1 | iex</pre>
   </div>
   <div data-tab="npm" data-title="npm">
 <pre data-label="Terminal"><span class="p">$ </span>npm install -g --allow-scripts=pi-bolt pi-bolt</pre>

@@ -46,7 +46,13 @@ curl -fsSL https://pi-bolt.opensec.in/install.sh | sh
 On Windows, in PowerShell:
 
 ```powershell
-powershell -c "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://pi-bolt.opensec.in/install.ps1 | iex"
+irm https://pi-bolt.opensec.in/install.ps1 | iex
+```
+
+or in Command Prompt:
+
+```bat
+powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"
 ```
 
 or `npm install -g --allow-scripts=pi-bolt pi-bolt`, or `bun add -g --trust pi-bolt` (the flags let the package manager run the

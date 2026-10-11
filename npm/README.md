@@ -52,7 +52,11 @@ curl -fsSL https://pi-bolt.opensec.in/install.sh | sh
 ```
 
 ```powershell
-powershell -c "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://pi-bolt.opensec.in/install.ps1 | iex"
+irm https://pi-bolt.opensec.in/install.ps1 | iex
+```
+
+```bat
+powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"
 ```
 
 ## Usage
