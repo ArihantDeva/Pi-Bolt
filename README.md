@@ -23,15 +23,15 @@ One executable for Linux x86-64, macOS on Apple silicon and Windows x64. No JIT,
 
 Pi-Bolt is the Pi you already use, with the same commands, sessions, settings, providers and extensions. Every function is
 compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. It starts two to three
-times sooner than Pi on Bun, uses about a third of its CPU over a session, and handles long answers and large files ten to forty
-times more cheaply.
+times sooner than Pi on Bun, uses about a third of its CPU over a session, and handles long answers and large files seven to
+thirty-five times more cheaply.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-hero-dark.svg">
-  <img alt="Pi-Bolt 0.7.3 vs Pi-Bolt 0.7.0 vs Bun 1.4.2 vs Node 24: ready to type 47 / 48 / 143 / 334 ms; CPU per session 309 / 328 / 913 / 1,312 ms; CPU while streaming 332 / 362 / 646 / 564 ms; memory after a long session 139 / 198 / 296 / 537 MB" src="docs/images/bench-hero-light.svg">
+  <img alt="Pi-Bolt 0.8.0 vs Pi on Bun 1.4.2 vs Pi on Node 24: ready to type 45 / 128 / 316 ms; CPU per session 294 / 871 / 1,241 ms; CPU while streaming 348 / 572 / 528 ms; memory after a long session 187 / 275 / 576 MB" src="docs/images/bench-hero-light.svg">
 </picture>
 
-<sub>AMD EPYC 7B13, Linux. Pi-Bolt against Pi 1.1.0 as released on stock Bun 1.4.2 and Node 24; medians of interleaved runs,
+<sub>AMD EPYC 7B13, Linux. Pi-Bolt 0.8.0 against Pi 1.1.0 as released on stock Bun 1.4.2 and Node 24; medians of interleaved runs,
 lower is better. See [Benchmarks](#benchmarks).</sub>
 
 > [!NOTE]
@@ -49,9 +49,9 @@ On Windows, in PowerShell:
 powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"
 ```
 
-or `npm install -g --allow-scripts=pi-bolt pi-bolt` (the flag lets npm run the script that puts the Windows executable in
-place). Then run `pi-bolt` in your project. Your Pi configuration in `~/.pi/agent` is used as is; new to
-Pi? Run `/login` to connect a provider. `pi-bolt update` installs the latest release.
+or `npm install -g --allow-scripts=pi-bolt pi-bolt`, or `bun add -g --trust pi-bolt` (the flags let the package manager run the
+script that puts the Windows executable in place). Then run `pi-bolt` in your project. Your Pi configuration in `~/.pi/agent` is
+used as is; new to Pi? Run `/login` to connect a provider. `pi-bolt update` installs the latest release.
 
 The installer verifies the release signature and offers two optional extensions by OpenSec:
 
@@ -103,36 +103,44 @@ uninstalls it.
 
 ## Benchmarks
 
-Pi-Bolt 0.7.3 and 0.7.0 against Pi 1.1.0 as released, on stock Bun 1.4.2 and on Node. Medians of fresh processes, interleaved
-across the builds; lower is better.
+Pi-Bolt 0.8.0 against Pi 1.1.0 as released, on stock Bun 1.4.2 and on Node, and against two other fast Pi builds:
+[PiG](https://github.com/MichaelKinsy/PiG) 0.4.1, the Go port of Pi (based on Pi 1.0.3), and
+[oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7, a fork of Pi on Bun. All five run interleaved on the same machine;
+medians, lower is better.
 
 **Linux x86-64** (AMD EPYC 7B13)
 
-| Benchmark | Pi-Bolt 0.7.3 | Pi-Bolt 0.7.0 | Pi on Bun 1.4.2 | Pi on Node 24 |
-|---|---:|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.8 s** | 0.9 s | 30.0 s | 39.4 s |
-| CPU, streaming a 60,000-character answer | **4.3 s** | 4.5 s | 44.4 s | 42.3 s |
-| Memory after a 4.2M-token session | **139 MB** | 198 MB | 296 MB | 537 MB |
-| Memory of a session in tmux | **28 MB** | 28 MB | 87 MB | 93 MB |
-| CPU, interactive session (5 prompts) | **309 ms** | 328 ms | 913 ms | 1,312 ms |
-| CPU, one prompt (`pi -p`) | **85 ms** | 89 ms | 333 ms | 645 ms |
-| Ready to type | **47 ms** | 48 ms | 143 ms | 334 ms |
+| Benchmark | Pi-Bolt | PiG | oh-my-pi | Pi on Bun | Pi on Node 24 |
+|---|---:|---:|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.8 s** | 92 s | 3.7 s | 26.9 s | 37.2 s |
+| CPU, streaming a 60,000-character answer | 4.0 s | 20.7 s | **3.1 s** | 43.0 s | 41.0 s |
+| Memory after a 4.2M-token session | **187 MB** | 311 MB | – | 275 MB | 576 MB |
+| Memory of a session in tmux | **24 MB** | 47 MB | 347 MB | 92 MB | 95 MB |
+| CPU, interactive session (5 prompts) | **294 ms** | 2,953 ms | 3,241 ms | 871 ms | 1,241 ms |
+| CPU, one prompt (`pi -p`) | **80 ms** | 261 ms | 1,752 ms | 323 ms | 618 ms |
+| Peak memory, one prompt (`pi -p`) | 124 MB | **55 MB** | 468 MB | 133 MB | 135 MB |
+| Ready to type | 45 ms | **38 ms** | 988 ms | 128 ms | 316 ms |
 
 **macOS** (Apple M5)
 
-| Benchmark | Pi-Bolt 0.7.3 | Pi-Bolt 0.7.0 | Pi on Bun 1.4.2 | Pi on Node 26 |
-|---|---:|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.5 s** | 0.5 s | 22.1 s | 26.6 s |
-| CPU, streaming a 60,000-character answer | **7.0 s** | 6.6 s | 38.4 s | 37.8 s |
-| Memory after a 4.2M-token session | **39 MB** | 41 MB | 91 MB | 2,441 MB |
-| Memory of a session in tmux | **25 MB** | 24 MB | 68 MB | 152 MB |
-| CPU, interactive session (5 prompts) | **175 ms** | 185 ms | 555 ms | 915 ms |
-| CPU, one prompt (`pi -p`) | **58 ms** | 59 ms | 236 ms | 525 ms |
-| Ready to type | **46 ms** | 43 ms | 101 ms | 347 ms |
+| Benchmark | Pi-Bolt | PiG | oh-my-pi | Pi on Bun | Pi on Node 26 |
+|---|---:|---:|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.5 s** | 60 s | 2.4 s | 17.0 s | 20.4 s |
+| CPU, streaming a 60,000-character answer | 5.8 s | 17.0 s | **5.4 s** | 39.0 s | 38.5 s |
+| Memory after a 4.2M-token session | **41 MB** | 355 MB | – | 90 MB | 2,452 MB |
+| Memory of a session in tmux | **27 MB** | 55 MB | 296 MB | 67 MB | 86 MB |
+| CPU, interactive session (5 prompts) | **170 ms** | 2,362 ms | 2,353 ms | 569 ms | 931 ms |
+| CPU, one prompt (`pi -p`) | **59 ms** | 236 ms | 1,072 ms | 232 ms | 527 ms |
+| Peak memory, one prompt (`pi -p`) | 72 MB | **50 MB** | 418 MB | 120 MB | 138 MB |
+| Ready to type | 42 ms | **38 ms** | 591 ms | 101 ms | 352 ms |
+
+PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with a little less CPU.
+Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files fastest.
+oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–).
 
 **Windows x64** (Intel Core i5-1335U laptop; Pi-Bolt 0.8.0, Pi 1.1.0 as released)
 
-| Benchmark | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 24 |
+| Benchmark | Pi-Bolt | Pi on Bun 1.4.2 | Pi on Node 24 |
 |---|---:|---:|---:|
 | Writing a 200 KB file through a tool call | **0.7 s** | 38.1 s | 26.6 s |
 | CPU, streaming a 60,000-character answer | **6.5 s** | 41.1 s | 32.6 s |
@@ -142,45 +150,9 @@ across the builds; lower is better.
 | CPU, one prompt (`pi -p`) | **92 ms** | 329 ms | 544 ms |
 | Ready to type | **92 ms** | 177 ms | 311 ms |
 
-### Against PiG and oh-my-pi
-
-Pi-Bolt 0.7.3 against two other fast Pi builds: [PiG](https://github.com/MichaelKinsy/PiG) 0.4.1, the Go port of Pi
-(based on Pi 1.0.3), and [oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7, a fork of Pi on Bun. Same machines and
-method as above; 0.8.0 measures within a few percent of 0.7.3.
-
-**Linux x86-64** (AMD EPYC 7B13)
-
-| Benchmark | Pi-Bolt 0.7.3 | PiG 0.4.1 | oh-my-pi 18.8.7 |
-|---|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.8 s** | 101 s | 3.8 s |
-| CPU, streaming a 60,000-character answer | 4.1 s | 24.6 s | **3.3 s** |
-| Memory after a 4.2M-token session | **142 MB** | 344 MB | – |
-| Memory of a session in tmux | **27 MB** | 40 MB | 329 MB |
-| CPU, interactive session (5 prompts) | **324 ms** | 3,155 ms | 3,397 ms |
-| CPU, one prompt (`pi -p`) | **87 ms** | 306 ms | 1,823 ms |
-| Peak memory, one prompt (`pi -p`) | 126 MB | **58 MB** | 475 MB |
-| Ready to type | 49 ms | **43 ms** | 1,088 ms |
-
-**macOS** (Apple M5)
-
-| Benchmark | Pi-Bolt 0.7.3 | PiG 0.4.1 | oh-my-pi 18.8.7 |
-|---|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.5 s** | 67 s | 2.5 s |
-| CPU, streaming a 60,000-character answer | 5.2 s | 17.0 s | **5.1 s** |
-| Memory after a 4.2M-token session | **46 MB** | 329 MB | – |
-| Memory of a session in tmux | **25 MB** | 48 MB | 317 MB |
-| CPU, interactive session (5 prompts) | **95 ms** | 1,355 ms | 1,383 ms |
-| CPU, one prompt (`pi -p`) | **31 ms** | 132 ms | 592 ms |
-| Peak memory, one prompt (`pi -p`) | 75 MB | **49 MB** | 421 MB |
-| Ready to type | 25 ms | **20 ms** | 564 ms |
-
-PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with as little CPU or a
-little less. Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files
-fastest. oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–).
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-long-dark.svg">
-  <img alt="Long answers and large files, Pi-Bolt 0.7.3 vs Pi-Bolt 0.7.0 vs Bun 1.4.2 vs Node 24: CPU streaming a 20,000-character answer 1.1 / 1.2 / 10.7 / 8.0 s; a 60,000-character answer 4.3 / 4.5 / 44.4 / 42.3 s; share of a core while streaming 9 / 9 / 88 / 84%; writing a 200 KB file through a tool call 0.8 / 0.9 / 30.0 / 39.4 s" src="docs/images/bench-long-light.svg">
+  <img alt="Long answers and large files on Linux, Pi-Bolt 0.8.0 vs Pi on Bun 1.4.2 vs Pi on Node 24: CPU streaming a 20,000-character answer 0.9 / 9.8 / 7.4 s; a 60,000-character answer 4.0 / 43.0 / 41.0 s; share of a core while streaming 8 / 85 / 81%; writing a 200 KB file through a tool call 0.8 / 26.9 / 37.2 s" src="docs/images/bench-long-light.svg">
 </picture>
 
 <details>
@@ -188,17 +160,17 @@ fastest. oh-my-pi compacts a long conversation on its own, so the long session d
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-speed-dark.svg">
-  <img alt="Time on Linux, Pi-Bolt 0.7.3 vs 0.7.0 vs Bun 1.4.2 vs Node 24: ready to type 47 / 48 / 143 / 334 ms; pi --version 13 / 14 / 89 / 255 ms; one prompt 83 / 87 / 193 / 454 ms; time per prompt in a 4.2M-token session 565 / 576 / 777 / 961 ms" src="docs/images/bench-speed-light.svg">
+  <img alt="Time on Linux, Pi-Bolt 0.8.0 vs Pi on Bun 1.4.2 vs Pi on Node 24: ready to type 45 / 128 / 316 ms; pi --version 13 / 80 / 239 ms; one prompt 79 / 176 / 435 ms; time per prompt in a 4.2M-token session 545 / 779 / 925 ms" src="docs/images/bench-speed-light.svg">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-cpu-dark.svg">
-  <img alt="CPU time on Linux, Pi-Bolt 0.7.3 vs 0.7.0 vs Bun 1.4.2 vs Node 24: interactive session 309 / 328 / 913 / 1,312 ms; one prompt 85 / 89 / 333 / 645 ms; pi --version 14 / 15 / 150 / 322 ms; per prompt in a 4.2M-token session 301 / 319 / 548 / 794 ms" src="docs/images/bench-cpu-light.svg">
+  <img alt="CPU time on Linux, Pi-Bolt 0.8.0 vs Pi on Bun 1.4.2 vs Pi on Node 24: interactive session 294 / 871 / 1,241 ms; one prompt 80 / 323 / 618 ms; pi --version 14 / 145 / 312 ms; per prompt in a 4.2M-token session 287 / 569 / 761 ms" src="docs/images/bench-cpu-light.svg">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-memory-dark.svg">
-  <img alt="Memory and streaming on Linux, Pi-Bolt 0.7.3 vs 0.7.0 vs Bun 1.4.2 vs Node 24: peak memory 154 / 170 / 218 / 213 MB; own memory in tmux 28 / 28 / 87 / 93 MB; own memory after a 4.2M-token session 139 / 198 / 296 / 537 MB; CPU while replies stream 332 / 362 / 646 / 564 ms" src="docs/images/bench-memory-light.svg">
+  <img alt="Memory and streaming on Linux, Pi-Bolt 0.8.0 vs Pi on Bun 1.4.2 vs Pi on Node 24: peak memory 147 / 206 / 212 MB; own memory in tmux 24 / 92 / 95 MB; own memory after a 4.2M-token session 187 / 275 / 576 MB; CPU while replies stream 348 / 572 / 528 ms" src="docs/images/bench-memory-light.svg">
 </picture>
 
 </details>

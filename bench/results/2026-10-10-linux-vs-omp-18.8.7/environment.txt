@@ -1,7 +1,0 @@
-date: 2026-10-10T12:32Z
-Linux instance-20260927-040037 7.0.0-1013-gcp #13~24.04.1-Ubuntu SMP PREEMPT Tue Sep 15 18:10:25 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
-model name	: AMD EPYC 7B13
-pi-bolt: 1.1.0 (Pi-Bolt 0.7.3, linux-x64, JIT off)
-omp: omp/18.8.7
-bun: 1.1.0 (Pi as released)
-node: v24.21.0

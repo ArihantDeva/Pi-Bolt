@@ -65,6 +65,38 @@ else
 	status=1
 fi
 
+# Without the JIT, a package that works only through bun:ffi does not load, so that its extension takes its Node.js alternative
+# (pi-fff: @ff-labs/fff-bun, then @ff-labs/fff-node); with the JIT it loads.
+ffi="$home/extensions/jit-only"
+mkdir -p "$ffi/node_modules/@ff-labs/fff-bun" "$ffi/node_modules/@ff-labs/fff-node"
+printf '{"name": "@ff-labs/fff-bun", "main": "index.js"}\n' >"$ffi/node_modules/@ff-labs/fff-bun/package.json"
+printf 'module.exports = { backend: "bun" };\n' >"$ffi/node_modules/@ff-labs/fff-bun/index.js"
+printf '{"name": "@ff-labs/fff-node", "main": "index.js"}\n' >"$ffi/node_modules/@ff-labs/fff-node/package.json"
+printf 'module.exports = { backend: "node" };\n' >"$ffi/node_modules/@ff-labs/fff-node/index.js"
+cat >"$ffi/jit-only.ts" <<'TS'
+async function backend(): Promise<string> {
+	try {
+		return (await import("@ff-labs/fff-bun")).backend;
+	} catch {
+		return (await import("@ff-labs/fff-node")).backend;
+	}
+}
+export default async function () {
+	console.log(`jit-only: ${await backend()}`);
+	process.exit(0);
+}
+TS
+want=node; "$PI" --version | grep -q "JIT on" && want=bun
+out=$(env -i HOME="$home" PATH=/usr/bin:/bin PI_CODING_AGENT_DIR="$home/agent" DO_NOT_TRACK=1 BUN_ENABLE_CRASH_REPORTING=0 \
+	"$PI" -ne -e "$ffi/jit-only.ts" --offline --no-session -p hi 2>&1 </dev/null)
+if grep -q "^jit-only: $want" <<<"$out"; then
+	echo "PASS a package that needs bun:ffi: the $want backend"
+else
+	echo "FAIL a package that needs bun:ffi: expected the $want backend"
+	grep -m3 -i "jit-only\|error" <<<"$out" | cut -c1-200 | sed 's/^/   /'
+	status=1
+fi
+
 # Programs started from Pi (on macOS through pi-spawn). The probe says where its code and stack are.
 probe=
 printf '#include <stdio.h>\nint main(void) { int x; printf("%%p/%%p\\n", (void*)main, (void*)&x); return 0; }\n' >"$home/probe.c"

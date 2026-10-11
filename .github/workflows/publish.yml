@@ -154,6 +154,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - name: The builds (pi-bolt-PLATFORM-VARIANT)
+        env:
+          PIBOLT_NPM_EXISTING_ONLY: "1"
         run: scripts/publish-npm-builds.sh "dist/$VERSION" -- --provenance
       - name: The pi-bolt package
         working-directory: npm
