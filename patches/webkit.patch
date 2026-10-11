@@ -61,10 +61,11 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  Source/JavaScriptCore/aot/AOTRuntime.h        |   15 +-
  Source/JavaScriptCore/aot/AOTStubs.cpp        |  144 +-
  Source/JavaScriptCore/aot/AOTStubs.h          |   51 +
- Source/JavaScriptCore/aot/AOTStubsX86_64.cpp  | 3512 +++++++++++++++++
+ Source/JavaScriptCore/aot/AOTStubsX86_64.cpp  | 3514 +++++++++++++++++
  Source/JavaScriptCore/aot/AOTThunks.cpp       |  326 +-
  Source/JavaScriptCore/aot/AOTThunks.h         |   15 +-
  .../JavaScriptCore/aot/AOTTypeInference.cpp   |   77 +-
+ Source/JavaScriptCore/aot/AOTTypeTable.cpp    |    8 +-
  .../JavaScriptCore/assembler/ProbeContext.cpp |    4 +-
  .../b3/B3AbstractHeapRepository.h             |    2 +
  .../JavaScriptCore/bytecode/CallLinkInfo.cpp  |    5 +-
@@ -83,7 +84,7 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  .../interpreter/StackVisitor.cpp              |    8 +-
  .../parser/VariableEnvironment.cpp            |    2 +-
  .../parser/VariableEnvironment.h              |   16 +-
- Source/JavaScriptCore/runtime/CachedTypes.cpp |  245 +-
+ Source/JavaScriptCore/runtime/CachedTypes.cpp |  250 +-
  Source/JavaScriptCore/runtime/CachedTypes.h   |   23 +-
  Source/JavaScriptCore/runtime/CodeCache.cpp   |    2 +
  .../runtime/CyclicModuleRecord.cpp            |    3 +-
@@ -96,7 +97,7 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  Source/JavaScriptCore/runtime/PrototypeKey.h  |    3 +-
  Source/JavaScriptCore/runtime/RegExp.cpp      |   76 +-
  Source/JavaScriptCore/runtime/RegExp.h        |    9 +
- Source/JavaScriptCore/runtime/RegExpInlines.h |   48 +
+ Source/JavaScriptCore/runtime/RegExpInlines.h |   51 +
  .../runtime/ReportableSitesOfFunction.h       |   29 +
  .../runtime/SamplingProfiler.cpp              |    8 +
  Source/JavaScriptCore/runtime/StackFrame.cpp  |   11 +-
@@ -132,7 +133,7 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  Source/cmake/WebKitCompilerFlags.cmake        |    4 +-
  Source/cmake/WebKitMacros.cmake               |   28 +-
  build-icu.ps1                                 |   49 +-
- 102 files changed, 8278 insertions(+), 389 deletions(-)
+ 103 files changed, 8294 insertions(+), 391 deletions(-)
  create mode 100644 JSTests/microbenchmarks/array-length-increment-large.js
  create mode 100644 JSTests/stress/array-set-length-grow-within-vector.js
  create mode 100644 JSTests/stress/ftl-get-by-val-ic-typed-array-float-load-clobbers-fp-temp-register.js
@@ -829,7 +830,7 @@ index dcf297ac5e..195195aaac 100644
  JS_EXPORT_PRIVATE uint32_t callSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
  JS_EXPORT_PRIVATE const RegisterAtOffsetList& adapterSavedRegisters();
 diff --git a/Source/JavaScriptCore/aot/AOTGraph.cpp b/Source/JavaScriptCore/aot/AOTGraph.cpp
-index d95a8ad60f..557abf728d 100644
+index d95a8ad60f..3fd802977f 100644
 --- a/Source/JavaScriptCore/aot/AOTGraph.cpp
 +++ b/Source/JavaScriptCore/aot/AOTGraph.cpp
 @@ -652,6 +652,11 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
@@ -850,7 +851,7 @@ index d95a8ad60f..557abf728d 100644
                      continue;
 +                // Every item that is spread has to be an op_spread here: what was spread elsewhere and got here some other way (a
 +                // phi, as where the fast copy of a loop rejoins the generic one) would be passed as it is, the list of what was in it.
-+                const BitVector& whichAreSpread = m_codeBlock->bitVector(bytecode.m_bitVector);
++                const BitVector& whichAreSpread = list->graph->codeBlock()->bitVector(bytecode.m_bitVector); // (an inlinee's own)
 +                bool spreadsAreHere = true;
                  parts.append(list);
                  for (unsigned i = bytecode.m_argc; i--;) {
@@ -3894,10 +3895,10 @@ index fddb0880c7..0d9c5f1037 100644
  static constexpr size_t roomToSpareInReachOfStubCall = 24 * MB; // A target considered in range stays in range if it ends up this much further away.
 diff --git a/Source/JavaScriptCore/aot/AOTStubsX86_64.cpp b/Source/JavaScriptCore/aot/AOTStubsX86_64.cpp
 new file mode 100644
-index 0000000000..bd19936a2e
+index 0000000000..bdd92d37d3
 --- /dev/null
 +++ b/Source/JavaScriptCore/aot/AOTStubsX86_64.cpp
-@@ -0,0 +1,3512 @@
+@@ -0,0 +1,3514 @@
 +/*
 + * Copyright (C) 2026 Oven, Inc. All rights reserved.
 + * SPDX-License-Identifier: BSD-2-Clause
@@ -4612,9 +4613,11 @@ index 0000000000..bd19936a2e
 +    jit.call(table, OperationPtrTag);
 +    jit.loadPtr(Address(CCallHelpers::stackPointerRegister), table);
 +    jit.addPtr(TrustedImm32(16), CCallHelpers::stackPointerRegister);
++    // Before the test, as in findTargetAndCall(): unwind() is entered with the return address on top, and its prologue then puts
++    // the same frame back where this one was (rdx and r10 are kept).
++    jit.emitFunctionEpilogue();
 +    // Returns the constructed object. A null result, returned together with the VM, means an exception was thrown.
 +    Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
-+    jit.emitFunctionEpilogue();
 +    jit.ret();
 +
 +    threw.link(&jit);
@@ -7881,6 +7884,39 @@ index 8db0635296..98879bfe5e 100644
      Type m_returnType { TNone };
      UncheckedKeyHashMap<Node*, Type> m_elementTypes; // Of the arrays that the function makes: everything it puts in them.
      bool m_elementTypesChanged { false };
+diff --git a/Source/JavaScriptCore/aot/AOTTypeTable.cpp b/Source/JavaScriptCore/aot/AOTTypeTable.cpp
+index 5054617082..77f67fe463 100644
+--- a/Source/JavaScriptCore/aot/AOTTypeTable.cpp
++++ b/Source/JavaScriptCore/aot/AOTTypeTable.cpp
+@@ -165,6 +165,10 @@ static TypeTable::Field withId(uint16_t id, TypeTable::Field field)
+     return field;
+ }
+ 
++// Whether the compiled accesses check Structure::fieldIDInSlot() (the ARM64 lowering does; elsewhere a field with an ID is not
++// typed, and its accesses are generic).
++static constexpr bool accessesCheckFieldIDs = isARM64();
++
+ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringImpl* name) const
+ {
+     auto words = record(type);
+@@ -184,7 +188,7 @@ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringI
+         if (m_hasTypedFields && usesFieldIDs(field[2])) {
+             id = m_idsOfFields.get({ field[2], name });
+             // (An object that has no such property of its own has Object.prototype's, which is more than a slot with nothing in it says.)
+-            if (!id || isInherited)
++            if (!id || isInherited || !accessesCheckFieldIDs)
+                 return std::nullopt;
+         }
+         return withId(id, Field { static_cast<uint16_t>(field[1]), !!(bits & 1), m_hasTypedFields ? static_cast<uint8_t>(inlineSlotsOf(field[2])) : uint8_t(255), !!(bits & 8), safeCast<uint16_t>(field[2]), safeCast<uint16_t>(field[3]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[4]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[5]), field[6], FieldType::from(field[7], field[8]) });
+@@ -208,7 +212,7 @@ std::optional<TypeTable::Field> TypeTable::fieldOfLayout(uint32_t number, Unique
+         uint16_t id = 0;
+         if (usesFieldIDs(number)) {
+             id = m_idsOfFields.get({ number, name });
+-            if (!id)
++            if (!id || !accessesCheckFieldIDs)
+                 return std::nullopt;
+         }
+         // (Whatever the types say has to be there: what is known only for its family may be an object that is still being given what it is to have.)
 diff --git a/Source/JavaScriptCore/assembler/ProbeContext.cpp b/Source/JavaScriptCore/assembler/ProbeContext.cpp
 index b52b4897a1..e67bce685f 100644
 --- a/Source/JavaScriptCore/assembler/ProbeContext.cpp
@@ -9333,7 +9369,7 @@ index 1dda303c94..29709a14fc 100644
      using Variables = Variant<Compact, Inflated>;
  
 diff --git a/Source/JavaScriptCore/runtime/CachedTypes.cpp b/Source/JavaScriptCore/runtime/CachedTypes.cpp
-index 696ac7a731..37bd0ea85a 100644
+index 696ac7a731..157c7a8691 100644
 --- a/Source/JavaScriptCore/runtime/CachedTypes.cpp
 +++ b/Source/JavaScriptCore/runtime/CachedTypes.cpp
 @@ -26,6 +26,7 @@
@@ -9455,19 +9491,21 @@ index 696ac7a731..37bd0ea85a 100644
              return;
          }
          SourceCode source = executable.linkedSourceCode(around);
-@@ -6116,7 +6148,71 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6116,7 +6148,76 @@ struct BytecodeLinkEncoder::Impl {
      Vector<AOT::Variable> variablesWrittenNativelyOfLink;
  
      // What the bundler says of the variables at the top of a module, by where each is in the environment of the module.
 +    // What a module's variables hold, when the embedder's graph says nothing of them (no PrelinkedModuleGraph::Binding rows): worked
 +    // out from the module's bytecode, conservatively. A variable keeps what its declaration put in it if no instruction anywhere in
-+    // the module stores to a variable of that name other than to initialize it (a name, not a variable: a store to a shadowing
++    // the module stores to a variable of that name other than to initialize it once (a name, not a variable: a store to a shadowing
 +    // variable of the same name counts too), and the module has no direct eval. Whether its value escapes, and whether anything
 +    // outside can see it, is not worked out: both are taken to be so. Options::aotInferModuleBindings().
 +    Vector<AOT::ModuleHints::Binding> inferBindingsOfModule(UnlinkedModuleProgramCodeBlock* module)
 +    {
 +        Vector<AOT::ModuleHints::Binding> result;
 +        UncheckedKeyHashSet<RefPtr<UniquedStringImpl>> stored;
++        // (A name initialized at more than one place, as `var f = a; var f = b;` at the top of a module is, counts as stored.)
++        UncheckedKeyHashSet<RefPtr<UniquedStringImpl>> initialized;
 +        Vector<UnlinkedCodeBlock*, 64> work { module };
 +        UncheckedKeyHashSet<UnlinkedCodeBlock*> seen { module };
 +        auto addCodeOf = [&](UnlinkedFunctionExecutable* executable) {
@@ -9486,8 +9524,11 @@ index 696ac7a731..37bd0ea85a 100644
 +                case op_put_to_scope: {
 +                    auto bytecode = instruction->as<OpPutToScope>();
 +                    auto mode = bytecode.m_getPutInfo.initializationMode();
-+                    if (mode != InitializationMode::Initialization && mode != InitializationMode::ConstInitialization)
-+                        stored.add(block->identifier(bytecode.m_var).impl());
++                    auto* name = block->identifier(bytecode.m_var).impl();
++                    if (mode == InitializationMode::ConstInitialization)
++                        break;
++                    if (mode != InitializationMode::Initialization || !initialized.add(name).isNewEntry)
++                        stored.add(name);
 +                    break;
 +                }
 +                default:
@@ -9527,7 +9568,7 @@ index 696ac7a731..37bd0ea85a 100644
      {
          using Graph = PrelinkedModuleGraph;
          Vector<AOT::ModuleHints::Binding> result;
-@@ -6391,6 +6487,9 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6391,6 +6492,9 @@ struct BytecodeLinkEncoder::Impl {
          AOT::MultiValueReturnTable multiValueReturnTable;
          AOT::setMultiValueReturnTable(&multiValueReturnTable);
          auto forgetThingsReturnedByFunctions = makeScopeExit([] { AOT::setMultiValueReturnTable(nullptr); });
@@ -9537,7 +9578,7 @@ index 696ac7a731..37bd0ea85a 100644
          {
              MonotonicTime before = MonotonicTime::now();
              for (auto& hintsOfModule : hints) {
-@@ -6413,6 +6512,7 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6413,6 +6517,7 @@ struct BytecodeLinkEncoder::Impl {
                      unreadable++;
              });
              AOT::TypeTable::finalizeAtomizedFields();
@@ -9545,7 +9586,7 @@ index 696ac7a731..37bd0ea85a 100644
              RELEASE_ASSERT(!unreadable.load());
              classesOfProgram.forEachNonEscapingMethod([&](uint32_t number) {
                  const AOT::KnownFunction& function = *functionsOfProgram.function(number);
-@@ -6673,10 +6773,18 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6673,10 +6778,18 @@ struct BytecodeLinkEncoder::Impl {
          std::atomic<size_t> next { 0 };
          Lock declinedLock;
          UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
@@ -9564,7 +9605,7 @@ index 696ac7a731..37bd0ea85a 100644
                  auto it = all.find(codeBlock);
                  return it == all.end() ? std::nullopt : std::optional { it->value };
              }
-@@ -6704,7 +6812,11 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6704,7 +6817,11 @@ struct BytecodeLinkEncoder::Impl {
                      continue;
                  }
                  AOT::CompiledCode code;
@@ -9577,7 +9618,7 @@ index 696ac7a731..37bd0ea85a 100644
                      // (A function's key says where its source starts, if it is a function that somebody wrote.)
                      {
                          auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
-@@ -6733,6 +6845,7 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6733,6 +6850,7 @@ struct BytecodeLinkEncoder::Impl {
                  else {
                      Locker locker { declinedLock };
                      declined.add(jobs[index].codeBlock);
@@ -9585,7 +9626,7 @@ index 696ac7a731..37bd0ea85a 100644
                  }
              }
          };
-@@ -6844,6 +6957,7 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6844,6 +6962,7 @@ struct BytecodeLinkEncoder::Impl {
  
          // A call that passes no function object has nowhere to go but the function's code. If there turns out to be none, it is all
          // done again with that known.
@@ -9593,7 +9634,7 @@ index 696ac7a731..37bd0ea85a 100644
          for (bool again = true; again;) {
              Vector<Ref<Thread>> threads;
              for (unsigned i = 1; i < numberOfThreads; ++i)
-@@ -6869,6 +6983,53 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6869,6 +6988,53 @@ struct BytecodeLinkEncoder::Impl {
                      again = true;
                  }
              });
@@ -9647,7 +9688,7 @@ index 696ac7a731..37bd0ea85a 100644
              dataLogLn("AOT: ", functionsNeverReached.load(), " closed functions that nothing reaches are left out (", bytecodeNeverReached.load(), " bytes of bytecode)");
              if (again) {
                  functionsNeverReached = 0;
-@@ -6878,7 +7039,13 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6878,7 +7044,13 @@ struct BytecodeLinkEncoder::Impl {
                  next = 0;
              }
          }
@@ -9661,7 +9702,7 @@ index 696ac7a731..37bd0ea85a 100644
          AOT::setNumbersOfIdentifiersOfProgram(nullptr);
          AOT::setNumbersOfConstantsOfProgram(nullptr);
          for (auto& job : jobs) {
-@@ -6890,6 +7057,55 @@ struct BytecodeLinkEncoder::Impl {
+@@ -6890,6 +7062,55 @@ struct BytecodeLinkEncoder::Impl {
          // A regular expression that the program makes out of a string finds its code by what it says. So it is worth having code
          // for whatever string may be made one of, and it costs nothing but room to be wrong: a string in which something is
          // escaped that only a regular expression has any call to escape.
@@ -9717,7 +9758,7 @@ index 696ac7a731..37bd0ea85a 100644
          Vector<uint8_t> image = builder.finish();
          reportableSites = builder.takeReportableSites();
          return image;
-@@ -7198,6 +7414,21 @@ UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key,
+@@ -7198,6 +7419,21 @@ UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key,
      return entry.second;
  }
  
@@ -10201,7 +10242,7 @@ index 91f6c257d8..5c3e48806a 100644
  #if ENABLE(YARR_JIT)
      std::unique_ptr<Yarr::YarrCodeBlock> m_regExpJITCode;
 diff --git a/Source/JavaScriptCore/runtime/RegExpInlines.h b/Source/JavaScriptCore/runtime/RegExpInlines.h
-index 60568923b7..7552cabba0 100644
+index 60568923b7..3832ade534 100644
 --- a/Source/JavaScriptCore/runtime/RegExpInlines.h
 +++ b/Source/JavaScriptCore/runtime/RegExpInlines.h
 @@ -28,6 +28,7 @@
@@ -10226,13 +10267,16 @@ index 60568923b7..7552cabba0 100644
      ASSERT(ovector.size() >= static_cast<size_t>(offsetVectorSize()));
      int* offsetVector = ovector.data();
  
-@@ -275,6 +283,39 @@ ALWAYS_INLINE bool RegExp::isAnchoredWord(StringView string) const
+@@ -275,6 +283,42 @@ ALWAYS_INLINE bool RegExp::isAnchoredWord(StringView string) const
      return false;
  }
  
 +ALWAYS_INLINE std::optional<unsigned> RegExp::firstPossibleStart(StringView s, unsigned startOffset) const
 +{
 +    ASSERT(m_numberOfFirstCodeUnitRanges);
++    // (A start past the end, as a lastIndex the DFG folded can be: no match starts there.)
++    if (startOffset > s.length())
++        return std::nullopt;
 +    // The ranges are sorted: if the first does not reach into Latin-1, none does.
 +    if (s.is8Bit()) {
 +        if (m_firstCodeUnitsBegin[0] > 0xff)
@@ -10266,7 +10310,7 @@ index 60568923b7..7552cabba0 100644
  ALWAYS_INLINE bool RegExp::hasMatchOnlyCodeFor(Yarr::CharSize charSize)
  {
      if (hasCode()) {
-@@ -358,6 +399,13 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
+@@ -358,6 +402,13 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
      if (m_state == ParseError)
          return throwError();
  
