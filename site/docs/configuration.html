@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#050505">
+<title>Configuration · Pi-Bolt documentation</title>
+<meta name="description" content="Pi-Bolt reads Pi&#x27;s configuration. Where it lives, and the environment variables that are specific to Pi-Bolt.">
+<meta property="og:title" content="Configuration · Pi-Bolt documentation">
+<meta property="og:description" content="Pi-Bolt reads Pi&#x27;s configuration. Where it lives, and the environment variables that are specific to Pi-Bolt.">
+<meta property="og:url" content="https://pi-bolt.opensec.in/docs/configuration.html">
+<link rel="canonical" href="https://pi-bolt.opensec.in/docs/configuration.html">
+<link rel="icon" href="../logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site">
+  <div class="bar">
+    <button class="menu" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Open the documentation menu">
+      <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+    </button>
+    <a class="brand" href="../"><img src="../logo.svg" alt="">Pi-Bolt</a>
+    <a class="section-name" href="./">Docs</a>
+    <button class="search-open" type="button" aria-haspopup="dialog">
+      <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="m13 13 4 4" stroke="currentColor" stroke-width="1.6"/></svg>
+      <span>Search docs</span><kbd>/</kbd>
+    </button>
+    <nav class="top" aria-label="Main">
+      <a href="../#benchmarks">Benchmarks</a>
+      <a href="https://github.com/opensec-git/Pi-Bolt/releases/latest">Releases</a>
+      <a class="gh" href="https://github.com/opensec-git/Pi-Bolt">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="Documentation">
+    <div class="nav-group"><h2 class="nav-title">Get started</h2><ul>
+<li><a href="index.html">Overview</a></li>
+<li><a href="installation.html">Installation</a></li>
+<li><a href="quickstart.html">Quickstart</a></li>
+</ul></div>
+<div class="nav-group"><h2 class="nav-title">Guides</h2><ul>
+<li><a href="builds.html">Choose a build</a></li>
+<li><a href="extensions.html">Extensions</a></li>
+<li><a href="integrations.html">Integrations</a></li>
+<li><a href="configuration.html" aria-current="page">Configuration</a></li>
+</ul></div>
+<div class="nav-group"><h2 class="nav-title">Reference</h2><ul>
+<li><a href="benchmarks.html">Benchmarks</a></li>
+<li><a href="how-it-works.html">How it works</a></li>
+<li><a href="security.html">Security</a></li>
+</ul></div>
+<div class="nav-group"><h2 class="nav-title">Help</h2><ul>
+<li><a href="troubleshooting.html">Troubleshooting</a></li>
+<li><a href="faq.html">FAQ</a></li>
+</ul></div>
+  </aside>
+  <div class="scrim" hidden></div>
+
+  <main id="content">
+    <article class="doc">
+      <p class="eyebrow">Guides</p>
+<h1>Configuration</h1>
+<p class="lede">Pi-Bolt has no configuration of its own: it reads Pi's. A few environment variables control the Pi-Bolt
+  executable itself, for diagnostics and tuning.</p>
+
+<h2 id="pi-s-configuration">Pi's configuration<a class="anchor" href="#pi-s-configuration" aria-label="Link to this section">#</a></h2>
+<p>Pi-Bolt and Pi share the agent directory, <code>~/.pi/agent</code>, and a project's <code>.pi</code> folder:</p>
+<div class="table"><table>
+  <thead><tr><th>File or folder</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td><code>settings.json</code></td><td>Settings: default model, theme, extensions on and off, and more</td></tr>
+    <tr><td><code>auth.json</code>, <code>models.json</code></td><td>Logins and API keys; custom providers and models</td></tr>
+    <tr><td><code>sessions/</code></td><td>Saved sessions</td></tr>
+    <tr><td><code>extensions/</code>, <code>prompts/</code></td><td>Your extensions and prompt templates</td></tr>
+    <tr><td><code>mcp.json</code></td><td>MCP servers</td></tr>
+  </tbody>
+</table></div>
+<p>Pi's <a href="https://pi.dev/docs/latest/configuration">Configuration</a>, <a href="https://pi.dev/docs/latest/settings">Settings</a>
+  and <a href="https://pi.dev/docs/latest/environment-variables">Environment variables</a> pages apply to Pi-Bolt as written.
+  <code>PI_CODING_AGENT_DIR</code> moves the agent directory, and <code>PI_OFFLINE=1</code> (or <code>--offline</code>) turns off
+  network operations at startup.</p>
+
+<h2 id="pi-bolt-s-environment-variables">Pi-Bolt's environment variables<a class="anchor" href="#pi-bolt-s-environment-variables" aria-label="Link to this section">#</a></h2>
+<p>These are read by the Pi-Bolt executable at run time.</p>
+<div class="table"><table>
+  <thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>PIBOLT_VARIANT</code></td><td>The build the installer or the npm package installs. See <a href="builds.html">Choose a build</a>.</td></tr>
+    <tr><td><code>PIBOLT_HOME</code></td><td>npm package: where downloaded builds are kept. Default: <code>~/.pi-bolt</code>.</td></tr>
+    <tr><td><code>BUN_AOT=0</code></td><td>Ignore the compiled code and run Pi from bytecode. Use it to tell whether a problem comes from the compiled code.</td></tr>
+    <tr><td><code>BUN_STATIC_HEAP_VERBOSE=1</code></td><td>Report how the compiled code and prebuilt heap were loaded.</td></tr>
+    <tr><td><code>PI_TIMING=1</code></td><td>Pi's startup timings, including each extension's factory.</td></tr>
+    <tr><td><code>PI_TUI_SCROLL_ROWS=0</code></td><td>Redraw every changed row instead of scrolling rows that only moved, for a terminal that does not scroll a region correctly.</td></tr>
+    <tr><td><code>BUN_CONFIG_HTTP_KEEPALIVE_TIMEOUT=N</code></td><td>Seconds an idle connection to a server waits to be reused when the server does not say. Default: 4, as in Node.</td></tr>
+    <tr><td><code>BUN_JSC_numberOfGCMarkers=N</code></td><td>Threads that mark during a garbage collection. Default: 2.</td></tr>
+    <tr><td><code>MIMALLOC_PURGE_HOLES_MIN_INTERVAL=N</code></td><td>Milliseconds between returns of freed memory to the system. Default: 250. Lower returns memory sooner, for more CPU.</td></tr>
+    <tr><td><code>JITI_FS_CACHE=false</code></td><td>Do not keep the transpiled source of run-time extensions (kept in <code>cache/jiti</code> of the agent directory).</td></tr>
+  </tbody>
+</table></div>
+<p>The installer has its own variables; see <a href="installation.html#installer-options">Installer options</a>.</p>
+
+<h2 id="env-files">.env files<a class="anchor" href="#env-files" aria-label="Link to this section">#</a></h2>
+<p>Pi-Bolt does not read a <code>.env</code> file from the working directory. Pi on Bun does, because Bun loads one into every
+  program's environment; Pi on Node does not. A project's <code>.env</code> (its API keys, its proxy settings) belongs to the
+  project. Set what Pi should see in the shell that starts it.</p>
+
+    </article>
+    <div class="doc-foot">
+      <a class="edit" href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs-site/pages/configuration.html">Edit this page on GitHub</a>
+    </div>
+    <nav class="pager" aria-label="Previous and next page"><a class="prev" href="integrations.html"><span>Previous</span>Integrations</a><a class="next" href="benchmarks.html"><span>Next</span>Benchmarks</a></nav>
+  </main>
+
+  <aside class="toc-col">
+    <nav class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#pi-s-configuration">Pi&#x27;s configuration</a></li><li class="l2"><a href="#pi-bolt-s-environment-variables">Pi-Bolt&#x27;s environment variables</a></li><li class="l2"><a href="#env-files">.env files</a></li></ul></nav>
+  </aside>
+</div>
+
+<footer>
+  <div class="foot">
+    <p><strong>Pi-Bolt</strong> is an independent fork of <a href="https://github.com/earendil-works/pi">Pi</a>, not affiliated with
+      Pi's authors or with Oven. MIT licensed.</p>
+    <p><a href="../">Home</a> · <a href="https://github.com/opensec-git/Pi-Bolt">GitHub</a> ·
+      <a href="https://www.npmjs.com/package/pi-bolt">npm</a> · <a href="https://pi.dev/docs/latest">Pi documentation</a></p>
+  </div>
+</footer>
+
+<div class="search" role="dialog" aria-modal="true" aria-label="Search the documentation" hidden>
+  <div class="search-box">
+    <div class="search-field">
+      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="m13 13 4 4" stroke="currentColor" stroke-width="1.6"/></svg>
+      <input type="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" spellcheck="false">
+      <kbd>Esc</kbd>
+    </div>
+    <ul class="results" role="listbox" aria-label="Results"></ul>
+  </div>
+</div>
+<script src="docs.js"></script>
+</body>
+</html>
