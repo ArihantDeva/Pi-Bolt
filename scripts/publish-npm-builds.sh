@@ -8,7 +8,9 @@
 # Usage: scripts/publish-npm-builds.sh DIST [--pack OUT] [-- NPM PUBLISH OPTIONS]
 #   DIST     dist/<version>, as package-release.sh makes it (the .tar.xz files and SHA256SUMS)
 #   --pack   only make the packages (.tgz) in OUT, to test them
-# A version that npm already has is skipped, so running it again is safe.
+# A version that npm already has is skipped, so running it again is safe. With PIBOLT_NPM_EXISTING_ONLY=1 (the publish workflow:
+# trusted publishing can only publish packages that exist), a package npm does not have yet is skipped, with a warning; it is
+# published the first time by hand (docs/RELEASING.md).
 source "$(dirname "$0")/lib/common.sh"
 
 DIST="${1:?usage: scripts/publish-npm-builds.sh DIST [--pack OUT] [-- npm publish options]}"
@@ -56,6 +58,10 @@ for file in "${builds[@]}"; do
 	check_sum "$DIST" "$file" || die "$file does not match SHA256SUMS"
 	if [ -z "$PACK" ] && [ "$(npm view "$name@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
 		log "npm already has $name@$VERSION"
+		continue
+	fi
+	if [ -z "$PACK" ] && [ "${PIBOLT_NPM_EXISTING_ONLY:-}" = 1 ] && [ -z "$(npm view "$name" name 2>/dev/null)" ]; then
+		warn "npm has no package $name yet: skipped (publish it once by hand, then give it trusted publishing)"
 		continue
 	fi
 	dir="$STAGE/$name"

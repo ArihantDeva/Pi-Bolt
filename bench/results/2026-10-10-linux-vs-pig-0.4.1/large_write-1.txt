@@ -1,9 +1,0 @@
-build           file   wall s    cpu s  result
-pi-bolt         50 KB      0.2      0.2  ok
-pi-bolt        200 KB      0.8      0.4  ok
-pig             50 KB      6.9      9.9  ok
-pig            200 KB    100.9    141.9  ok
-bun             50 KB      2.1      2.5  ok
-bun            200 KB     29.0     42.3  ok
-node            50 KB      2.9      3.2  ok
-node           200 KB     38.4     39.0  ok

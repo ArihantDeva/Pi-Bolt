@@ -89,6 +89,32 @@ else {
 	($r.Text -split "`n" | Where-Object { $_ -match '(?i)error|cannot' } | Select-Object -First 3) | ForEach-Object { Write-Host "   $_" }
 	$script:status = 1
 }
+# Without the JIT, a package that works only through bun:ffi does not load, so that its extension takes its Node.js alternative
+# (pi-fff: @ff-labs/fff-bun, then @ff-labs/fff-node); with the JIT it loads.
+$ffi = Join-Path $extensions 'jit-only'
+foreach ($b in 'bun', 'node') {
+	$dir = Join-Path $ffi "node_modules\@ff-labs\fff-$b"
+	New-Item -ItemType Directory -Force -Path $dir | Out-Null
+	[IO.File]::WriteAllText((Join-Path $dir 'package.json'), "{`"name`": `"@ff-labs/fff-$b`", `"main`": `"index.js`"}")
+	[IO.File]::WriteAllText((Join-Path $dir 'index.js'), "module.exports = { backend: `"$b`" };")
+}
+[IO.File]::WriteAllText((Join-Path $ffi 'jit-only.ts'), @'
+async function backend(): Promise<string> {
+	try {
+		return (await import("@ff-labs/fff-bun")).backend;
+	} catch {
+		return (await import("@ff-labs/fff-node")).backend;
+	}
+}
+export default async function () {
+	console.log(`jit-only: ${await backend()}`);
+	process.exit(0);
+}
+'@)
+$want = if ((Invoke-Pi @('--version')).Text -match 'JIT on') { 'bun' } else { 'node' }
+$r = Invoke-Pi @('-ne', '-e', (Join-Path $ffi 'jit-only.ts'), '--offline', '--no-session', '-p', 'hi')
+if ($r.Text -match "(?m)^jit-only: $want") { Write-Host "PASS a package that needs bun:ffi: the $want backend" }
+else { Write-Host "FAIL a package that needs bun:ffi: expected the $want backend"; $script:status = 1 }
 Test-Extension 'child-processes-windows' 3
 Test-Extension 'workers' 3
 
