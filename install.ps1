@@ -30,6 +30,18 @@
 $PiBoltReleaseKey = 'MCowBQYDK2VwAyEAoLboJqtKaoISPqffk03vHZr+1sRBG3uIRIWeKOew+aY='
 $PiBoltRepo = 'https://github.com/opensec-git/Pi-Bolt'
 
+# --- Modules ---------------------------------------------------------------------------------------------------------------
+# PowerShell 7 passes its own module directories to everything it starts, and they come before this PowerShell's own. An
+# installation started from a PowerShell 7 prompt (which is how `pi-bolt update` starts this script when Pi-Bolt itself runs in
+# one, and how a user's own prompt runs it) then resolves names this script needs — Get-FileHash, Get-Acl and Set-Acl, from
+# Microsoft.PowerShell.Utility and Microsoft.PowerShell.Security — to PowerShell 7's copies of those modules, whose cmdlets are
+# built for .NET and do not load in it. Windows PowerShell reports "The term 'Get-FileHash' is not recognized", the checksum of
+# a good download does not match, and an installation to a folder outside the profile cannot limit who may change it. This
+# host's own module directory goes first, so its core modules win. Only this process is affected: what the installer starts,
+# and the rest of the machine, keep the module path they had.
+
+$env:PSModulePath = "$PSHOME\Modules;$env:PSModulePath"
+
 # --- Ed25519 ----------------------------------------------------------------------------------------------------------
 # Signature verification (RFC 8032, section 5.1.7) with System.Numerics.BigInteger: Windows has no Ed25519 of its own (neither
 # .NET Framework nor .NET has one, and there is no openssl), and the signature is what says that a download is Pi-Bolt's. About
