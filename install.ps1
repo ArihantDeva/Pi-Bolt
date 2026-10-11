@@ -1,6 +1,7 @@
 # Pi-Bolt installer for Windows (x64).
 #
-#   powershell -c "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://pi-bolt.opensec.in/install.ps1 | iex"
+#   irm https://pi-bolt.opensec.in/install.ps1 | iex                       (in PowerShell)
+#   powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"      (in Command Prompt)
 #
 # Downloads a release, verifies its SHA-256 checksum and the Ed25519 signature of the checksums, installs it to
 # %USERPROFILE%\.pi-bolt and puts `pi-bolt` on your PATH (it asks first). Run it again to reinstall, update or uninstall. The
@@ -29,6 +30,17 @@
 # The public key that releases are signed with (keys/release.pub in the repository; scripts/sign-release.sh).
 $PiBoltReleaseKey = 'MCowBQYDK2VwAyEAoLboJqtKaoISPqffk03vHZr+1sRBG3uIRIWeKOew+aY='
 $PiBoltRepo = 'https://github.com/opensec-git/Pi-Bolt'
+
+# --- Modules ---------------------------------------------------------------------------------------------------------------
+# PowerShell 7 passes its own module directories to everything it starts, and they come before this PowerShell's own. An
+# installation started from a PowerShell 7 prompt (which is how `pi-bolt update` starts this script when Pi-Bolt itself runs in
+# one, and how a user's own prompt runs it) then resolves names this script needs — Get-FileHash, Get-Acl and Set-Acl, from
+# Microsoft.PowerShell.Utility and Microsoft.PowerShell.Security — to PowerShell 7's copies of those modules, whose cmdlets are
+# built for .NET and do not load in it: Windows PowerShell reports "The term 'Get-FileHash' is not recognized" and the
+# installation stops. This host's own module directory goes first, so its core modules win. The change is this process's
+# environment (and so that of what it starts); the user's own settings are not changed.
+
+$env:PSModulePath = "$PSHOME\Modules;$env:PSModulePath"
 
 # --- Ed25519 ----------------------------------------------------------------------------------------------------------
 # Signature verification (RFC 8032, section 5.1.7) with System.Numerics.BigInteger: Windows has no Ed25519 of its own (neither
