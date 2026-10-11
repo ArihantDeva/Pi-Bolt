@@ -12,6 +12,15 @@ fetch() {
 	branch=$(source_field "$name" branch)
 	patches="$PIBOLT_ROOT/$(source_field "$name" patches)"
 	if [ -d "$dir/.git" ]; then
+		# Kept only as the pinned commit with the current patch applied: after an engine change, or a run that stopped halfway,
+		# it would be built as it is.
+		local index="$dir/.git/pibolt-check.index" tree=""
+		tree=$(GIT_INDEX_FILE="$index" git -C "$dir" read-tree "$commit" &&
+			GIT_INDEX_FILE="$index" git -C "$dir" apply --cached "$patches" &&
+			GIT_INDEX_FILE="$index" git -C "$dir" write-tree) || true
+		rm -f "$index"
+		[ -n "$tree" ] && [ "$tree" = "$(git -C "$dir" rev-parse 'HEAD^{tree}')" ] ||
+			die "$name: $dir is not ${commit:0:12} with $(basename "$patches") applied: delete it and run this again"
 		log "$name: already at $dir"
 		return
 	fi

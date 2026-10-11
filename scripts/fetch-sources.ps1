@@ -15,7 +15,26 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "'git' is requ
 function Fetch($name, [string[]]$sparse) {
 	$s = $sources.$name
 	$dir = Join-Path $Work $name
-	if (Test-Path (Join-Path $dir '.git')) { Log "${name}: already at $dir"; return }
+	if (Test-Path (Join-Path $dir '.git')) {
+		# Kept only as the pinned commit with the current patch applied: after an engine change, or a run that stopped halfway,
+		# it would be built as it is.
+		$index = Join-Path $dir '.git\pibolt-check.index'
+		$env:GIT_INDEX_FILE = $index
+		try {
+			$tree = ''
+			git -C $dir read-tree $s.commit
+			if ($LASTEXITCODE -eq 0) { git -C $dir apply --cached (Join-Path $Root $s.patches) }
+			if ($LASTEXITCODE -eq 0) { $tree = git -C $dir write-tree }
+		} finally {
+			Remove-Item Env:GIT_INDEX_FILE
+			Remove-Item -LiteralPath $index -Force -ErrorAction SilentlyContinue
+		}
+		if (-not $tree -or $tree -ne (git -C $dir rev-parse 'HEAD^{tree}')) {
+			throw "${name}: $dir is not $($s.commit.Substring(0, 12)) with $(Split-Path -Leaf $s.patches) applied: delete it and run this again"
+		}
+		Log "${name}: already at $dir"
+		return
+	}
 	Log "${name}: cloning $($s.repository) @ $($s.commit.Substring(0, 12))"
 	New-Item -ItemType Directory -Force $Work | Out-Null
 	git init -q $dir

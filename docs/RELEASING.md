@@ -84,6 +84,8 @@ When it changed, build the three runtimes by hand before tagging:
 1. On Linux x86-64: `scripts/toolchain/make-sysroot.sh` once, then `scripts/fetch-sources.sh` and `scripts/build-runtime.sh`
    ([BUILDING.md](BUILDING.md)). On a Mac with Apple silicon: `scripts/fetch-sources.sh` and `scripts/build-runtime.sh`. On
    Windows x64: `scripts\fetch-sources.ps1` and `scripts\build-runtime.ps1` ([WINDOWS.md](WINDOWS.md)).
+   `fetch-sources` stops when `.work/webkit` or `.work/bun` is not the pinned commit with the current patch applied (sources of
+   an earlier engine, or a fetch that stopped halfway): delete that folder and run it again.
 2. On each, `scripts/package-release.sh` (Windows: `scripts\package-release.ps1`) and keep `pi-bolt-runtime-<platform>.tar.gz`
    (Windows: `.zip`) from `dist/X.Y.Z`. Run `tests/aot/run.sh` and `tests/runtime/run.sh` there (Windows: the `.ps1` ones).
 3. Make a draft for the tag and upload all three: `gh release create bolt-vX.Y.Z --draft --title "Pi-Bolt X.Y.Z" --notes ""`,
