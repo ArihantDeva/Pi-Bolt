@@ -105,12 +105,13 @@ it:
 pi-bolt install npm:<package>
 ```
 
-OpenSec maintains two for Pi-Bolt, prebuilt for Bun so that they load without being transpiled (Apache-2.0):
+OpenSec maintains three for Pi-Bolt, prebuilt for Bun so that they load without being transpiled (open source):
 
 | Package | What it does |
 |---|---|
 | [`opensec-pi-subagents`](https://www.npmjs.com/package/opensec-pi-subagents) | Specialized agents in separate sessions that inherit the parent's model and thinking level |
 | [`opensec-pi-todo`](https://www.npmjs.com/package/opensec-pi-todo) | A todo list for the model, shown as a live panel above the editor |
+| [`opensec-pi-fff`](https://www.npmjs.com/package/opensec-pi-fff) | pi-fff's fast fuzzy find, grep and `@`-mentions, at full speed without the JIT |
 
 ## Configuration
 

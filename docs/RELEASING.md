@@ -56,7 +56,7 @@ the engine or the build. On Windows, the same for older CPUs is Intel SDE (`-snb
 - The archives: `pi-bolt-linux-x64`, `-baseline` and `-jit` and `pi-bolt-darwin-arm64` and `-jit` (`.tar.xz` and `.tar.gz`);
   `pi-bolt-win32-x64` and `-jit` (`.zip`); the runtimes `pi-bolt-runtime-linux-x64.tar.gz`, `pi-bolt-runtime-darwin-arm64.tar.gz`
   and `pi-bolt-runtime-win32-x64.zip`.
-- `extensions.txt`: the optional extensions the installers offer (OpenSec's `opensec-pi-subagents` and `opensec-pi-todo`), each
+- `extensions.txt`: the optional extensions the installers offer (OpenSec's `opensec-pi-subagents`, `opensec-pi-todo` and `opensec-pi-fff`), each
   with its version and npm integrity. The installers install those versions and only if the registry's tarball has that
   integrity; a release without the file pins none, and they offer nothing. Update it in the repository when either has a new
   release.

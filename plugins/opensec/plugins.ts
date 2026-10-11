@@ -51,7 +51,7 @@ const TODO_LOCALES: Record<string, unknown> = {
  * expects is not there in an executable: the files are written once, from the copies compiled in, to the agent directory's cache.
  */
 function todoLocalesUrl(agentDir: string): string {
-	const root = join(agentDir, "cache", "opensec-pi-todo-2.13.0");
+	const root = join(agentDir, "cache", "opensec-pi-todo-2.13.1");
 	const locales = join(root, "locales");
 	if (!existsSync(join(locales, "zh.json"))) {
 		mkdirSync(locales, { recursive: true });
@@ -97,7 +97,7 @@ const todo: InlineExtension = {
 			import("typebox"),
 			import("typebox/value"),
 		]);
-		provideHostModules("opensec-pi-todo@2.13.0", {
+		provideHostModules("opensec-pi-todo@2.13.1", {
 			"@earendil-works/pi-ai": piAi,
 			"@earendil-works/pi-tui": piTui,
 			typebox: typebox,

@@ -5,6 +5,6 @@
 	"type": "module",
 	"dependencies": {
 		"opensec-pi-subagents": "0.20.0",
-		"opensec-pi-todo": "2.13.0"
+		"opensec-pi-todo": "2.13.1"
 	}
 }

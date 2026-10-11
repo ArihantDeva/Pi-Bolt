@@ -18,7 +18,7 @@
 #   PIBOLT_CONNECTIONS  connections to download over at once (default: 4; 1 for a single connection)
 #   PIBOLT_SOURCE    where to download the executable from: auto (npm, then GitHub; the default), npm or github
 #   PIBOLT_NPM_REGISTRY  the npm registry or mirror to use (default: https://registry.npmjs.org)
-#   PIBOLT_EXTENSIONS  yes or no: whether to install OpenSec's optional extensions (opensec-pi-subagents, opensec-pi-todo)
+#   PIBOLT_EXTENSIONS  yes or no: whether to install OpenSec's optional extensions (opensec-pi-subagents, opensec-pi-todo, opensec-pi-fff)
 #                    without asking. Without it the installer asks when it can; a run that cannot ask, or PIBOLT_YES=1,
 #                    installs none. They are installed at the versions the release pins (its extensions.txt, covered by the
 #                    signed checksums), and only if the registry's tarball has the pinned integrity.
@@ -806,7 +806,8 @@ path_hint() {
 # The last field matches other extensions of the same kind (an extended regular expression on `pi-bolt list`): one of those
 # registers the same tools, so Pi would refuse to load both. A local checkout counts too, by its folder's name.
 EXTENSIONS="opensec-pi-subagents:run specialized agents in separate sessions:subagents|swarm
-opensec-pi-todo:a todo list for the model, shown above the editor:rpiv-todo|pi-todo"
+opensec-pi-todo:a todo list for the model, shown above the editor:rpiv-todo|pi-todo
+opensec-pi-fff:fast file and content search (find, grep, @-mentions):pi-fff"
 
 # pin_of PACKAGE: the release's line for it in extensions.txt ("NAME VERSION sha512-..."); false if there is none.
 pin_of() { printf '%s\n' "${PINS:-}" | grep -m 1 "^$1 "; }
@@ -870,7 +871,7 @@ offer_extensions() {
 	IFS=$old_ifs
 	[ -n "$wanted" ] || return 0
 	if [ -z "$choice" ]; then
-		printf '\n%sOptional extensions by OpenSec%s %s(Apache-2.0, built for Pi-Bolt)%s\n\n' "$bold" "$reset" "$dim" "$reset"
+		printf '\n%sOptional extensions by OpenSec%s %s(open source, built for Pi-Bolt)%s\n\n' "$bold" "$reset" "$dim" "$reset"
 		IFS=$newline
 		for entry in $EXTENSIONS; do
 			package=${entry%%:*} rest=${entry#*:}

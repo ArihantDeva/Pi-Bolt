@@ -18,7 +18,7 @@
 #   PIBOLT_LAUNCHER=1  used by the npm package's first run: download only, no menu, PATH or prompts
 #   PIBOLT_SOURCE    where to download the executable from: auto (npm, then GitHub; the default), npm or github
 #   PIBOLT_NPM_REGISTRY  the npm registry or mirror to use (default: https://registry.npmjs.org)
-#   PIBOLT_EXTENSIONS  yes or no: whether to install OpenSec's optional extensions (opensec-pi-subagents, opensec-pi-todo)
+#   PIBOLT_EXTENSIONS  yes or no: whether to install OpenSec's optional extensions (opensec-pi-subagents, opensec-pi-todo, opensec-pi-fff)
 #                    without asking. Without it the installer asks when it can; a run that cannot ask, or PIBOLT_YES=1,
 #                    installs none.
 #   PIBOLT_DOWNLOAD_BASE  a mirror of a release to download everything from (its SHA256SUMS.sig too)
@@ -611,7 +611,8 @@ function Install-PiBoltExtensions($state) {
 	$sources = (& $exe list 2>$null) -join "`n"
 	$extensions = @(
 		@{ Package = 'opensec-pi-subagents'; What = 'run specialized agents in separate sessions'; Kind = 'subagents|swarm' },
-		@{ Package = 'opensec-pi-todo'; What = 'a todo list for the model, shown above the editor'; Kind = 'rpiv-todo|pi-todo' })
+		@{ Package = 'opensec-pi-todo'; What = 'a todo list for the model, shown above the editor'; Kind = 'rpiv-todo|pi-todo' },
+		@{ Package = 'opensec-pi-fff'; What = 'fast file and content search (find, grep, @-mentions)'; Kind = 'pi-fff' })
 	# Only the versions the release pins, and only with the integrity it says they have.
 	foreach ($e in $extensions) {
 		$pin = $state.Extensions | Where-Object { $_.Package -eq $e.Package } | Select-Object -First 1
@@ -639,7 +640,7 @@ function Install-PiBoltExtensions($state) {
 	}
 	if (-not $wanted) { return }
 	if (-not $choice) {
-		Write-Host "`n${bold}Optional extensions by OpenSec$reset $dim(Apache-2.0, built for Pi-Bolt)$reset`n"
+		Write-Host "`n${bold}Optional extensions by OpenSec$reset $dim(open source, built for Pi-Bolt)$reset`n"
 		foreach ($e in $wanted) { Write-Host ("  $cyan{0,-22}$reset {1}" -f $e.Package, $e.What) }
 		Write-Host -NoNewline "`nInstall them? [Y/n] "
 		if ((Read-Host) -match '^(n|no)$') { Write-Host "${dim}You can install them later with: pi-bolt install npm:<name>$reset"; return }

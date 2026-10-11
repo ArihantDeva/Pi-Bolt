@@ -2,4 +2,5 @@
 # that version's npm integrity (`npm view NAME@VERSION dist.integrity`). A release carries this file and covers it with its signed
 # SHA256SUMS; the installers install exactly these versions, and only if the registry's tarball has this integrity.
 opensec-pi-subagents 0.20.0 sha512-2CdDoIrHtiglfSts4x/jgHrPWhQG5VzjSz+rUe36VIBYBnvgUPeODWIL2r/ysj/0n0tyC4+CBMltc5x14MTcnw==
-opensec-pi-todo 2.13.0 sha512-OdetQV+BnD4p45VONjuiwHXkF0tZHQ8BnxcTtYj+yXyiX3Ffjp/Q6ASYJaQL00CmVLTGae1OIxo9oDOV1/C9Jw==
+opensec-pi-todo 2.13.1 sha512-f0Ry9stXZ1T26m7Y5tcfgFXXicFPyN3cGVwZizbspH0wMmj7cjJq2tAU9hTPPJg7IXsojIHvI/PFy7kIa9i3GA==
+opensec-pi-fff 0.11.0 sha512-ZHFpKfPIdq3gITJMgOUFUX5ZH8mvcOdCOkN6Cyfopjipuijbrbapp8ljNLkUjHynPJH8oLexH7UTcBD7YR9Ihw==

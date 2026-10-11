@@ -53,18 +53,19 @@ or `npm install -g --allow-scripts=pi-bolt pi-bolt`, or `bun add -g --trust pi-b
 script that puts the Windows executable in place). Then run `pi-bolt` in your project. Your Pi configuration in `~/.pi/agent` is
 used as is; new to Pi? Run `/login` to connect a provider. `pi-bolt update` installs the latest release.
 
-The installer verifies the release signature and offers two optional extensions by OpenSec:
+The installer verifies the release signature and offers three optional extensions by OpenSec:
 
 | Extension | What it does |
 |---|---|
 | [`opensec-pi-subagents`](https://www.npmjs.com/package/opensec-pi-subagents) | Specialized agents in separate sessions, parallel workflows and scheduled jobs |
 | [`opensec-pi-todo`](https://www.npmjs.com/package/opensec-pi-todo) | A todo list for the model, shown as a live panel above the editor |
+| [`opensec-pi-fff`](https://www.npmjs.com/package/opensec-pi-fff) | pi-fff's fast fuzzy find, grep and `@`-mentions, at full speed on the default build |
 
 ### JIT build, for heavy plugins
 
 The default build has no JIT: Pi's own code is compiled machine code, and an extension loaded at run time is interpreted. Light
-extensions don't notice. For extensions that do heavy work (search, parsing) or use `bun:ffi` (such as pi-fff), install the JIT
-build. Pi itself stays compiled, so it is within about 5% of the default.
+extensions don't notice. For extensions that do heavy work (search, parsing) or use `bun:ffi`, install the JIT
+build. (For pi-fff, `opensec-pi-fff` is as fast on the default build as pi-fff is with the JIT.) Pi itself stays compiled, so it is within about 5% of the default.
 
 ```bash
 curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=arm64-jit sh   # macOS
