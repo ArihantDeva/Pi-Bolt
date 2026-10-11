@@ -320,7 +320,7 @@ export function untrackDetachedChildPid(pid: number): void {
 
 export function killTrackedDetachedChildren(): void {
 	for (const pid of trackedDetachedChildPids) {
-		killProcessTree(pid);
+		killProcessTree(pid, { sync: true });
 	}
 	trackedDetachedChildPids.clear();
 }
@@ -328,38 +328,54 @@ export function killTrackedDetachedChildren(): void {
 /**
  * Kill a process and all its children (cross-platform)
  */
-export function killProcessTree(pid: number): void {
+export function killProcessTree(pid: number, options?: { sync?: boolean }): void {
 	if (process.platform === "win32") {
-		// Everything the tool's shell started, if it is in a job of its own (see getWindowsJobs); then taskkill, for what is not.
+		// taskkill first, while the shell is there to walk the tree from; then, once it is done, what it does not reach:
+		// - the job of the tool's shell (see getWindowsJobs): everything started in it, whatever its parent. (Ended first, it
+		//   would end the shell, and a process the shell started before it was in the job, outside it, would then be reached
+		//   by neither: under load, Git Bash's launcher can have started bash, and bash a program, by then.)
+		// - a Cygwin-family shell's processes, by its group's variable (see killMsysGroup), whatever their parents. (Before
+		//   taskkill, it would end the processes that stand for a native program bash started, the parents of that program's
+		//   own tree, which taskkill would then no longer reach.)
+		// (The job is this kill's from here: the shell's exit, which taskkill brings, does not close it.)
 		const job = windowsJobOfPid.get(pid);
-		if (job !== undefined) {
-			try {
-				getWindowsJobs()?.terminate(job);
-			} catch {}
-		}
-		// A Cygwin-family shell's processes, by its group's variable (see killMsysGroup), whatever their parents: once taskkill
-		// is done. (Before it, it would end the processes that stand for a native program bash started, the parents of that
-		// program's own tree, which taskkill would then no longer reach.)
+		windowsJobOfPid.delete(pid);
 		const msys = msysGroupOfPid.get(pid);
-		// Use the trusted System32 executable so cleanup does not depend on PATH.
-		try {
-			const child = spawn(
-				join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
-				["/F", "/T", "/PID", String(pid)],
-				{
-					stdio: "ignore",
-					detached: true,
-					windowsHide: true,
-				},
-			);
-			// A failed spawn emits "error" asynchronously; consume it to avoid crashing Node.
-			child.once("error", () => {
-				if (msys) killMsysGroup(msys.bash, msys.group);
-			});
-			if (msys) child.once("exit", () => killMsysGroup(msys.bash, msys.group));
-		} catch {
+		let after = false;
+		const killRest = () => {
+			if (after) return;
+			after = true;
+			if (job !== undefined) {
+				try {
+					getWindowsJobs()?.terminate(job);
+					getWindowsJobs()?.close(job);
+				} catch {}
+			}
 			if (msys) killMsysGroup(msys.bash, msys.group);
+		};
+		// Use the trusted System32 executable so cleanup does not depend on PATH.
+		const taskkill = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+		const taskkillArgs = ["/F", "/T", "/PID", String(pid)];
+		if (options?.sync) {
+			// Pi is exiting: there is no later to wait for.
+			try {
+				spawnSync(taskkill, taskkillArgs, { stdio: "ignore", windowsHide: true, timeout: 5000 });
+			} catch {}
+			killRest();
+			return;
+		}
+		try {
+			const child = spawn(taskkill, taskkillArgs, {
+				stdio: "ignore",
+				detached: true,
+				windowsHide: true,
+			});
+			// A failed spawn emits "error" asynchronously; consume it to avoid crashing Node.
+			child.once("error", killRest);
+			child.once("exit", killRest);
+		} catch {
 			// Ignore errors if taskkill fails.
+			killRest();
 		}
 	} else {
 		// Use SIGKILL on Unix/Linux/Mac
