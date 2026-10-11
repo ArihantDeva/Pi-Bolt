@@ -159,4 +159,11 @@ jobs:
         run: scripts/publish-npm-builds.sh "dist/$VERSION" -- --provenance
       - name: The pi-bolt package
         working-directory: npm
-        run: npm publish --access public --provenance
+        # (A run again for the same release, to put the site and installers up again, finds it published: npm refuses that.)
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [ "$(npm view "pi-bolt@$version" version 2>/dev/null)" = "$version" ]; then
+            echo "npm already has pi-bolt@$version"
+          else
+            npm publish --access public --provenance
+          fi
