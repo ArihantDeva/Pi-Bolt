@@ -306,7 +306,10 @@ python3 bench/ui_check.py --project . --build plugins=out/pi-bolt-plugins/pi
 
 | Symptom | Cause and fix |
 |---|---|
+| The build exits non-zero and prints nothing after `ahead of time: ...` | A module the compiler refused, most often a plugin's bundled `dist`. `build-pi.sh` filters the compiler's output (`grep -v "^AOT: "`), so the reason reaches only `PIBOLT_BUILD_LOG`. Build again with `PIBOLT_BUILD_LOG=/tmp/build.log` and read that file. The row below is the usual cause. |
+| `a function of N bytes of bytecode (the top-level code of a module) is bigger than maximumAOTCandidateBytecodeSize` | One module holds more than 256 KB of bytecode, usually a single large literal: a bundled `dist/index.js`, or embedded data such as a tokeniser's rank table. Leave that plugin out of the manifest; or set `BUN_JSC_maximumAOTCandidateBytecodeSize=N` to compile it anyway, which the compiler warns takes minutes and tens of GB; or set `BUN_JSC_omitBytecodeFromStaticHeap=0` to run it from bytecode. A plugin left out still loads at run time, and on the JIT-off build its code runs in the interpreter. |
 | `Could not resolve "./something"` during the build | A dynamic import or a file outside the manifest's folder. Use literal imports and keep the plugin's files under the manifest's folder. |
+| `Could not resolve "<package>"` for a plugin's own dependency | The manifest's folder has no `node_modules` entry for that package. Run `npm install` there. An `optionalDependency` counts: once it is installed, the plugin imports it like any other, so it must be in the folder too. |
 | A tool or command "conflicts" at startup | The plugin is also loaded at run time. Remove the run-time copy ([step 3](#3-remove-the-run-time-copies)). |
 | `ENOENT` for a file next to the plugin's source | Embed the file with an `import ... with { type: "text" }` or `{ type: "file" }`. |
 | A plugin's hot path is slow on the JIT-off build | Check it against the [performance guide](#performance-guide). As a stopgap, build with `--jit on`. |
