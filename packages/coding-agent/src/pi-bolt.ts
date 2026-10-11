@@ -101,13 +101,15 @@ export function piBoltInstallDir(): string | undefined {
 /**
  * The environment that makes the installer replace this installation with release `version`, keeping its variant and place.
  * The version is the one the update was decided on (not "latest" again), and what in the user's environment would change
- * where the release comes from (a mirror, which may be unsigned; the npm launcher's mode; the source) is left out.
+ * where the release comes from (a mirror, which may be unsigned; the npm launcher's mode; the source) is left out. PATH is
+ * left as the user set it: the installer would otherwise add this folder without asking (and take other variants off).
  */
 export function piBoltUpdateEnvironment(version: string): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		PIBOLT_YES: "1",
 		PIBOLT_NO_START: "1",
+		PIBOLT_NO_PATH: "1",
 		PIBOLT_VARIANT: PIBOLT?.variant ?? "x64",
 		PIBOLT_VERSION: `bolt-v${version}`,
 		PIBOLT_INSTALL: piBoltInstallDir() ?? process.env.PIBOLT_INSTALL ?? join(homedir(), ".pi-bolt"),

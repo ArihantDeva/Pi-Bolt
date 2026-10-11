@@ -13,7 +13,7 @@
 #   PIBOLT_VARIANT   x64 (default), x64-baseline (any x86-64 CPU; picked when the CPU has no AVX2 and the release has one) or
 #                    x64-jit
 #   PIBOLT_INSTALL   where to install (default: %USERPROFILE%\.pi-bolt)
-#   PIBOLT_NO_PATH=1 do not add the installation to PATH
+#   PIBOLT_NO_PATH=1 leave PATH as it is: do not add the installation, nor take another variant off (pi-bolt update sets it)
 #   PIBOLT_YES=1     do not ask: take the default action and do not offer to start Pi-Bolt
 #   PIBOLT_LAUNCHER=1  used by the npm package's first run: download only, no menu, PATH or prompts
 #   PIBOLT_SOURCE    where to download the executable from: auto (npm, then GitHub; the default), npm or github
@@ -500,10 +500,10 @@ function Test-PiBoltOnPath([string]$dir, [string]$path) {
 
 function Add-PiBoltToPath([string]$dir) {
 	# Another variant of this installation on PATH (pi-bolt-win32-x64 when this is -x64-jit, say) would be found first, and the
-	# build just installed would not be the one that runs: it comes off.
+	# build just installed would not be the one that runs: it comes off, unless PATH is left as it is.
 	$root = Split-Path $dir
 	foreach ($other in Get-ChildItem -LiteralPath $root -Directory -Filter 'pi-bolt-win32-*' -ErrorAction SilentlyContinue) {
-		if ($other.FullName.TrimEnd('\') -ine $dir.TrimEnd('\') -and (Test-PiBoltOnPath $other.FullName (Get-PiBoltUserPath))) {
+		if ($env:PIBOLT_NO_PATH -ne '1' -and $other.FullName.TrimEnd('\') -ine $dir.TrimEnd('\') -and (Test-PiBoltOnPath $other.FullName (Get-PiBoltUserPath))) {
 			Remove-PiBoltFromPath $other.FullName
 			Write-Host "  ${dim}took $($other.FullName) off your PATH: $dir is the one installed now$reset"
 		}

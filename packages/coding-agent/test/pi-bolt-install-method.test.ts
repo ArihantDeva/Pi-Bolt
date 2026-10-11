@@ -70,6 +70,8 @@ describe("piBoltUpdateEnvironment", () => {
 		expect(env.PIBOLT_VERSION).toBe("bolt-v0.8.0");
 		expect(env.PIBOLT_DOWNLOAD_BASE).toBeUndefined();
 		expect(env.PIBOLT_SOURCE).toBeUndefined();
+		// PATH stays as the user left it (on Windows the installer would add this folder without asking).
+		expect(env.PIBOLT_NO_PATH).toBe("1");
 	});
 
 	it("falls back to PIBOLT_INSTALL, then ~/.pi-bolt, for an executable outside a variant's folder", () => {
