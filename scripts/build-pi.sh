@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
 	--plugin-worker) PLUGIN_WORKERS+=("$2"); shift ;;
 	--keep-bytecode) KEEP_BYTECODE=1 ;;
 	--stable) STABLE=1 ;;
-	-h | --help) sed -n '2,26p' "$0"; exit 0 ;;
+	-h | --help) sed -n '2,22p' "$0"; exit 0 ;;
 	*) die "unknown option $1" ;;
 	esac
 	shift
