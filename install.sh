@@ -524,6 +524,8 @@ verify_signature() {
 		return 0
 	fi
 	if exe=$(installed_pibolt); then
+		# (By its full path: it is run from the download's folder, below.)
+		case "$exe" in /*) ;; *) exe="$PWD/$exe" ;; esac
 		printf '%s\n' "$VERIFY_SCRIPT" >"$TMP/verify.js"
 		status=0
 		# (Run in the download's own folder, which holds only the release's files.)
