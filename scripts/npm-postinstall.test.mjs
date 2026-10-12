@@ -554,3 +554,20 @@ test("the proxy to download through: the environment's, then npm's configuration
 	assert.equal(install.proxyOf({ npm_config_proxy: "http://p:1", npm_config_https_proxy: "http://s:2" }), "http://s:2");
 	assert.equal(install.proxyOf({ npm_config_https_proxy: "http://s:2", HTTPS_PROXY: "http://e:3" }), "http://e:3");
 });
+
+test("a mirror's or registry's address without the slashes it ends with: as .replace(/\\/+$/, \"\") had it", () => {
+	// Every string of up to 9 characters from "/", "a" and ":" (29,524 of them), and some longer ones.
+	const inputs = [""];
+	for (let length = 1, last = [""]; length <= 9; length++) {
+		last = last.flatMap((prefix) => ["/", "a", ":"].map((c) => prefix + c));
+		inputs.push(...last);
+	}
+	inputs.push("https://registry.npmjs.org", "http://mirror.test/pi-bolt/", "http://mirror.test//pi//bolt///", "/".repeat(1000));
+	for (const input of inputs) assert.equal(install.withoutTrailingSlashes(input), input.replace(/\/+$/, ""), JSON.stringify(input));
+	// Linear in the length: a long run of slashes not at the end takes no time.
+	const long = `${"/".repeat(200_000)}a`;
+	const started = performance.now();
+	assert.equal(install.withoutTrailingSlashes(long), long);
+	assert.equal(install.withoutTrailingSlashes(`${long}${"/".repeat(200_000)}`), long);
+	assert.ok(performance.now() - started < 1000);
+});
