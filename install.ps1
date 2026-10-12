@@ -1,7 +1,7 @@
 # Pi-Bolt installer for Windows (x64).
 #
 #   irm https://pi-bolt.opensec.in/install.ps1 | iex                       (in PowerShell)
-#   curl -fsSL https://pi-bolt.opensec.in/install.cmd -o install.cmd && install.cmd && del install.cmd   (in Command Prompt)
+#   powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"      (in Command Prompt)
 #
 # Downloads a release, verifies its SHA-256 checksum and the Ed25519 signature of the checksums, installs it to
 # %USERPROFILE%\.pi-bolt and puts `pi-bolt` on your PATH (it asks first). Run it again to reinstall, update or uninstall. The
