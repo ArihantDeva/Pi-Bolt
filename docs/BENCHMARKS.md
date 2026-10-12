@@ -4,13 +4,13 @@ Pi-Bolt compared with the same Pi release on stock Bun and on Node.js. Every fig
 [`bench/`](../bench), and the raw results are in [`bench/results/`](../bench/results). The charts are drawn from those files by
 [`bench/report.py`](../bench/report.py).
 
-**Versions.** Pi-Bolt 0.8.0 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
+**Versions.** Pi-Bolt 0.8.5 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
 its release archive; [against PiG and oh-my-pi](#against-pig-and-oh-my-pi) in the same runs. [With a real model](#with-a-real-model) is an earlier measurement, of Pi-Bolt 0.6.1.
 
 **These are measurements, not guarantees.** Each set of results comes from one machine: an AMD EPYC 7B13 server for Linux and an
 M5 MacBook Air for macOS. On other hardware the milliseconds will differ, and so can the load, the terminal and the disk. What
 carries over is the comparison, because every run interleaves the runtimes on the same machine: Pi-Bolt starts three times
-sooner than Pi on Bun and uses about a third of its CPU over an interactive session. The ratio varies by scenario: see
+sooner than Pi on Bun and uses about a quarter of its CPU over an interactive session. The ratio varies by scenario: see
 each table.
 
 - [0.7.3 against 0.7.2](#073-against-072)
@@ -73,37 +73,37 @@ resident), where 0.7.2's rose by 5 MB per 100 prompts on Linux (143-155 MB over 
   <img alt="Peak memory, own memory in tmux and after a long session, and CPU while replies stream" src="images/bench-memory-light.svg">
 </picture>
 
-Pi-Bolt 0.8.0 on Linux (AMD EPYC 7B13, pinned to four cores), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node 24.
+Pi-Bolt 0.8.5 on Linux (AMD EPYC 7B13, pinned to four cores), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node 24.
 Medians of 21 runs of each scenario (after 3 warm-up runs), 3 long sessions and 5 tmux rounds per build; raw data in
-[`bench/results/2026-10-11-linux-x64-0.8.0`](../bench/results/2026-10-11-linux-x64-0.8.0), drawn by `bench/report.py`.
+[`bench/results/2026-10-12-linux-x64-0.8.5`](../bench/results/2026-10-12-linux-x64-0.8.5), drawn by `bench/report.py`.
 
 #### Time
 
-|  | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 24 |
+|  | Pi-Bolt 0.8.5 | Pi on Bun 1.4.2 | Pi on Node 24 |
 |---|---:|---:|---:|
-| Launch to interactive (TUI) | 45 ms | 128 ms | 316 ms |
-| pi --version | 13 ms | 80 ms | 239 ms |
-| pi -p: one prompt, 4 tool calls | 79 ms | 176 ms | 435 ms |
-| Time per prompt, 4.2M-token session | 545 ms | 779 ms | 925 ms |
-| Launch to interactive (TUI), default theme | 42 ms | 127 ms | 321 ms |
+| Launch to interactive (TUI) | 38 ms | 116 ms | 296 ms |
+| pi --version | 11 ms | 72 ms | 222 ms |
+| pi -p: one prompt, 4 tool calls | 60 ms | 154 ms | 390 ms |
+| Time per prompt, 4.2M-token session | 435 ms | 691 ms | 841 ms |
+| Launch to interactive (TUI), default theme | 37 ms | 112 ms | 295 ms |
 
 #### CPU
 
-|  | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 24 |
+|  | Pi-Bolt 0.8.5 | Pi on Bun 1.4.2 | Pi on Node 24 |
 |---|---:|---:|---:|
-| Interactive session: 5 prompts | 294 ms | 871 ms | 1,241 ms |
-| pi -p: one prompt | 80 ms | 323 ms | 618 ms |
-| pi --version | 14 ms | 145 ms | 312 ms |
-| Per prompt, 4.2M-token session | 287 ms | 569 ms | 761 ms |
+| Interactive session: 5 prompts | 193 ms | 746 ms | 1,093 ms |
+| pi -p: one prompt | 61 ms | 283 ms | 550 ms |
+| pi --version | 11 ms | 131 ms | 281 ms |
+| Per prompt, 4.2M-token session | 180 ms | 488 ms | 685 ms |
 
 #### Memory and streaming
 
-|  | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 24 |
+|  | Pi-Bolt 0.8.5 | Pi on Bun 1.4.2 | Pi on Node 24 |
 |---|---:|---:|---:|
-| Peak memory, interactive session | 147 MB | 206 MB | 212 MB |
-| Own memory, tmux session | 24 MB | 92 MB | 95 MB |
-| Own memory, end of 4.2M-token session | 187 MB | 275 MB | 576 MB |
-| Streaming replies (tmux), CPU | 348 ms | 572 ms | 528 ms |
+| Peak memory, interactive session | 150 MB | 217 MB | 213 MB |
+| Own memory, tmux session | 22 MB | 84 MB | 185 MB |
+| Own memory, end of 4.2M-token session | 134 MB | 253 MB | 536 MB |
+| Streaming replies (tmux), CPU | 204 ms | 382 ms | 475 ms |
 
 ## macOS on Apple silicon
 
@@ -114,39 +114,39 @@ memory the kernel may take back. The MacBook Air has no fan, so differences unde
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/darwin-arm64/bench-hero-dark.svg">
-  <img alt="macOS, Pi-Bolt 0.8.0 vs Pi on Bun 1.4.2 vs Pi on Node 26: ready to type 42 / 101 / 352 ms; CPU per session 170 / 569 / 931 ms; CPU while streaming 542 / 724 / 837 ms; memory after a long session 41 / 90 / 2,452 MB" src="images/darwin-arm64/bench-hero-light.svg">
+  <img alt="macOS, Pi-Bolt 0.8.5 vs Pi on Bun 1.4.2 vs Pi on Node 26: ready to type 41 / 100 / 348 ms; CPU per session 139 / 561 / 937 ms; CPU while streaming 455 / 720 / 759 ms; memory after a long session 38 / 92 / 1,581 MB" src="images/darwin-arm64/bench-hero-light.svg">
 </picture>
 
-Pi-Bolt 0.8.0 against Pi 1.1.0 as released on Bun 1.4.2 and on Node 26.11 (21 runs, 3 long sessions and 5 tmux rounds per build;
-raw data in [`bench/results/2026-10-11-darwin-arm64-0.8.0`](../bench/results/2026-10-11-darwin-arm64-0.8.0)):
+Pi-Bolt 0.8.5 against Pi 1.1.0 as released on Bun 1.4.2 and on Node 26.11 (21 runs, 3 long sessions and 5 tmux rounds per build;
+raw data in [`bench/results/2026-10-12-darwin-arm64-0.8.5`](../bench/results/2026-10-12-darwin-arm64-0.8.5)):
 
 #### Time
 
-|  | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 26 |
+|  | Pi-Bolt 0.8.5 | Pi on Bun 1.4.2 | Pi on Node 26 |
 |---|---:|---:|---:|
-| Launch to interactive (TUI) | 42 ms | 101 ms | 352 ms |
-| pi --version | 21 ms | 60 ms | 294 ms |
-| pi -p: one prompt, 4 tool calls | 65 ms | 121 ms | 412 ms |
-| Time per prompt, 4.2M-token session | 346 ms | 510 ms | 626 ms |
-| Launch to interactive (TUI), default theme | 41 ms | 99 ms | 351 ms |
+| Launch to interactive (TUI) | 41 ms | 100 ms | 348 ms |
+| pi --version | 19 ms | 56 ms | 284 ms |
+| pi -p: one prompt, 4 tool calls | 55 ms | 115 ms | 400 ms |
+| Time per prompt, 4.2M-token session | 330 ms | 507 ms | 629 ms |
+| Launch to interactive (TUI), default theme | 40 ms | 99 ms | 346 ms |
 
 #### CPU
 
-|  | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 26 |
+|  | Pi-Bolt 0.8.5 | Pi on Bun 1.4.2 | Pi on Node 26 |
 |---|---:|---:|---:|
-| Interactive session: 5 prompts | 170 ms | 569 ms | 931 ms |
-| pi -p: one prompt | 59 ms | 232 ms | 527 ms |
-| pi --version | 15 ms | 98 ms | 315 ms |
-| Per prompt, 4.2M-token session | 138 ms | 338 ms | 525 ms |
+| Interactive session: 5 prompts | 139 ms | 561 ms | 937 ms |
+| pi -p: one prompt | 49 ms | 221 ms | 512 ms |
+| pi --version | 13 ms | 93 ms | 305 ms |
+| Per prompt, 4.2M-token session | 113 ms | 329 ms | 537 ms |
 
 #### Memory and streaming
 
-|  | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 26 |
+|  | Pi-Bolt 0.8.5 | Pi on Bun 1.4.2 | Pi on Node 26 |
 |---|---:|---:|---:|
-| Peak memory, interactive session | 97 MB | 209 MB | 230 MB |
-| Own memory, tmux session | 27 MB | 67 MB | 86 MB |
-| Own memory, end of 4.2M-token session | 41 MB | 90 MB | 2,452 MB |
-| Streaming replies (tmux), CPU | 542 ms | 724 ms | 837 ms |
+| Peak memory, interactive session | 94 MB | 209 MB | 230 MB |
+| Own memory, tmux session | 24 MB | 65 MB | 162 MB |
+| Own memory, end of 4.2M-token session | 38 MB | 92 MB | 1,581 MB |
+| Streaming replies (tmux), CPU | 455 ms | 720 ms | 759 ms |
 
 **What macOS adds at launch.** `pi` is a small launcher: it starts `pi-bin`, the Pi-Bolt executable, in the same process, and
 forks the helper that starts the programs Pi runs ([ARCHITECTURE.md](ARCHITECTURE.md#the-macos-arm64-port)). The figures are of the
@@ -156,6 +156,19 @@ the scenarios above starts a program. The programs' CPU time is not counted in P
 children; the programs are the helper's).
 
 ## Windows x64
+
+Pi-Bolt 0.8.5 against 0.8.0 on the same laptop (on battery, best performance; both from their release archives; medians of 21
+runs and of 3 long sessions, means of two rounds for long answers and files):
+
+| | Pi-Bolt 0.8.5 | Pi-Bolt 0.8.0 |
+|---|---:|---:|
+| Writing a 200 KB file through a tool call | **0.5 s** | 0.7 s |
+| CPU, streaming a 60,000-character answer | **6.9 s** | 7.0 s |
+| Private working set, end of 4.2M-token session | **122 MB** | 142 MB |
+| Private working set, TUI streaming in a ConPTY | **32 MB** | 32 MB |
+| CPU, interactive session (5 prompts) | **278 ms** | 318 ms |
+| CPU, `pi -p` | **92 ms** | 100 ms |
+| Launch to interactive (TUI) | 105 ms | 105 ms |
 
 The full suite (`bench\run-suite.ps1`) on Windows 11 25H2 (26200) on an Intel Core i5-1335U laptop (16 GB, on AC, best
 performance, Defender real-time protection on): Pi-Bolt 0.8.0 from `1d373d18b` (Pi 1.1.0; the runtime `8bcf03bc0` with ThinLTO and
@@ -216,8 +229,9 @@ same local fake model as the others.
 
 oh-my-pi compacts a long conversation on its own: by prompt 25 it sends 0.5 MB where the others send 5.6 MB, and it stops
 answering the scripted session after that, so it is left out of the long session. Raw data: as above,
-[`bench/results/2026-10-11-linux-x64-0.8.0`](../bench/results/2026-10-11-linux-x64-0.8.0) and
-[`bench/results/2026-10-11-darwin-arm64-0.8.0`](../bench/results/2026-10-11-darwin-arm64-0.8.0).
+[`bench/results/2026-10-12-linux-x64-0.8.5`](../bench/results/2026-10-12-linux-x64-0.8.5) and
+[`bench/results/2026-10-12-darwin-arm64-0.8.5`](../bench/results/2026-10-12-darwin-arm64-0.8.5). oh-my-pi runs with
+`OMP_SKIP_SETUP=1`, which skips the setup screen it shows on a first start.
 
 ## With a real model
 
@@ -311,7 +325,7 @@ The measurements are in [`bench/results/2026-10-04-darwin-arm64-0.6.1-real-model
 | Pi | 1.1.0 (`v1.1.0`) |
 | Linux machine | AMD EPYC 7B13 (Zen 3), Linux 7.0, every run pinned to the same 4 cores (the least busy of a shared VM) |
 | macOS machine | Apple M5 MacBook Air, macOS 27.0.1, not pinned |
-| **Pi-Bolt 0.8.0** | `pi-bolt-linux-x64` and `pi-bolt-darwin-arm64` from the release: JIT off |
+| **Pi-Bolt 0.8.5** | `pi-bolt-linux-x64` and `pi-bolt-darwin-arm64` from the release: JIT off |
 | **PiG 0.4.1**, **oh-my-pi 18.8.7** | their release binaries for each platform (`pig`, `omp`) |
 | **Bun 1.4.2** | Pi 1.1.0 as released (`scripts/prepare-pi.sh --tag v1.1.0`), built with `scripts/build-pi.sh --stable`: Pi's own `bun build --compile` command plus `--bytecode` |
 | **Node 24.21** (Linux), **Node 26.11** (macOS) | Pi 1.1.0 as released: its npm bundle (`dist/bundle/cli.js`, with Node's compile cache) |
@@ -341,16 +355,16 @@ figures vary between sessions. Figures from sessions taken under heavy load were
 Pi in a 160×48 tmux pane ([`bench/tmux_check.py`](../bench/tmux_check.py)): keys sent with `send-keys`, the screen read back
 with `capture-pane`, and the model streaming at human pace, one event every 10 ms.
 
-| | Pi-Bolt 0.8.0 | Pi on Bun 1.4.2 | Pi on Node 24 |
+| | Pi-Bolt 0.8.5 | Pi on Bun 1.4.2 | Pi on Node 24 |
 |---|---:|---:|---:|
-| Streaming a 20,000-character answer: CPU | **0.9 s** | 9.8 s | 7.4 s |
-| Streaming a 60,000-character answer: CPU | **4.0 s** | 43.0 s | 41.0 s |
-| Share of a core while it streams (60,000 characters) | **8%** | 85% | 81% |
-| Writing a 200 KB file through a tool call (`pi -p`) | **0.8 s** | 26.9 s | 37.2 s |
-| Writing a 200 KB file through a tool call: CPU | **0.4 s** | 37.2 s | 37.7 s |
+| Streaming a 20,000-character answer: CPU | **0.6 s** | 8.0 s | 6.3 s |
+| Streaming a 60,000-character answer: CPU | **2.6 s** | 40.2 s | 38.7 s |
+| Share of a core while it streams (60,000 characters) | **5%** | 80% | 77% |
+| Writing a 200 KB file through a tool call (`pi -p`) | **0.6 s** | 24.0 s | 32.5 s |
+| Writing a 200 KB file through a tool call: CPU | **0.2 s** | 32.5 s | 33.1 s |
 
-On the Mac: streaming a 60,000-character answer took 5.8 s of CPU (Pi on Bun 39.0 s, on Node 38.5 s), and writing a 200 KB file
-0.5 s (Bun 17.0 s, Node 20.4 s).
+On the Mac: streaming a 60,000-character answer took 6.5 s of CPU (Pi on Bun 37.9 s, on Node 37.6 s), and writing a 200 KB file
+0.4 s (Bun 22.6 s, Node 28.1 s).
 
 `bench/long_answer.py` streams Markdown answers (headings, lists, code blocks in several languages, tables) into the TUI at 1,200
 characters a second, 24 at a time, and measures the CPU Pi uses until the answer has been drawn. `bench/large_write.py` has the
