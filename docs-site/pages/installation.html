@@ -22,7 +22,7 @@
   </div>
   <div data-tab="windows" data-title="Windows">
 <pre data-label="PowerShell">irm https://pi-bolt.opensec.in/install.ps1 | iex</pre>
-<pre data-label="Command Prompt">powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"</pre>
+<pre data-label="Command Prompt">curl -fsSL https://pi-bolt.opensec.in/install.cmd -o install.cmd &amp;&amp; install.cmd &amp;&amp; del install.cmd</pre>
     <p>On an older Windows 10 whose PowerShell only offers TLS 1.0, run these two lines in PowerShell instead:</p>
 <pre data-label="PowerShell">[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 irm https://pi-bolt.opensec.in/install.ps1 | iex</pre>

@@ -52,7 +52,7 @@ irm https://pi-bolt.opensec.in/install.ps1 | iex
 or in Command Prompt:
 
 ```bat
-powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"
+curl -fsSL https://pi-bolt.opensec.in/install.cmd -o install.cmd && install.cmd && del install.cmd
 ```
 
 or `npm install -g --allow-scripts=pi-bolt pi-bolt`, or `bun add -g --trust pi-bolt`. Then run `pi-bolt` in your project. Your
