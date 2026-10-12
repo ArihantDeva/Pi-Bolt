@@ -110,40 +110,42 @@ uninstalls it.
 
 ## Benchmarks
 
-Pi-Bolt 0.8.5 against Pi 1.1.0 as released, on stock Bun 1.4.2 and on Node, and against two other fast Pi builds:
+Pi-Bolt 0.8.5 against Pi 1.1.0 as released, on stock Bun 1.4.2 and on Node, against two other fast Pi builds,
 [PiG](https://github.com/MichaelKinsy/PiG) 0.4.1, the Go port of Pi (based on Pi 1.0.3), and
-[oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7, a fork of Pi on Bun. All five run interleaved on the same machine;
-medians, lower is better.
+[oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7, a fork of Pi on Bun, and against
+[OpenCode](https://github.com/anomalyco/opencode) 2.0. Runs are interleaved on the same machine; medians, lower is better.
 
 **Linux x86-64** (AMD EPYC 7B13)
 
-| Benchmark | Pi-Bolt | PiG | oh-my-pi | Pi on Bun | Pi on Node 24 |
-|---|---:|---:|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.6 s** | 77.5 s | 3.3 s | 24.0 s | 32.5 s |
-| CPU, streaming a 60,000-character answer | 2.6 s | 16.7 s | **2.2 s** | 40.2 s | 38.7 s |
-| Memory after a 4.2M-token session | **134 MB** | 349 MB | – | 253 MB | 536 MB |
-| Memory of a session in tmux | **22 MB** | 48 MB | 334 MB | 84 MB | 185 MB |
-| CPU, interactive session (5 prompts) | **193 ms** | 2,458 ms | 2,800 ms | 746 ms | 1,093 ms |
-| CPU, one prompt (`pi -p`) | **61 ms** | 227 ms | 1,524 ms | 283 ms | 550 ms |
-| Peak memory, one prompt (`pi -p`) | 123 MB | **55 MB** | 505 MB | 147 MB | 135 MB |
-| Ready to type | 38 ms | **31 ms** | 890 ms | 116 ms | 296 ms |
+| Benchmark | Pi-Bolt | PiG | oh-my-pi | OpenCode 2.0 | Pi on Bun | Pi on Node 24 |
+|---|---:|---:|---:|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.6 s** | 77.5 s | 3.3 s | 2.4 s | 24.0 s | 32.5 s |
+| CPU, streaming a 60,000-character answer | 2.6 s | 16.7 s | **2.2 s** | 8.6 s | 40.2 s | 38.7 s |
+| Memory after a 4.2M-token session | **134 MB** | 349 MB | – | 273 MB¹ | 253 MB | 536 MB |
+| Memory of a session in tmux | **22 MB** | 48 MB | 334 MB | –² | 84 MB | 185 MB |
+| CPU, interactive session (5 prompts) | **193 ms** | 2,458 ms | 2,800 ms | 8,593 ms | 746 ms | 1,093 ms |
+| CPU, one prompt (`pi -p`) | **61 ms** | 227 ms | 1,524 ms | 2,220 ms | 283 ms | 550 ms |
+| Peak memory, one prompt (`pi -p`) | 123 MB | **55 MB** | 505 MB | 346 MB | 147 MB | 135 MB |
+| Ready to type | 38 ms | **31 ms** | 890 ms | 1,687 ms | 116 ms | 296 ms |
 
 **macOS** (Apple M5)
 
-| Benchmark | Pi-Bolt | PiG | oh-my-pi | Pi on Bun | Pi on Node 26 |
-|---|---:|---:|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.4 s** | 56.8 s | 2.5 s | 22.6 s | 28.1 s |
-| CPU, streaming a 60,000-character answer | 6.5 s | 16.5 s | **5.1 s** | 37.9 s | 37.6 s |
-| Memory after a 4.2M-token session | **38 MB** | 330 MB | – | 92 MB | 1,581 MB |
-| Memory of a session in tmux | **24 MB** | 55 MB | 330 MB | 65 MB | 162 MB |
-| CPU, interactive session (5 prompts) | **139 ms** | 2,367 ms | 2,374 ms | 561 ms | 937 ms |
-| CPU, one prompt (`pi -p`) | **49 ms** | 230 ms | 1,030 ms | 221 ms | 512 ms |
-| Peak memory, one prompt (`pi -p`) | 70 MB | **50 MB** | 419 MB | 120 MB | 138 MB |
-| Ready to type | 41 ms | **39 ms** | 612 ms | 100 ms | 348 ms |
+| Benchmark | Pi-Bolt | PiG | oh-my-pi | OpenCode 2.0 | Pi on Bun | Pi on Node 26 |
+|---|---:|---:|---:|---:|---:|---:|
+| Writing a 200 KB file through a tool call | **0.4 s** | 56.8 s | 2.5 s | 1.7 s | 22.6 s | 28.1 s |
+| CPU, streaming a 60,000-character answer | 6.5 s | 16.5 s | **5.1 s** | 13.6 s | 37.9 s | 37.6 s |
+| Memory after a 4.2M-token session | **38 MB** | 330 MB | – | 260 MB¹ | 92 MB | 1,581 MB |
+| Memory of a session in tmux | **24 MB** | 55 MB | 330 MB | –² | 65 MB | 162 MB |
+| CPU, interactive session (5 prompts) | **139 ms** | 2,367 ms | 2,374 ms | 6,493 ms | 561 ms | 937 ms |
+| CPU, one prompt (`pi -p`) | **49 ms** | 230 ms | 1,030 ms | 1,548 ms | 221 ms | 512 ms |
+| Peak memory, one prompt (`pi -p`) | 70 MB | **50 MB** | 419 MB | 379 MB | 120 MB | 138 MB |
+| Ready to type | 41 ms | **39 ms** | 612 ms | 1,489 ms | 100 ms | 348 ms |
 
 PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with a little less CPU.
 Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files fastest.
-oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–).
+oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–). OpenCode 2.0.27 (`@opencode/cli`)
+runs with its own server in the same process tree (`--standalone`), in a separate run next to Pi-Bolt on the same machines.
+¹ The process started, without OpenCode's server process: its memory is higher. ² OpenCode did not finish its answers in tmux.
 
 **Windows x64** (Intel Core i5-1335U laptop; Pi-Bolt 0.8.5, Pi 1.1.0 as released)
 

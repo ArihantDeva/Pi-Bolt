@@ -18,6 +18,7 @@ each table.
 - [macOS on Apple silicon](#macos-on-apple-silicon)
 - [Windows x64](#windows-x64)
 - [Against PiG and oh-my-pi](#against-pig-and-oh-my-pi)
+- [Against OpenCode 2.0](#against-opencode-20)
 - [With a real model](#with-a-real-model)
 - [Setup and method](#setup-and-method)
 - [In a real terminal (tmux)](#in-a-real-terminal-tmux)
@@ -232,6 +233,38 @@ answering the scripted session after that, so it is left out of the long session
 [`bench/results/2026-10-12-linux-x64-0.8.5`](../bench/results/2026-10-12-linux-x64-0.8.5) and
 [`bench/results/2026-10-12-darwin-arm64-0.8.5`](../bench/results/2026-10-12-darwin-arm64-0.8.5). oh-my-pi runs with
 `OMP_SKIP_SETUP=1`, which skips the setup screen it shows on a first start.
+
+## Against OpenCode 2.0
+
+[OpenCode](https://github.com/anomalyco/opencode) 2.0.27 (`@opencode/cli`, its release binary for each platform), against
+Pi-Bolt 0.8.5 in a run of its own on the same machines, with the same tools and the same local model. `bench/opencode.sh` turns
+the tools' Pi arguments into OpenCode's and writes its configuration: an OpenAI-compatible provider pointing at the local model,
+and automatic compaction off, so that a long session sends the whole conversation as the others do. OpenCode runs with
+`--standalone`, a server of its own started by the process, so that the server's CPU is counted (`wait4` includes it) and each run
+starts fresh; its memory figures are those of the process started, without the server's. OpenCode's read and write tools take
+the same `path` argument as Pi's, so the scripted model does the same work for both. OpenCode opens its command menu on `/`, so the
+harness waits for it before the Enter of `/quit`.
+
+| | macOS: Pi-Bolt | macOS: OpenCode | Linux: Pi-Bolt | Linux: OpenCode |
+|---|---:|---:|---:|---:|
+| Ready to type | **41 ms** | 1,489 ms | **39 ms** | 1,687 ms |
+| `pi -p`: one prompt, 4 tool calls | **55 ms** | 738 ms | **61 ms** | 1,153 ms |
+| CPU, `pi -p` | **49 ms** | 1,548 ms | **62 ms** | 2,220 ms |
+| CPU, interactive session (5 prompts) | **133 ms** | 6,493 ms | **192 ms** | 8,593 ms |
+| Peak memory, interactive session | **94 MB** | 443 MB | **149 MB** | 408 MB |
+| CPU per prompt, long session, prompt 25 | **34 ms** | 372 ms | **49 ms** | 475 ms |
+| Time per prompt, long session, prompt 75 | **323 ms** | 1,454 ms | **426 ms** | 1,902 ms |
+| CPU per prompt, long session, prompt 75 | **108 ms** | 480 ms | **177 ms** | 679 ms |
+| Own memory, long session, prompt 75 | **38 MB** | 260 MB | **117 MB** | 273 MB |
+| Writing a 200 KB file through a tool call | **0.4 s** | 1.7 s | **0.6 s** | 2.4 s |
+| CPU, streaming a 60,000-character answer | **6.3 s** | 13.6 s | **2.6 s** | 8.6 s |
+
+Medians of 21 runs and of 3 long sessions of 75 prompts, means of two rounds for long answers and files. OpenCode's own cost per
+prompt is high from the start (about 0.4 s of CPU) and grows slowly with the conversation, so the gap narrows from about ten
+times at prompt 25 to about four at prompt 75; its requests are also larger (19.1 MB at prompt 75 against Pi's 16.9 MB). In tmux
+OpenCode did not finish all of its answers on either machine, so it has no tmux figures. Raw data:
+[`bench/results/2026-10-12-linux-x64-opencode-2.0`](../bench/results/2026-10-12-linux-x64-opencode-2.0) and
+[`bench/results/2026-10-12-darwin-arm64-opencode-2.0`](../bench/results/2026-10-12-darwin-arm64-opencode-2.0).
 
 ## With a real model
 
