@@ -5,7 +5,7 @@
  */
 
 import { spawn } from "node:child_process";
-import net from "node:net";
+import type { Socket } from "node:net";
 
 export type HerdrRequest =
 	| {
@@ -57,7 +57,7 @@ export function socketTransport(endpoint: string): HerdrTransport {
 	return (request, timeoutMs) =>
 		new Promise((resolve) => {
 			let done = false;
-			let socket: net.Socket | undefined;
+			let socket: Socket | undefined;
 			const timeout = setTimeout(() => finish(false), timeoutMs);
 			timeout.unref?.();
 			function finish(answered: boolean) {
@@ -68,7 +68,8 @@ export function socketTransport(endpoint: string): HerdrTransport {
 				resolve(answered);
 			}
 			try {
-				socket = net.createConnection(endpoint);
+				// node:net loads on first report: only a Herdr pane needs it.
+				socket = process.getBuiltinModule("node:net").createConnection(endpoint);
 			} catch {
 				finish(false);
 				return;

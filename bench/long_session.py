@@ -7,6 +7,9 @@ On Windows (ConPTY, winproc.py) memory is the working set and, as "own", the pri
 working set; the last row also has the session's peaks (working set, private working set, private bytes) and the rise of the
 system's commit charge.
 
+--think-ms N waits N ms after each answer before the next prompt, as a user reading it does (Pi does some of its work, e.g.
+garbage collection, while it is idle). The wait is not counted in ms/prompt; what Pi does meanwhile is counted in cpu.
+
 Example (300 tool calls, a context well past a million tokens):
   bench/long_session.py --prompts 75 --every 25 --build pi-bolt=./out/pi/pi --build bun=./out/pi-stable/pi
 """
@@ -25,7 +28,7 @@ from harness import (
 )
 
 
-def session(build, prompts, every, cpus):
+def session(build, prompts, every, cpus, think_ms=0):
     sizes = tempfile.NamedTemporaryFile(prefix="pibolt-sizes-", delete=False).name
     rows = []
     with fake_model(log_sizes=sizes) as port, pi_home(port) as home, workdir() as cwd:
@@ -42,6 +45,9 @@ def session(build, prompts, every, cpus):
                 rows.append({"prompt": i, "error": "no answer"})
                 break
             tty.settle(0.03, deadline)
+            if think_ms:
+                time.sleep(think_ms / 1000)
+                t_block += think_ms / 1000
             if i % every == 0:
                 now, c = time.perf_counter(), cpu_ms(tty.pid)
                 m = memory_mb(tty.pid)
@@ -70,10 +76,11 @@ def main():
     ap.add_argument("--prompts", type=int, default=40)
     ap.add_argument("--every", type=int, default=10)
     ap.add_argument("--cpus", help="pin Pi to these cores (taskset list)")
+    ap.add_argument("--think-ms", type=int, default=0, help="idle time after each answer, not counted in ms/prompt")
     ap.add_argument("--out", help="append the results to this JSONL file")
     a = ap.parse_args()
     for build in parse_builds(a.build):
-        rows, status = session(build, a.prompts, a.every, a.cpus)
+        rows, status = session(build, a.prompts, a.every, a.cpus, a.think_ms)
         print(f"== {build.name} (exit {status})")
         for row in rows:
             if "error" in row:
