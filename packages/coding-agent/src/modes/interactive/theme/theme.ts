@@ -738,6 +738,11 @@ export const liveTheme: Theme = new Proxy({} as Theme, {
 // to code that may keep it (an extension's widget, footer, header or view) is liveTheme, which follows a change of theme.
 export let theme: Theme = liveTheme;
 
+/** The theme instance in use: another object after a change of theme. */
+export function getThemeInstance(): Theme | undefined {
+	return (globalThis as Record<symbol, Theme>)[THEME_KEY];
+}
+
 function setGlobalTheme(t: Theme): void {
 	(globalThis as Record<symbol, Theme>)[THEME_KEY] = t;
 	(globalThis as Record<symbol, Theme>)[THEME_KEY_OLD] = t;
