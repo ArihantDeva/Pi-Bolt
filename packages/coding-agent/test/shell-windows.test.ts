@@ -1,9 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLocalBashOperations } from "../src/core/tools/bash.ts";
-import { getMsysBash, getShellConfig } from "../src/utils/shell.ts";
+import { getDirectGitBash, getMsysBash, getShellConfig, getShellEnv } from "../src/utils/shell.ts";
 
 function gitBash(): string | undefined {
 	try {
@@ -30,6 +31,40 @@ describe.skipIf(process.platform !== "win32" || !gitBash())("the bash tool on Wi
 		);
 		expect(exitCode).toBe(0);
 		expect(output).toBe(`${text}\na\\\\b|x"y|`);
+	});
+
+	it("starts Git's bash itself with what its launcher would have set", async () => {
+		// (PATH up to the system's folders: a bash parameter expansion, written in two pieces for the linter.)
+		const pathHead = `"$${"{"}PATH%%:/c/[Ww][Ii][Nn][Dd][Oo][Ww][Ss]*}"`;
+		const probe = `printf "%s|%s|%s|%s" "$MSYSTEM" "$EXEPATH" "$PLINK_PROTOCOL" ${pathHead}`;
+		const launcher = spawnSync(gitBash() as string, ["-c", probe], { encoding: "utf-8", env: getShellEnv() }).stdout;
+		let output = "";
+		await createLocalBashOperations().exec(probe, tmpdir(), {
+			onData: (data: Buffer) => {
+				output += data.toString();
+			},
+		});
+		expect(getDirectGitBash(gitBash() as string)).toBeDefined();
+		expect(output).toBe(launcher);
+	});
+
+	it("prefixes the PATH a child sees when an environment has both PATH and Path, and no relative home's bin", () => {
+		const direct = getDirectGitBash(gitBash() as string);
+		if (!direct) throw new Error("no direct Git bash");
+		const both = direct.environment({ PATH: "C:\\seen", Path: "C:\\other", HOME: "rel\\home", USERPROFILE: "C:\\u" });
+		const pathKeys = Object.keys(both).filter((key) => key.toUpperCase() === "PATH");
+		expect(pathKeys).toEqual(["PATH"]);
+		const entries = (both.PATH as string).split(";");
+		expect(entries.at(-1)).toBe("C:\\seen");
+		expect(entries.some((entry) => entry.toLowerCase().endsWith("\\usr\\bin"))).toBe(true);
+		expect(entries.some((entry) => entry.startsWith("rel"))).toBe(false);
+		const fromDrive = direct.environment({
+			Path: "C:\\p",
+			HOMEDRIVE: "C:",
+			HOMEPATH: "\\Windows",
+			USERPROFILE: "C:\\u",
+		});
+		expect((fromDrive.Path as string).split(";")).toContain("C:\\Windows\\bin");
 	});
 });
 

@@ -4,7 +4,7 @@
  */
 
 import { execSync, spawnSync } from "child_process";
-import { getShellConfig, msysShellSpawn } from "../utils/shell.ts";
+import { getDirectGitBash, getShellConfig, msysShellSpawn } from "../utils/shell.ts";
 
 // Cache for shell command results (persists for process lifetime)
 const commandResultCache = new Map<string, string | undefined>();
@@ -155,9 +155,13 @@ function executeWithConfiguredShell(command: string): { executed: boolean; value
 		const { shell, args, commandTransport } = getShellConfig();
 		const commandFromStdin = commandTransport === "stdin";
 		const shellArgs = commandFromStdin ? args : [...args, command];
+		// Windows, Git for Windows: its bash itself, without the launcher in front (see getDirectGitBash).
+		const direct = commandFromStdin ? undefined : getDirectGitBash(shell);
+		const shellExe = direct?.bash ?? shell;
 		// Windows, Git Bash: quoted for its own parser, which halves doubled backslashes otherwise (see msysShellSpawn).
-		const msysSpawn = commandFromStdin ? undefined : msysShellSpawn(shell, shellArgs);
-		const result = spawnSync(shell, msysSpawn?.args ?? shellArgs, {
+		const msysSpawn = commandFromStdin ? undefined : msysShellSpawn(shellExe, shellArgs);
+		const result = spawnSync(shellExe, msysSpawn?.args ?? shellArgs, {
+			...(direct && { env: direct.environment(process.env) }),
 			encoding: "utf-8",
 			input: commandFromStdin ? command : undefined,
 			timeout: 10000,
