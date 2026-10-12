@@ -108,9 +108,9 @@ export class BashExecutionComponent extends Container {
 		this.displayDirty = true;
 	}
 
-	override render(width: number): string[] {
+	override renderShared(width: number): string[] {
 		if (this.displayDirty) this.updateDisplay();
-		return super.render(width);
+		return super.renderShared(width);
 	}
 
 	setComplete(

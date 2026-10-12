@@ -7,6 +7,7 @@ import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
+	getDirectGitBash,
 	getMsysBash,
 	getShellConfig,
 	getShellEnv,
@@ -21,7 +22,13 @@ import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
+import {
+	DEFAULT_MAX_BYTES,
+	DEFAULT_MAX_LINES,
+	formatSize,
+	type TruncationResult,
+	truncationDetails,
+} from "./truncate.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 /** Output limit of `structuredContent.output`, which programmatic callers such as codemode scripts receive. */
@@ -117,10 +124,13 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			// stopping it finds them all (getMsysBash, killProcessTree).
 			const msysBash = getMsysBash(shellConfig.shell);
 			const msys = msysBash ? { bash: msysBash, group: randomUUID() } : undefined;
-			const shellEnv = env ?? getShellEnv();
+			// Windows, Git for Windows: its bash itself, without the launcher in front (see getDirectGitBash).
+			const direct = commandFromStdin ? undefined : getDirectGitBash(shellConfig.shell);
+			const shellExe = direct?.bash ?? shellConfig.shell;
+			const shellEnv = direct ? direct.environment(env ?? getShellEnv()) : (env ?? getShellEnv());
 			const shellArgs = commandFromStdin ? shellConfig.args : [...shellConfig.args, command];
-			const msysSpawn = commandFromStdin ? undefined : msysShellSpawn(shellConfig.shell, shellArgs);
-			const child = spawn(shellConfig.shell, msysSpawn?.args ?? shellArgs, {
+			const msysSpawn = commandFromStdin ? undefined : msysShellSpawn(shellExe, shellArgs);
+			const child = spawn(shellExe, msysSpawn?.args ?? shellArgs, {
 				cwd,
 				detached: process.platform !== "win32",
 				env: msys ? { ...shellEnv, [MSYS_SHELL_GROUP_VARIABLE]: msys.group } : shellEnv,
@@ -299,7 +309,7 @@ export function createShellToolDefinition(
 				onUpdate({
 					content: [{ type: "text", text: snapshot.content || "" }],
 					details: {
-						truncation: snapshot.truncation.truncated ? snapshot.truncation : undefined,
+						truncation: snapshot.truncation.truncated ? truncationDetails(snapshot.truncation) : undefined,
 						fullOutputPath: snapshot.fullOutputPath,
 					},
 				});
@@ -358,7 +368,7 @@ export function createShellToolDefinition(
 				let text = snapshot.content || emptyText;
 				let details: BashToolDetails | undefined;
 				if (truncation.truncated) {
-					details = { truncation, fullOutputPath: snapshot.fullOutputPath };
+					details = { truncation: truncationDetails(truncation), fullOutputPath: snapshot.fullOutputPath };
 					const startLine = truncation.totalLines - truncation.outputLines + 1;
 					const endLine = truncation.totalLines;
 					const fullOutput = snapshot.fullOutputPath

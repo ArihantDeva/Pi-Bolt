@@ -53,14 +53,14 @@ These are read by the executable at run time.
 | `BUN_STATIC_HEAP_VERBOSE=1` | Report how the static heap and code image were mapped. |
 | `PI_TIMING=1` | Pi's own startup timings, including each extension's factory. |
 | `BUN_CONFIG_HTTP_KEEPALIVE_TIMEOUT=N` | How many seconds an idle connection to a server waits to be used again when the server does not say (default 4, as in Node). Longer saves a handshake after a pause; a connection that went dead while it waited makes the next request wait for its timeout. |
-| `PI_TUI_SCROLL_ROWS=0` | Fullscreen mode draws every row that changed instead of scrolling the rows that only moved (as up to 0.5.1). For a terminal that does not scroll a region of the screen correctly; tmux, zmx, xterm, kitty, Ghostty and VTE terminals do. |
-| `BUN_JSC_numberOfGCMarkers=N` | Threads that mark during a garbage collection (default 2, from 0.5.2; the engine's own default is up to 8). More shorten collections of a very large heap and cost wake-ups on every small one. |
-| `MIMALLOC_PURGE_HOLES_MIN_INTERVAL=N` | Milliseconds between two sweeps that give freed memory back to the system (default 250, from 0.5.2; the allocator's own default is 100). Lower gives memory back sooner for more CPU while Pi is busy. |
+| `PI_TUI_SCROLL_ROWS=0` | Fullscreen mode draws every row that changed instead of scrolling the rows that only moved. For a terminal that does not scroll a region of the screen correctly; tmux, zmx, xterm, kitty, Ghostty and VTE terminals do. |
+| `BUN_JSC_numberOfGCMarkers=N` | Threads that mark during a garbage collection (default 2; the engine's own default is up to 8). More shorten collections of a very large heap and cost wake-ups on every small one. |
+| `MIMALLOC_PURGE_HOLES_MIN_INTERVAL=N` | Milliseconds between two sweeps that give freed memory back to the system (default 250; the allocator's own default is 100). Lower gives memory back sooner for more CPU while Pi is busy. |
 | `JITI_FS_CACHE=false` | Do not keep the transformed source of run-time extensions (it is kept in `cache/jiti` of the agent directory). |
 
 Pi's own variables (`PI_CODING_AGENT_DIR`, `PI_OFFLINE`, ...) work as documented by Pi.
 
-A `.env` file in the working directory is not read (from 0.6.0). Pi's own Bun binary loads one into its environment, as Bun does for
+A `.env` file in the working directory is not read. Pi's own Bun binary loads one into its environment, as Bun does for
 any program; Pi on Node does not, and a project's `.env` (its API keys, its proxy settings) is the project's, not Pi's. Set what
 Pi should see in the shell that starts it.
 
@@ -86,7 +86,7 @@ To rule a compiler optimization in or out of a problem, build with it off (each 
 glibc 2.17. Pi-Bolt needs glibc 2.17 or later (CentOS 7, Debian 8, Ubuntu 14.04 and anything newer).
 
 **`Illegal instruction` when starting.** The CPU has no SSE4.2 (older than Intel Nehalem, 2008, or AMD Bulldozer, 2011). No
-build runs on it; the installer says so since 0.5.1.
+build runs on it; the installer says so.
 
 **A theme, the HTML export or image tools are missing.** The executable was moved away from the files around it. Keep the whole
 folder together, and link or alias the executable instead of copying it.
@@ -99,10 +99,6 @@ function that is not compiled cannot be relied on to run. The message names the 
 change that function. `BUN_JSC_allowAOTDeclinedFunctions=1` builds anyway: the function then runs from bytecode if it uses no
 variables from outside itself, and stops the program when it is called if it does.
 
-**The first prompt after a pause hangs until it times out.** Up to 0.5.0 an idle connection to the model provider was kept for
-5 minutes, and one that a NAT, a load balancer or a suspended laptop had dropped in the meantime was used again. Update; from
-0.5.1 a connection waits 4 seconds (or as long as the server says it may), as in Node.
-
 **A run-time plugin is slow.** On the default build, plugins loaded at run time are interpreted. Compile them in
 ([PLUGINS.md](PLUGINS.md)) or use the `linux-x64-jit` build.
 
@@ -110,6 +106,10 @@ variables from outside itself, and stops the program when it is called if it doe
 anywhere. With a memory limit, count the executable too: its code is file-backed memory that the kernel charges to the
 container and has to read again when the limit pushes it out. Pi-Bolt works from a limit of about 100 MB, at twice the CPU and
 with pauses of a second; 256 MB or more leaves it alone. A CPU limit (`--cpus`) lowers the number of threads Pi-Bolt starts.
+
+**A Herdr restart does not reopen the Pi-Bolt session.** Herdr runs the restore command with its server's `PATH`, which must
+include `pi-bolt`: start Herdr from a terminal, not with `brew services`. Agents that pi-herdr starts in other panes run stock
+Pi (`pi`), which must be installed.
 
 **Startup is slower than expected.** Check that the compiled code is used (above). Check `PI_TIMING=1` for slow extension
 factories. A cold page cache (the first start after boot or install) adds the time to read the executable from disk.
@@ -161,6 +161,12 @@ of the project's folder by name fails inside Pi; have the script name it by its 
 default build, though, a native program whose own parent has already exited (a dev server a launcher started and left) is not
 found, and keeps running: end it in Task Manager, or use the `-jit` build (`$env:PIBOLT_VARIANT = "x64-jit"` before installing),
 which ends those too.
+
+**The first start after installing or updating an extension takes seconds.** Microsoft Defender checks each file of a newly
+installed package the first time it is read (about 15-20 ms a file; a large extension has hundreds), and the extension's
+TypeScript is compiled once into `~\.pi\agent\cache\jiti`. Later starts use that cache and read files Defender has already
+checked: pi-subagents, for one, loads in about 0.5 s instead of 8. This is Defender doing its job; do not exclude Pi's folders
+from it.
 
 **The bash tool says `shellPath` "is not a bash".** `shellPath` names the bash the bash tool runs (Git Bash's `bash.exe`, say).
 `cmd.exe` and PowerShell are not one; PowerShell commands go through the PowerShell tool.

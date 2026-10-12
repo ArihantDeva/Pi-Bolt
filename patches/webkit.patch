@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: OpenSec <contactus@opensec.in>
-Date: Sat, 10 Oct 2026 17:52:03 +0530
+Date: Mon, 12 Oct 2026 02:57:13 +0000
 Subject: [PATCH] Pi-Bolt: JavaScriptCore's ahead-of-time compiler
 
 JavaScriptCore's changes for Pi-Bolt's executables, on Linux x86-64, macOS ARM64 and Windows x64:
@@ -29,12 +29,27 @@ that fit in 16 GB (MAP_NORESERVE), no false addresses on macOS, threads that giv
 memory when idle, Linux's randomness from getrandom(2), an FTL fix for wrong NaNs.
 
 Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and comments cleaned up. Builds on Linux and macOS: VariableEnvironment's packed pointer traits named as WTF::PackedPtrTraits.
+
+Includes the engine changes of Pi-Bolt 0.8.5: from upstream WebKit, a non-global replace() with an
+empty string returns a substring, find8 scans its first bytes in one step, parseInt avoids resolving
+ropes, ToNumber rejects strings that are not numbers quickly, microtasks are queued without copies,
+and clearing an exception keeps a termination. x86-64: property lookups by a name held in a variable,
+and filled dispatch-table slots, in ahead-of-time code (thanks to @carsteneu, #18). macOS: an address
+in the code is one in the static region or in a loaded image. Map and Set leave long string keys to the
+function, which compares many characters at a time.
 ---
  .../array-length-increment-large.js           |   15 +
+ .../string-index-of-one-char-long.js          |   31 +
+ .../string-index-of-one-char-short.js         |   30 +
+ .../string-replace-regexp-strip-prefix.js     |   16 +
  .../array-set-length-grow-within-vector.js    |   73 +
  ...ay-float-load-clobbers-fp-temp-register.js |   38 +
+ JSTests/stress/parse-int-rope-string.js       |   37 +
+ ...ring-index-of-one-char-boundary-lengths.js |   34 +
+ ...ce-regexp-non-global-string-replacement.js |   57 +
+ .../to-number-string-first-character.js       |   24 +
  Source/JavaScriptCore/CMakeLists.txt          |    7 +
- Source/JavaScriptCore/aot/AOTCompiler.cpp     |  180 +-
+ Source/JavaScriptCore/aot/AOTCompiler.cpp     |  182 +-
  Source/JavaScriptCore/aot/AOTCompiler.h       |    3 +-
  Source/JavaScriptCore/aot/AOTConvention.h     |   89 +-
  Source/JavaScriptCore/aot/AOTEmitter.cpp      |    5 +-
@@ -59,9 +74,9 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  Source/JavaScriptCore/aot/AOTProgram.h        |   85 +
  Source/JavaScriptCore/aot/AOTRuntime.cpp      |  200 +-
  Source/JavaScriptCore/aot/AOTRuntime.h        |   15 +-
- Source/JavaScriptCore/aot/AOTStubs.cpp        |  144 +-
+ Source/JavaScriptCore/aot/AOTStubs.cpp        |  150 +-
  Source/JavaScriptCore/aot/AOTStubs.h          |   51 +
- Source/JavaScriptCore/aot/AOTStubsX86_64.cpp  | 3514 +++++++++++++++++
+ Source/JavaScriptCore/aot/AOTStubsX86_64.cpp  | 3804 +++++++++++++++++
  Source/JavaScriptCore/aot/AOTThunks.cpp       |  326 +-
  Source/JavaScriptCore/aot/AOTThunks.h         |   15 +-
  .../JavaScriptCore/aot/AOTTypeInference.cpp   |   77 +-
@@ -73,6 +88,7 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  .../bytecode/UnlinkedFunctionExecutable.h     |   25 +-
  .../bytecode/UnlinkedGlobalCodeBlock.h        |    5 +-
  .../dfg/DFGAbstractInterpreterInlines.h       |    6 +-
+ Source/JavaScriptCore/dfg/DFGOperations.cpp   |   45 +-
  Source/JavaScriptCore/ffi/FFICallHost.cpp     |    4 +-
  Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp |   38 +
  Source/JavaScriptCore/heap/StaticHeap.cpp     |  423 +-
@@ -91,9 +107,17 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  .../JavaScriptCore/runtime/FunctionRareData.h |    2 +-
  Source/JavaScriptCore/runtime/IntlObject.cpp  |   58 +-
  Source/JavaScriptCore/runtime/JSArray.cpp     |    1 +
+ .../runtime/JSGlobalObjectFunctions.cpp       |   19 +-
+ Source/JavaScriptCore/runtime/JSMicrotask.cpp |  238 +-
+ Source/JavaScriptCore/runtime/JSMicrotask.h   |    7 +-
+ .../JavaScriptCore/runtime/JSModuleLoader.cpp |    3 +-
+ Source/JavaScriptCore/runtime/JSPromise.cpp   |    8 +-
  .../runtime/MegamorphicCache.cpp              |    1 +
+ .../JavaScriptCore/runtime/MicrotaskQueue.cpp |   20 +-
+ .../runtime/MicrotaskQueueInlines.h           |   12 +-
  Source/JavaScriptCore/runtime/Options.cpp     |    4 +
  Source/JavaScriptCore/runtime/OptionsList.h   |   13 +
+ Source/JavaScriptCore/runtime/ParseInt.h      |   26 +
  Source/JavaScriptCore/runtime/PrototypeKey.h  |    3 +-
  Source/JavaScriptCore/runtime/RegExp.cpp      |   76 +-
  Source/JavaScriptCore/runtime/RegExp.h        |    9 +
@@ -102,6 +126,8 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  .../runtime/SamplingProfiler.cpp              |    8 +
  Source/JavaScriptCore/runtime/StackFrame.cpp  |   11 +-
  .../runtime/StringPrototype.cpp               |   14 +
+ .../runtime/StringPrototypeInlines.h          |    7 +
+ .../runtime/TopExceptionScope.h               |    8 +-
  Source/JavaScriptCore/runtime/VM.cpp          |   50 +-
  .../runtime/WaiterListManager.cpp             |   23 +-
  Source/JavaScriptCore/shell/CMakeLists.txt    |    6 +-
@@ -123,6 +149,8 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  Source/WTF/wtf/RandomDevice.h                 |    4 +-
  Source/WTF/wtf/SysVCall.h                     |   49 +
  Source/WTF/wtf/text/AtomStringTable.h         |   24 +-
+ Source/WTF/wtf/text/StringCommon.cpp          |   15 +
+ Source/WTF/wtf/text/StringCommon.h            |   24 +-
  Source/bmalloc/CMakeLists.txt                 |    4 +
  Source/bmalloc/bmalloc/BPlatform.h            |    7 +
  Source/bmalloc/bmalloc/CryptoRandom.cpp       |   60 +-
@@ -132,11 +160,19 @@ Includes the engine changes of Pi-Bolt 0.7.4 (bolt-v0.7.4): internal names and c
  Source/bmalloc/bmalloc/bmalloc.h              |    5 +
  Source/cmake/WebKitCompilerFlags.cmake        |    4 +-
  Source/cmake/WebKitMacros.cmake               |   28 +-
+ .../TestWebKitAPI/Tests/WTF/StringCommon.cpp  |   19 +-
  build-icu.ps1                                 |   49 +-
- 103 files changed, 8292 insertions(+), 389 deletions(-)
+ 124 files changed, 9082 insertions(+), 577 deletions(-)
  create mode 100644 JSTests/microbenchmarks/array-length-increment-large.js
+ create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-long.js
+ create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-short.js
+ create mode 100644 JSTests/microbenchmarks/string-replace-regexp-strip-prefix.js
  create mode 100644 JSTests/stress/array-set-length-grow-within-vector.js
  create mode 100644 JSTests/stress/ftl-get-by-val-ic-typed-array-float-load-clobbers-fp-temp-register.js
+ create mode 100644 JSTests/stress/parse-int-rope-string.js
+ create mode 100644 JSTests/stress/string-index-of-one-char-boundary-lengths.js
+ create mode 100644 JSTests/stress/string-replace-regexp-non-global-string-replacement.js
+ create mode 100644 JSTests/stress/to-number-string-first-character.js
  create mode 100644 Source/JavaScriptCore/aot/AOTStubsX86_64.cpp
  create mode 100644 Source/JavaScriptCore/runtime/ReportableSitesOfFunction.h
  create mode 100644 Source/JavaScriptCore/shell/ExternalMimallocShims.cpp
@@ -163,6 +199,101 @@ index 0000000000..ebed95e18a
 +    if (array.length !== 150000 || array[149999] !== 149999)
 +        throw new Error("bad result");
 +}
+diff --git a/JSTests/microbenchmarks/string-index-of-one-char-long.js b/JSTests/microbenchmarks/string-index-of-one-char-long.js
+new file mode 100644
+index 0000000000..ea1f99bdcc
+--- /dev/null
++++ b/JSTests/microbenchmarks/string-index-of-one-char-long.js
+@@ -0,0 +1,31 @@
++function indexOfNewline(string) {
++    return string.indexOf("\n");
++}
++noInline(indexOfNewline);
++
++function includesTab(string) {
++    return string.includes("\t");
++}
++noInline(includesTab);
++
++var line = "The quick brown fox jumps over the lazy dog. ";
++var strings = [
++    line.repeat(3) + "\n" + line,
++    line.repeat(4),
++    line.repeat(5) + "\t" + line + "\n",
++    line + "\n" + line.repeat(3),
++    line.repeat(6) + "\n",
++    line.repeat(3) + "\t",
++    line.repeat(7),
++    line.repeat(2) + "\t" + line.repeat(2) + "\n" + line,
++].map((string) => JSON.parse(JSON.stringify(string)));
++
++var result = 0;
++for (var i = 0; i < 1e6; ++i) {
++    var string = strings[i & 7];
++    result += indexOfNewline(string);
++    if (includesTab(string))
++        result++;
++}
++if (result !== 112750000)
++    throw new Error("bad result: " + result);
+diff --git a/JSTests/microbenchmarks/string-index-of-one-char-short.js b/JSTests/microbenchmarks/string-index-of-one-char-short.js
+new file mode 100644
+index 0000000000..787eff2359
+--- /dev/null
++++ b/JSTests/microbenchmarks/string-index-of-one-char-short.js
+@@ -0,0 +1,30 @@
++function indexOfColon(string) {
++    return string.indexOf(":");
++}
++noInline(indexOfColon);
++
++function includesSlash(string) {
++    return string.includes("/");
++}
++noInline(includesSlash);
++
++var strings = [
++    "content-type: application/json",
++    "authorization",
++    "src/utils/permissions/filesystem.ts",
++    "node:fs",
++    "x-request-id: 0123456789abcdef0123456789abcdef",
++    "README.md",
++    "https://example.com/path/to/resource",
++    "a-long-identifier-without-any-separator-in-it",
++];
++
++var result = 0;
++for (var i = 0; i < 1e6; ++i) {
++    var string = strings[i & 7];
++    result += indexOfColon(string);
++    if (includesSlash(string))
++        result++;
++}
++if (result !== 4000000)
++    throw new Error("bad result: " + result);
+diff --git a/JSTests/microbenchmarks/string-replace-regexp-strip-prefix.js b/JSTests/microbenchmarks/string-replace-regexp-strip-prefix.js
+new file mode 100644
+index 0000000000..546d2ed3a3
+--- /dev/null
++++ b/JSTests/microbenchmarks/string-replace-regexp-strip-prefix.js
+@@ -0,0 +1,16 @@
++function test(url)
++{
++    return url.replace(/^https?:\/\//, "");
++}
++noInline(test);
++
++const urls = [];
++for (let k = 0; k < 64; k++)
++    urls.push((k & 1 ? "https://" : "http://") + "host" + k + ".example.com/path/to/resource/" + k + "?query=" + (k * 7));
++
++let result;
++for (let i = 0; i < 2000000; ++i)
++    result = test(urls[i & 63]);
++
++if (test("https://a.example/b") !== "a.example/b")
++    throw new Error("bad result: " + test("https://a.example/b"));
 diff --git a/JSTests/stress/array-set-length-grow-within-vector.js b/JSTests/stress/array-set-length-grow-within-vector.js
 new file mode 100644
 index 0000000000..5abccbdb84
@@ -286,6 +417,182 @@ index 0000000000..269bde9aa5
 +            throw new Error(TypedArray.name + ": i=" + i + " got " + r + " expected " + e);
 +    }
 +}
+diff --git a/JSTests/stress/parse-int-rope-string.js b/JSTests/stress/parse-int-rope-string.js
+new file mode 100644
+index 0000000000..f3d4566b6f
+--- /dev/null
++++ b/JSTests/stress/parse-int-rope-string.js
+@@ -0,0 +1,37 @@
++function shouldBe(actual, expected) {
++    if (!Object.is(actual, expected))
++        throw new Error('bad value: ' + actual + ' expected: ' + expected);
++}
++
++function parseDecimal(string) { return parseInt(string, 10); }
++noInline(parseDecimal);
++function parseNoRadix(string) { return parseInt(string); }
++noInline(parseNoRadix);
++function parseHex(string) { return parseInt(string, 16); }
++noInline(parseHex);
++
++function makeRope(parts) {
++    var result = '';
++    for (var i = 0; i < parts.length; ++i)
++        result += parts[i];
++    return result;
++}
++
++var longDigits = '';
++for (var i = 0; i < 100; ++i)
++    longDigits += '9';
++
++for (var i = 0; i < testLoopCount; ++i) {
++    var rope = makeRope(['1', '2', '3', String(i % 10)]);
++    shouldBe(parseDecimal(rope), 1230 + i % 10);
++    shouldBe(rope, '123' + (i % 10));
++    shouldBe(parseNoRadix(makeRope([' ', '-', '4', '2', 'x'])), -42);
++    shouldBe(parseNoRadix(makeRope(['0', 'x', 'f', 'F'])), 255);
++    shouldBe(parseHex(makeRope(['f', 'f'])), 255);
++    shouldBe(parseDecimal(makeRope(['\u0661', '2'])), NaN);
++    shouldBe(parseDecimal(makeRope(['\u3000', '7', '\u2028'])), 7);
++    shouldBe(parseDecimal(makeRope(['abc', 'def'])), NaN);
++    shouldBe(parseDecimal(makeRope([longDigits, '1'])), parseInt(longDigits + '1', 10));
++    shouldBe(parseDecimal(makeRope(['12', '34']).substring(1, 3)), 23);
++    shouldBe(parseDecimal(makeRope(['', ''])), NaN);
++}
+diff --git a/JSTests/stress/string-index-of-one-char-boundary-lengths.js b/JSTests/stress/string-index-of-one-char-boundary-lengths.js
+new file mode 100644
+index 0000000000..27a6ae20ab
+--- /dev/null
++++ b/JSTests/stress/string-index-of-one-char-boundary-lengths.js
+@@ -0,0 +1,34 @@
++function shouldBe(actual, expected, label) {
++    if (actual !== expected)
++        throw new Error(label + ": expected " + expected + " but got " + actual);
++}
++
++function flatten(string) {
++    return JSON.parse(JSON.stringify(string));
++}
++
++function substringSharingBuffer(string, start, end) {
++    let substring = string.substring(start, end);
++    /x/.test(substring);
++    return substring;
++}
++
++for (let length = 0; length <= 130; ++length) {
++    let label = "length " + length;
++    shouldBe(flatten(";".repeat(length)).indexOf(":"), -1, label);
++    shouldBe(flatten("º".repeat(length)).includes(":"), false, label);
++    shouldBe(flatten("è".repeat(length)).indexOf("é"), -1, label);
++
++    let surrounded = flatten(":".repeat(16) + ";".repeat(length) + ":".repeat(16));
++    shouldBe(substringSharingBuffer(surrounded, 16, 16 + length).indexOf(":"), -1, label);
++    shouldBe(surrounded.substring(16, 16 + length).indexOf(":"), -1, label);
++    shouldBe(substringSharingBuffer(surrounded, 16, 17 + length).indexOf(":"), length, label);
++    shouldBe(substringSharingBuffer(surrounded, 15, 16 + length).indexOf(":"), 0, label);
++
++    for (let position = 0; position < length; ++position) {
++        label = "length " + length + " position " + position;
++        shouldBe(flatten(";".repeat(position) + ":" + ";".repeat(length - position - 1)).indexOf(":"), position, label);
++        shouldBe(flatten(";".repeat(position) + ":".repeat(length - position)).indexOf(":"), position, label);
++        shouldBe(flatten("è".repeat(position) + "é" + "ÿ".repeat(length - position - 1)).includes("é"), true, label);
++    }
++}
+diff --git a/JSTests/stress/string-replace-regexp-non-global-string-replacement.js b/JSTests/stress/string-replace-regexp-non-global-string-replacement.js
+new file mode 100644
+index 0000000000..0ce5a90cab
+--- /dev/null
++++ b/JSTests/stress/string-replace-regexp-non-global-string-replacement.js
+@@ -0,0 +1,57 @@
++function shouldBe(actual, expected) {
++    if (actual !== expected)
++        throw new Error("bad value: " + JSON.stringify(actual) + " expected: " + JSON.stringify(expected));
++}
++
++function replaceEmpty(string, regExp) {
++    return string.replace(regExp, "");
++}
++noInline(replaceEmpty);
++
++function replaceString(string, regExp, replacement) {
++    return string.replace(regExp, replacement);
++}
++noInline(replaceString);
++
++const rope = "http://" + "example.com/" + "path".repeat(3);
++const substring = "xxhttps://example.com/index.htmlyy".slice(2, -2);
++const wide = "https://あいう.example/え";
++
++for (let i = 0; i < testLoopCount; ++i) {
++    shouldBe(replaceEmpty("https://example.com/", /^https?:\/\//), "example.com/");
++    shouldBe(replaceEmpty("example.com/", /^https?:\/\//), "example.com/");
++    shouldBe(replaceEmpty("http://", /^https?:\/\//), "");
++    shouldBe(replaceEmpty("/a/b///", /\/+$/), "/a/b");
++    shouldBe(replaceEmpty("file.tar.gz", /\.[^.]+$/), "file.tar");
++    shouldBe(replaceEmpty("abc", /b/), "ac");
++    shouldBe(replaceEmpty("ab", /b/), "a");
++    shouldBe(replaceEmpty("ba", /b/), "a");
++    shouldBe(replaceEmpty("abc", /(?:)/), "abc");
++    shouldBe(replaceEmpty(rope, /^https?:\/\//), "example.com/pathpathpath");
++    shouldBe(replaceEmpty(substring, /^https?:\/\//), "example.com/index.html");
++    shouldBe(replaceEmpty(substring, /\.html$/), "https://example.com/index");
++    shouldBe(replaceEmpty(wide, /^https?:\/\//), "あいう.example/え");
++    shouldBe(replaceEmpty(wide, /\.example/), "https://あいう/え");
++
++    shouldBe(replaceString("/api/v2/items", /\/v\d+\//, "/latest/"), "/api/latest/items");
++    shouldBe(replaceString("v2/items", /^v\d+/, "latest"), "latest/items");
++    shouldBe(replaceString("items/v2", /v\d+$/, "latest"), "items/latest");
++    shouldBe(replaceString("v2", /v\d+/, "latest"), "latest");
++    shouldBe(replaceString("abc", /(?:)/, "-"), "-abc");
++    shouldBe(replaceString(rope, /example/, "あ"), "http://あ.com/pathpathpath");
++    shouldBe(replaceString(wide, /い/, "i"), "https://あiう.example/え");
++    shouldBe(replaceString("a-b", /(\w)-(\w)/, "$2-$1"), "b-a");
++    shouldBe(replaceString("a-b", /-/, "[$&]"), "a[-]b");
++}
++
++shouldBe(replaceString("prefix:value", /:/, "="), "prefix=value");
++shouldBe(RegExp.leftContext, "prefix");
++shouldBe(RegExp.rightContext, "value");
++shouldBe(RegExp.lastMatch, ":");
++
++const result = replaceEmpty("https://example.com/", /^https?:\/\//);
++shouldBe(result.length, 12);
++shouldBe(result.charCodeAt(0), "e".charCodeAt(0));
++shouldBe(result + "!", "example.com/!");
++const map = new Map([[result, 1]]);
++shouldBe(map.get("example.com/"), 1);
+diff --git a/JSTests/stress/to-number-string-first-character.js b/JSTests/stress/to-number-string-first-character.js
+new file mode 100644
+index 0000000000..40ff3778fc
+--- /dev/null
++++ b/JSTests/stress/to-number-string-first-character.js
+@@ -0,0 +1,24 @@
++function shouldBe(actual, expected) {
++    if (!Object.is(actual, expected))
++        throw new Error('bad value: ' + String(actual) + ' expected: ' + String(expected));
++}
++
++var cases = [
++    ['', 0], ['   ', 0], [' 12 ', 12], ['.5', 0.5], ['+1', 1], ['-1', -1], ['-0', -0],
++    ['Infinity', Infinity], ['+Infinity', Infinity], ['-Infinity', -Infinity], [' Infinity ', Infinity],
++    ['infinity', NaN], ['I', NaN], ['Inf', NaN], ['0x10', 16], ['0b11', 3], ['0o17', 15],
++    ['e5', NaN], ['rlineto', NaN], ['\u00a05', 5], ['\u30001', 1], ['\u0661', NaN], ['NaN', NaN],
++    ['1e3', 1000], ['.', NaN], ['+', NaN], ['-', NaN], ['_1', NaN], ['\ufeff7', 7],
++];
++
++function toNumber(value) { return +value; }
++noInline(toNumber);
++function looseEqual(a, b) { return a == b; }
++noInline(looseEqual);
++
++for (var i = 0; i < testLoopCount; ++i) {
++    var [string, expected] = cases[i % cases.length];
++    shouldBe(toNumber(string), expected);
++    shouldBe(looseEqual(string, -1), expected === -1);
++    shouldBe(Number(string), expected);
++}
 diff --git a/Source/JavaScriptCore/CMakeLists.txt b/Source/JavaScriptCore/CMakeLists.txt
 index 79c1f1a3cb..e00c2fdf0b 100644
 --- a/Source/JavaScriptCore/CMakeLists.txt
@@ -312,17 +619,16 @@ index 79c1f1a3cb..e00c2fdf0b 100644
      runtime/CallData.h
      runtime/CellSize.h
 diff --git a/Source/JavaScriptCore/aot/AOTCompiler.cpp b/Source/JavaScriptCore/aot/AOTCompiler.cpp
-index 944a17bfb4..e2b28a7eb2 100644
+index 944a17bfb4..50ba5ef481 100644
 --- a/Source/JavaScriptCore/aot/AOTCompiler.cpp
 +++ b/Source/JavaScriptCore/aot/AOTCompiler.cpp
-@@ -32,8 +32,87 @@
+@@ -32,8 +32,89 @@
  #include <wtf/StringPrintStream.h>
  #include <wtf/text/StringHash.h>
  
 +#if OS(DARWIN)
 +#include <bmalloc/StaticRegion.h>
 +#include <dlfcn.h>
-+#include <libproc.h>
 +#include <mach/mach.h>
 +#include <mach/mach_vm.h>
 +#elif OS(WINDOWS)
@@ -380,14 +686,17 @@ index 944a17bfb4..e2b28a7eb2 100644
 +    // is used of it is a region of its own.
 +    if (!(address >= start && address - start < size && info.protection != VM_PROT_NONE))
 +        return false;
-+    // The image is built with the executable at its linked address, so this process's own memory (malloc's zones, the heap of
-+    // the VM that builds) lies just above the executable, at 4 to 8 GB, where numbers made of others land (4294967295 +
-+    // 2147483648): there only what is mapped from a file (the executable, a library) or is the static region is taken for an
-+    // address. (On Linux that memory is far from such numbers, and every mapping counts.)
++    // The image is built with the executable at its linked address, so this process's own memory lies just above the
++    // executable, at 4 to 8 GB, where numbers made of others land (4294967295 + 2147483648, 7000000000): malloc's zones, the heap
++    // of the VM that builds, and the files the build maps to read them (the runtime it copies into the program, sources). There
++    // only the static region and the images dyld loaded (the executable, a library outside the shared cache) are taken for an
++    // address: what a lowering could point at by mistake, a VM field or a C function or object. A file the build maps itself is
++    // not one of them, although it is mapped from a file too (which is what this went by before, and a number in such a mapping
++    // was refused). On Linux that memory is far from such numbers, and every mapping counts.
 +    if (bmalloc::StaticRegion::contains(reinterpret_cast<const void*>(address)))
 +        return true;
-+    char path[PATH_MAX];
-+    return proc_regionfilename(getpid(), address, path, sizeof(path)) > 0;
++    Dl_info image;
++    return dladdr(reinterpret_cast<const void*>(address), &image) && image.dli_fbase;
 +#elif OS(WINDOWS)
 +    // Committed memory that can be read; as on Darwin, a reservation holds nothing to point at.
 +    MEMORY_BASIC_INFORMATION info;
@@ -403,7 +712,7 @@ index 944a17bfb4..e2b28a7eb2 100644
  static ScopeChain unknownScopeChain()
  {
      ScopeChain chain;
-@@ -131,7 +210,7 @@ bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
+@@ -131,7 +212,7 @@ bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
          for (B3::Air::BasicBlock* block : code) {
              for (B3::Air::Inst& inst : *block) {
                  if (inst.kind.opcode == B3::Air::Patch)
@@ -412,7 +721,7 @@ index 944a17bfb4..e2b28a7eb2 100644
                  else
                      found |= inst.kind.opcode == B3::Air::ColdCCall;
              }
-@@ -141,12 +220,48 @@ bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
+@@ -141,12 +222,48 @@ bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
      return !*graph.callsAreLeft;
  }
  
@@ -462,7 +771,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      jit.emitFunctionEpilogue();
  }
  
-@@ -154,13 +269,32 @@ void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Co
+@@ -154,13 +271,32 @@ void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Co
  {
      RELEASE_ASSERT(!hasNoFrame(graph, code));
      AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -496,7 +805,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      for (BasicBlock* block : graph.m_rpo) {
          if (!block->isInLoop)
              continue;
-@@ -168,6 +302,7 @@ static bool loopsWillDoWhole(Graph& graph)
+@@ -168,6 +304,7 @@ static bool loopsWillDoWhole(Graph& graph)
          for (Node* node : block->nodes) {
              if (node->kind != NodeKind::Bytecode || !node->instruction)
                  continue;
@@ -504,7 +813,7 @@ index 944a17bfb4..e2b28a7eb2 100644
              switch (node->opcode) {
              case op_get_by_val:
                  if (!node->use(node->as<OpGetByVal>().m_base)->type || !isSubtype(node->use(node->as<OpGetByVal>().m_base)->type, TArray) || !isSubtype(node->use(node->as<OpGetByVal>().m_property)->type, TNumber))
-@@ -195,12 +330,17 @@ static bool loopsWillDoWhole(Graph& graph)
+@@ -195,12 +332,17 @@ static bool loopsWillDoWhole(Graph& graph)
              case op_get_from_scope:
                  if (node->as<OpGetFromScope>().m_getPutInfo.resolveType() != ResolvedClosureVar)
                      return false;
@@ -522,7 +831,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      return hasLoop;
  }
  
-@@ -224,6 +364,17 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
+@@ -224,6 +366,17 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
          graph.fail("compiled for the debugger or a profiler"_s);
          return declined();
      }
@@ -540,7 +849,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      if (!parseBytecode(graph))
          return declined();
      if (program)
-@@ -268,7 +419,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
+@@ -268,7 +421,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
              continue;
          uint64_t bits = value->asInt64();
          // (But for where structures are, which is the same in every process: structureIDBaseOfImages.)
@@ -549,7 +858,7 @@ index 944a17bfb4..e2b28a7eb2 100644
              graph.fail("an address in the code"_s);
              return declined();
          }
-@@ -287,7 +438,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
+@@ -287,7 +440,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
              stubCalls.call(jit, Stub::Prologue, code.frameSize(), CallSite { });
          else if (code.frameSize())
              jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
@@ -558,7 +867,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      }));
      proc.code().setEpilogueGenerator(createSharedTask<B3::Air::PrologueGeneratorFunction>([&graph](CCallHelpers& jit, B3::Air::Code& code) {
          emitEpilogueBeforeLeaving(jit, graph, code);
-@@ -319,12 +470,13 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
+@@ -319,12 +472,13 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
      // The code is linked in ordinary memory. It is only copied into the image and never runs from here, so compiling needs no JIT memory.
      jit.breakpoint();
      jit.padBeforePatch();
@@ -573,7 +882,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      info.codeSize = linkBuffer.size();
      void* start = linkBuffer.entrypoint<JSEntryPtrTag>().untaggedPtr();
      // (It turned out to be what comes first anyway.)
-@@ -335,6 +487,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
+@@ -335,6 +489,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
              call.offset -= sizeof(uint32_t);
          for (auto& reference : info.indexReferences)
              reference.offset -= sizeof(uint32_t);
@@ -582,7 +891,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      }
      auto offsetOf = [&](CCallHelpers::Label label) {
          return static_cast<unsigned>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(label).untaggedPtr()) - static_cast<uint8_t*>(start));
-@@ -383,6 +537,13 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
+@@ -383,6 +539,13 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
      info.startsCold = graph.startsCold;
      RELEASE_ASSERT(!info.startsCold || info.numSlots <= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots));
      info.calleeSaveRegisters = proc.calleeSaveRegisterAtOffsetList();
@@ -596,7 +905,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i)
          info.catchEntrypoints.append({ graph.catchEntrypoints[i]->bytecodeBegin, offsetOf(proc.code().entrypointLabel(i + 1)) });
  
-@@ -421,6 +582,7 @@ bool recordUsesOfKnownFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeB
+@@ -421,6 +584,7 @@ bool recordUsesOfKnownFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeB
      graph.noteFieldsComparedWithStrings();
      recordReturnedLiterals(graph);
      graph.noteClassesDefined();
@@ -604,7 +913,7 @@ index 944a17bfb4..e2b28a7eb2 100644
      if (variableSummaries)
          graph.recordUntrackableVariableAccesses(*variableSummaries);
      return true;
-@@ -444,13 +606,17 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
+@@ -444,13 +608,17 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
      return result;
  }
  
@@ -3463,7 +3772,7 @@ index d96ea043c6..c17acc2a26 100644
  private:
      void* m_code;
 diff --git a/Source/JavaScriptCore/aot/AOTStubs.cpp b/Source/JavaScriptCore/aot/AOTStubs.cpp
-index 1b472efc1f..01ebef1664 100644
+index 1b472efc1f..31fbfc096e 100644
 --- a/Source/JavaScriptCore/aot/AOTStubs.cpp
 +++ b/Source/JavaScriptCore/aot/AOTStubs.cpp
 @@ -101,6 +101,17 @@ static void loadInstance(CCallHelpers& jit, GPRReg result)
@@ -3554,7 +3863,22 @@ index 1b472efc1f..01ebef1664 100644
          jit.load16(Address(T10, Structure::offsetOfTypedLayoutID()), T10);
          jit.branch32(CCallHelpers::Equal, T10, T12).linkTo(isHeld, &jit);
          miss.append(jit.jump());
-@@ -3535,12 +3550,21 @@ static void generateAheadOfObjectKeysObject(CCallHelpers& jit) { generateAheadOf
+@@ -3165,9 +3180,13 @@ static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise,
+     next.append(jit.branch32(CCallHelpers::NotEqual, scratch2, hash));
+     jit.load32(Address(entryImpl, StringImpl::lengthMemoryOffset()), count);
+     next.append(jit.branch32(CCallHelpers::NotEqual, count, Address(keyImpl, StringImpl::lengthMemoryOffset())));
+-    // Same hash and same length. Compare the characters, if both strings are 8-bit.
++    // Same hash and same length. Compare the characters, if both strings are 8-bit and short: a character at a time here, so
++    // longer ones go to the function, whose comparison (WTF::equal) takes many at a time. (A Map keyed by text of 50 to 100 KB,
++    // looked up with equal copies of it, spent a quarter of its time in this loop.)
++    constexpr unsigned maxCharactersComparedInMapStub = 32;
+     otherwise.append(jit.branchTest32(CCallHelpers::Zero, scratch, TrustedImm32(StringImpl::flagIs8Bit())));
+     otherwise.append(jit.branchTest32(CCallHelpers::Zero, Address(keyImpl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
++    otherwise.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(maxCharactersComparedInMapStub)));
+     jit.loadPtr(Address(entryImpl, StringImpl::dataOffset()), entryImpl);
+     jit.loadPtr(Address(keyImpl, StringImpl::dataOffset()), scratch);
+     CCallHelpers::Label compare = jit.label();
+@@ -3535,12 +3554,21 @@ static void generateAheadOfObjectKeysObject(CCallHelpers& jit) { generateAheadOf
  FOR_EACH_AOT_HELPER(AOT_GENERATE_HELPER)
  #undef AOT_GENERATE_HELPER
  
@@ -3576,7 +3900,7 @@ index 1b472efc1f..01ebef1664 100644
  #endif // CPU(ARM64)
  
  // The stubs that call an operation take its offset in the runtime table in T9. The stubs that call a function take the argument
-@@ -3612,7 +3636,7 @@ static_assert(numberOfThunks < std::numeric_limits<uint16_t>::max());
+@@ -3612,7 +3640,7 @@ static_assert(numberOfThunks < std::numeric_limits<uint16_t>::max());
  
  static bool thereAreNoWaysInByRegister()
  {
@@ -3585,7 +3909,7 @@ index 1b472efc1f..01ebef1664 100644
  }
  
  static std::optional<unsigned> firstThunkForOperandOf(Stub stub, std::optional<uint32_t> valueOfT9)
-@@ -3737,7 +3761,7 @@ bool returnsResultInAnyRegister(Stub stub, std::optional<uint32_t> valueOfT9)
+@@ -3737,7 +3765,7 @@ bool returnsResultInAnyRegister(Stub stub, std::optional<uint32_t> valueOfT9)
  
  std::optional<unsigned> thunkFor(Stub stub, uint32_t valueOfT9)
  {
@@ -3594,7 +3918,7 @@ index 1b472efc1f..01ebef1664 100644
          return std::nullopt;
      for (unsigned i = 0; i < std::size(operationCallStubs); ++i) {
          if (operationCallStubs[i] == stub)
-@@ -3781,14 +3805,19 @@ const StubBlob& stubBlob()
+@@ -3781,14 +3809,19 @@ const StubBlob& stubBlob()
      std::call_once(once, [] {
          blob.construct();
          CCallHelpers jit;
@@ -3615,7 +3939,7 @@ index 1b472efc1f..01ebef1664 100644
  #else
          Vector<CCallHelpers::Label> returnsIntoAdapters;
          CCallHelpers::Label labels[numberOfStubs];
-@@ -3802,6 +3831,8 @@ const StubBlob& stubBlob()
+@@ -3802,6 +3835,8 @@ const StubBlob& stubBlob()
  #undef AOT_GENERATE_STUB
  
          Vector<CCallHelpers::Label> thunkLabels;
@@ -3624,7 +3948,7 @@ index 1b472efc1f..01ebef1664 100644
          if constexpr (usesStubs) {
              for (Stub stub : operationCallStubs) {
                  for (unsigned entry = 0; entry < numberOfEntries; ++entry) {
-@@ -3913,10 +3944,11 @@ const StubBlob& stubBlob()
+@@ -3913,10 +3948,11 @@ const StubBlob& stubBlob()
  #endif
              RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
          }
@@ -3637,7 +3961,7 @@ index 1b472efc1f..01ebef1664 100644
          LinkBuffer linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(storage.mutableSpan().data()), storage.sizeInBytes(), LinkBuffer::Profile::Thunk);
          for (auto& [call, stub] : callsBetweenStubs)
              linkBuffer.link<JITThunkPtrTag>(call, linkBuffer.locationOf<JITThunkPtrTag>(labels[static_cast<unsigned>(stub)]));
-@@ -3929,6 +3961,8 @@ const StubBlob& stubBlob()
+@@ -3929,6 +3965,8 @@ const StubBlob& stubBlob()
              uint32_t encoded = 0x10000000u | (static_cast<uint32_t>(delta) & 3) << 29 | (static_cast<uint32_t>(delta >> 2) & 0x7ffff) << 5 | static_cast<uint32_t>(address.reg);
              performJITMemcpy<jitMemcpyRepatch>(instruction, &encoded, sizeof(encoded));
          }
@@ -3646,7 +3970,7 @@ index 1b472efc1f..01ebef1664 100644
  #endif
          auto* start = static_cast<uint8_t*>(linkBuffer.entrypoint<JITThunkPtrTag>().untaggedPtr());
          for (unsigned i = 0; i < numberOfStubs; ++i)
-@@ -3953,6 +3987,10 @@ const StubBlob& stubBlob()
+@@ -3953,6 +3991,10 @@ const StubBlob& stubBlob()
              };
              for (unsigned i = 0; i < numberOfStubs; ++i)
                  dataLogLn("AOT: stub ", names[i], " ", blob->offsets[i]);
@@ -3657,7 +3981,7 @@ index 1b472efc1f..01ebef1664 100644
              // In the order in which they were generated above.
              unsigned thunk = 0;
              for (Stub stub : operationCallStubs) {
-@@ -4002,7 +4040,7 @@ void StubCalls::call(CCallHelpers& jit, Stub stub, uint32_t valueOfT9, CallSite
+@@ -4002,7 +4044,7 @@ void StubCalls::call(CCallHelpers& jit, Stub stub, uint32_t valueOfT9, CallSite
  {
      auto thunk = thunkFor(stub, valueOfT9);
      if (!thunk)
@@ -3666,7 +3990,7 @@ index 1b472efc1f..01ebef1664 100644
      m_pending.append({ jit.nearCall(), stub, false, site.bits });
      if (thunk)
          m_pending.last().thunk = safeCast<uint16_t>(*thunk + 1);
-@@ -4061,7 +4099,11 @@ void StubCalls::callForResultIn(CCallHelpers& jit, Stub stub, uint32_t valueOfT9
+@@ -4061,7 +4103,11 @@ void StubCalls::callForResultIn(CCallHelpers& jit, Stub stub, uint32_t valueOfT9
          return;
      }
      unsigned which = *indexOfOperationWithAnyRegisterResult(stub, valueOfT9);
@@ -3678,7 +4002,7 @@ index 1b472efc1f..01ebef1664 100644
      RELEASE_ASSERT(numberOfResult < numberOfRegistersForResult);
      RELEASE_ASSERT(operationsWithAnyRegisterResult[which].acceptsOperandInAnyRegister ? operandMayBeIn(stub, operand) : operand == defaultOperandRegister(stub));
      m_pending.append({ jit.nearCall(), stub, false, site.bits });
-@@ -4077,7 +4119,7 @@ void StubCalls::tailCall(CCallHelpers& jit, Stub stub, uint32_t valueOfT9)
+@@ -4077,7 +4123,7 @@ void StubCalls::tailCall(CCallHelpers& jit, Stub stub, uint32_t valueOfT9)
  {
      auto thunk = thunkFor(stub, valueOfT9);
      if (!thunk)
@@ -3687,7 +4011,7 @@ index 1b472efc1f..01ebef1664 100644
      m_pending.append({ jit.nearTailCall(), stub, true, StubCall::noCallSite });
      if (thunk)
          m_pending.last().thunk = safeCast<uint16_t>(*thunk + 1);
-@@ -4099,13 +4141,21 @@ void IndexReferences::load(CCallHelpers& jit, GPRReg base, GPRReg dest, uint32_t
+@@ -4099,13 +4145,21 @@ void IndexReferences::load(CCallHelpers& jit, GPRReg base, GPRReg dest, uint32_t
      bool isHalfWord = scale == sizeof(uint32_t);
      RELEASE_ASSERT(isHalfWord ? !(addend % sizeof(uint32_t)) : !(addend % sizeof(void*)) && !(scale % sizeof(void*)));
      RELEASE_ASSERT(scale <= std::numeric_limits<uint16_t>::max());
@@ -3710,7 +4034,7 @@ index 1b472efc1f..01ebef1664 100644
  #else
      UNUSED_PARAM(base);
      UNUSED_PARAM(dest);
-@@ -4134,6 +4184,57 @@ void IndexReferences::fill(uint8_t* code, const IndexReference& reference, uint3
+@@ -4134,6 +4188,57 @@ void IndexReferences::fill(uint8_t* code, const IndexReference& reference, uint3
      RELEASE_ASSERT(!(instructions[0] & immediate) && !(instructions[1] & immediate));
      instructions[0] |= static_cast<uint32_t>(distance >> 12) << 10;
      instructions[1] |= static_cast<uint32_t>((distance & 0xfff) / (reference.scale == sizeof(uint32_t) ? sizeof(uint32_t) : sizeof(void*))) << 10;
@@ -3768,7 +4092,7 @@ index 1b472efc1f..01ebef1664 100644
  #else
      UNUSED_PARAM(code);
      UNUSED_PARAM(reference);
-@@ -4149,9 +4250,15 @@ Vector<StubCall> StubCalls::link(LinkBuffer& linkBuffer)
+@@ -4149,9 +4254,15 @@ Vector<StubCall> StubCalls::link(LinkBuffer& linkBuffer)
      for (auto& pending : m_pending) {
          // A placeholder within range. ImageBuilder retargets every call when it places the code.
          linkBuffer.link<JITThunkPtrTag>(pending.call, CodeLocationLabel<JITThunkPtrTag>(tagCodePtr<JITThunkPtrTag>(start)));
@@ -3786,7 +4110,7 @@ index 1b472efc1f..01ebef1664 100644
      }
      return result;
  }
-@@ -4184,6 +4291,13 @@ void retargetStubCall(uint8_t* base, size_t instruction, size_t target, bool isT
+@@ -4184,6 +4295,13 @@ void retargetStubCall(uint8_t* base, size_t instruction, size_t target, bool isT
      RELEASE_ASSERT(delta >= -(1 << 25) && delta < (1 << 25));
      uint32_t encoded = (isTailCall ? 0x14000000u : 0x94000000u) | (static_cast<uint32_t>(delta) & 0x03ffffffu);
      memcpy(base + instruction, &encoded, sizeof(encoded));
@@ -3895,10 +4219,10 @@ index fddb0880c7..0d9c5f1037 100644
  static constexpr size_t roomToSpareInReachOfStubCall = 24 * MB; // A target considered in range stays in range if it ends up this much further away.
 diff --git a/Source/JavaScriptCore/aot/AOTStubsX86_64.cpp b/Source/JavaScriptCore/aot/AOTStubsX86_64.cpp
 new file mode 100644
-index 0000000000..bdd92d37d3
+index 0000000000..98e038cbd8
 --- /dev/null
 +++ b/Source/JavaScriptCore/aot/AOTStubsX86_64.cpp
-@@ -0,0 +1,3514 @@
+@@ -0,0 +1,3804 @@
 +/*
 + * Copyright (C) 2026 Oven, Inc. All rights reserved.
 + * SPDX-License-Identifier: BSD-2-Clause
@@ -5269,6 +5593,189 @@ index 0000000000..bdd92d37d3
 +    callGetter(jit, result, notFound);
 +}
 +
++// The index of the function whose code the stub is to return to. The stub has pushed nothing, so its return address is on top of the
++// stack (ARM64 has it in the link register). Clobbers `pc` and `offset`.
++static void loadIndexOfCaller(CCallHelpers& jit, GPRReg index, GPRReg pc, GPRReg offset)
++{
++    jit.loadPtr(Address(CCallHelpers::stackPointerRegister), pc);
++    loadIndexOfFunctionAt(jit, pc, index, offset);
++}
++
++// As loadInstanceAndDataOfSlot(), for a caller that has a use for the register it loads the Instance into: the Instance is where it
++// always is (instanceGPR), so it is read from there instead of being copied. Leaves in `data` the Data that contains the slot: the
++// function's own or, if it had none when it was called, SharedData. Clobbers the scratch register.
++static void loadDataOfSlot(CCallHelpers& jit, GPRReg slot, GPRReg data, GPRReg index)
++{
++    ASSERT(noOverlap(slot, data, index, scratchGPR));
++    static_assert(SharedData::size < std::numeric_limits<int32_t>::max());
++    jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), data);
++    jit.move(slot, scratchGPR);
++    jit.subPtr(data, scratchGPR);
++    Jump isShared = jit.branch64(CCallHelpers::Below, scratchGPR, TrustedImm32(SharedData::size));
++    jit.move(index, data);
++    jit.lshiftPtr(TrustedImm32(2), data);
++    jit.addPtr(instanceGPR, data);
++    jit.load32(Address(data, Instance::offsetOfStates()), data);
++    jit.lshiftPtr(TrustedImm32(Instance::shiftOfStateWithData), data);
++    jit.addPtr(instanceGPR, data);
++    isShared.link(&jit);
++}
++
++// Call after the above, on a miss. If the slot is in SharedData, counts the miss: once a function has taken enough of them it is
++// given its own Data, which takes effect the next time it is called. This is for misses that may still be resolved without calling
++// an operation; operations count their own misses. A0 and A1 — the operands of the miss the stub may yet make — and `data` and
++// `index` are preserved; b1, b2, b3 and the scratch register are used.
++static void countMissOfSlot(CCallHelpers& jit, GPRReg data, GPRReg index, GPRReg b1, GPRReg b2, GPRReg b3)
++{
++    ASSERT(noOverlap(data, index, b1, b2, b3, A0, A1, scratchGPR));
++    jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), b1);
++    Jump isItsOwn = jit.branchPtr(CCallHelpers::NotEqual, data, b1);
++    jit.move(index, b1);
++    jit.move(instanceGPR, b2);
++    jit.addPtr(TrustedImm32(Instance::offsetOfStates()), b2);
++    jit.load32(CCallHelpers::BaseIndex(b2, b1, CCallHelpers::TimesFour), b3);
++    // The function was given its own Data after this call began and keeps using SharedData until it returns: the state word is no
++    // longer a count.
++    Jump hasItsOwnByNow = jit.branch32(CCallHelpers::AboveOrEqual, b3, TrustedImm32(Instance::leastStateWithData));
++    jit.add32(TrustedImm32(1), b3);
++    // The count is in the low 16 bits.
++    jit.store16(b3, CCallHelpers::BaseIndex(b2, b1, CCallHelpers::TimesFour));
++    jit.zeroExtend16To32(b3, b3);
++    static_assert(sizeof(FunctionInfo) == 32);
++    jit.move(b1, b2);
++    jit.lshiftPtr(TrustedImm32(5), b2);
++    jit.loadPtr(Address(instanceGPR, Instance::offsetOfInfos()), scratchGPR);
++    jit.addPtr(scratchGPR, b2);
++    // Inline version of Instance::missesToPutUpWithFor(). The saturated case cannot occur, because a function with that many slots
++    // does not start cold.
++    jit.load16(Address(b2, FunctionInfo::offsetOfFlags()), b2);
++    jit.urshift32(TrustedImm32(FunctionInfo::numberOfFlagBits), b2);
++    jit.load32(Address(instanceGPR, Instance::offsetOfMissesForEightSlots()), scratchGPR);
++    jit.mul32(scratchGPR, b2, b2);
++    jit.urshift32(TrustedImm32(3), b2);
++    jit.load32(Address(instanceGPR, Instance::offsetOfMissesToSpare()), scratchGPR);
++    jit.add32(scratchGPR, b2);
++    // Only when the count first reaches the limit. Calls already in progress keep counting.
++    Jump notYet = jit.branch32(CCallHelpers::NotEqual, b3, b2);
++    {
++        // What the miss may still need is in the argument registers, and a call would overwrite them, so they are saved around it.
++        // The stub's own frame leaves the stack aligned for the call (a call is entered with rsp = 8 mod 16).
++        constexpr GPRReg arguments[] = { A0, A1, A2, A3, A4, A5 };
++        jit.emitFunctionPrologue();
++        jit.subPtr(TrustedImm32(64), CCallHelpers::stackPointerRegister);
++        for (unsigned i = 0; i < 6; ++i)
++            jit.storePtr(arguments[i], Address(CCallHelpers::stackPointerRegister, i * 8));
++        jit.storePtr(data, Address(CCallHelpers::stackPointerRegister, 48));
++        jit.storePtr(index, Address(CCallHelpers::stackPointerRegister, 56));
++        jit.move(instanceGPR, A0);
++        jit.move(index, A1);
++        jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), scratchGPR);
++        jit.loadPtr(Address(scratchGPR, static_cast<unsigned>(Entry::operationAOTGiveData) * sizeof(void*)), scratchGPR);
++        jit.call(scratchGPR, OperationPtrTag);
++        for (unsigned i = 0; i < 6; ++i)
++            jit.loadPtr(Address(CCallHelpers::stackPointerRegister, i * 8), arguments[i]);
++        jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 48), data);
++        jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 56), index);
++        jit.addPtr(TrustedImm32(64), CCallHelpers::stackPointerRegister);
++        jit.emitFunctionEpilogue();
++    }
++    notYet.link(&jit);
++    hasItsOwnByNow.link(&jit);
++    isItsOwn.link(&jit);
++}
++
++// A0 = a cell. slot: the slot of a property access. If the cell has a known shape (Structure::knownShape()), looks up the shape and
++// the site's selector in the program's dispatch table and leaves the property's location in b2: in words from the start of the
++// object or, if negative, from its butterfly. `data` is the Data that contains the slot and `index` the function's index; both are
++// preserved, as are A0, A1 and `slot`. Leaves the selector in `selector`; clobbers b1, b2 and b3 and the scratch register. Takes the
++// jump for a cell of no known shape, and the jump for a cell whose shape knows the name but does not have it.
++static void findInDispatchTable(CCallHelpers& jit, GPRReg slot, GPRReg selector, GPRReg b1, GPRReg b2, GPRReg b3, GPRReg data, GPRReg index, CCallHelpers::JumpList& notOfKnownShape, CCallHelpers::JumpList& notOwn)
++{
++    ASSERT(noOverlap(slot, selector, b1, b2, b3, data, index, A0, scratchGPR));
++    jit.load32(Address(A0, JSCell::structureIDOffset()), b1);
++    orStructureIDBase(jit, b1);
++    jit.load16(Address(b1, Structure::offsetOfKnownShape()), b1);
++    notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, b1));
++    loadInfo(jit, instanceGPR, index, b2);
++    jit.load16(Address(b2, FunctionInfo::offsetOfFlags()), selector);
++    siteOfSlot(jit, data, slot, b3);
++    static_assert(sizeof(Site) == 4);
++    // (Where the sites of the function were given their constants, the site's word is the selector itself; otherwise it is an index
++    // into the table of selector words, which the same flags say the size of.)
++    Jump isWhatTheSiteReads = jit.branchTest32(CCallHelpers::NonZero, selector, TrustedImm32(FunctionInfo::sitesHaveTheirConstants));
++    notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, selector, TrustedImm32(FunctionInfo::hasSiteConstants)));
++    jit.loadPtr(Address(b2, FunctionInfo::offsetOfSites()), b2);
++    jit.load32(Address(b2, static_cast<ptrdiff_t>(OBJECT_OFFSETOF(ImageFunction, numSlots)) - static_cast<ptrdiff_t>(sizeof(ImageFunction))), selector);
++    jit.getEffectiveAddress(CCallHelpers::BaseIndex(b2, selector, CCallHelpers::TimesFour), b2);
++    jit.load32(CCallHelpers::BaseIndex(b2, b3, CCallHelpers::TimesFour), selector);
++    Jump haveSelector = jit.jump();
++    isWhatTheSiteReads.link(&jit);
++    jit.loadPtr(Address(b2, FunctionInfo::offsetOfSites()), b2);
++    jit.load32(CCallHelpers::BaseIndex(b2, b3, CCallHelpers::TimesFour), selector);
++    jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), selector);
++    haveSelector.link(&jit);
++    notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, selector));
++    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRowsOfSelectors()), b2);
++    jit.load32(CCallHelpers::BaseIndex(b2, selector, CCallHelpers::TimesFour), b2);
++    jit.add32(b1, b2);
++    jit.loadPtr(Address(instanceGPR, Instance::offsetOfDispatch()), b3);
++    jit.load32(CCallHelpers::BaseIndex(b3, b2, CCallHelpers::TimesFour), b2);
++    jit.move(b2, b3);
++    jit.urshift32(TrustedImm32(ImageDispatchEntry::locationBits), b3);
++    notOwn.append(jit.branch32(CCallHelpers::NotEqual, b3, selector));
++    jit.lshift64(TrustedImm32(64 - ImageDispatchEntry::locationBits), b2);
++    jit.rshift64(TrustedImm32(64 - ImageDispatchEntry::locationBits), b2);
++}
++
++// Call after the above, for a property the object has of its own and in its own storage. If the site's slot is empty, fills it in,
++// because the fast paths read the slot without calling a stub: so the next access at the site is the monomorphic one. `location` is
++// what findInDispatchTable() left. A0, A1, the Data, the location and the index are preserved; `word` and `scratch` are used.
++static void fillEmptySlotFromDispatchTable(CCallHelpers& jit, GPRReg slot, GPRReg data, GPRReg location, GPRReg word, GPRReg scratch)
++{
++    ASSERT(noOverlap(word, scratch, slot, data, location, A0, A1, scratchGPR));
++    jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), scratch);
++    Jump slotIsNobodys = jit.branchPtr(CCallHelpers::Equal, data, scratch);
++    jit.load64(slotWord(slot, 0), word);
++    Jump slotIsTaken = jit.branchTest32(CCallHelpers::NonZero, word);
++    Jump slotHasMore = jit.branchTestPtr(CCallHelpers::NonZero, slotWord(slot, 1));
++    // Tell the GC that this function's slots have been filled.
++    Jump collectorKnows = jit.branchTest8(CCallHelpers::NonZero, Address(data, Data::offsetOfHasBeenFilledSinceLastCollection()));
++    {
++        jit.emitFunctionPrologue();
++        jit.subPtr(TrustedImm32(64), CCallHelpers::stackPointerRegister);
++        jit.storePtr(A0, Address(CCallHelpers::stackPointerRegister, 0));
++        jit.storePtr(A1, Address(CCallHelpers::stackPointerRegister, 8));
++        jit.storePtr(data, Address(CCallHelpers::stackPointerRegister, 16));
++        jit.storePtr(location, Address(CCallHelpers::stackPointerRegister, 24));
++        jit.storePtr(word, Address(CCallHelpers::stackPointerRegister, 32));
++        jit.move(data, A0);
++        jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), scratch);
++        jit.loadPtr(Address(scratch, static_cast<unsigned>(Entry::operationAOTNoteFilled) * sizeof(void*)), scratch);
++        jit.call(scratch, OperationPtrTag);
++        jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 0), A0);
++        jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 8), A1);
++        jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 16), data);
++        jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 24), location);
++        jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 32), word);
++        jit.addPtr(TrustedImm32(64), CCallHelpers::stackPointerRegister);
++        jit.emitFunctionEpilogue();
++    }
++    collectorKnows.link(&jit);
++    jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(Slot::attemptsMask) << 32)), word);
++    jit.move(location, scratch);
++    jit.lshiftPtr(TrustedImm32(32), scratch);
++    jit.or64(scratch, word);
++    jit.load32(Address(A0, JSCell::structureIDOffset()), scratch);
++    jit.or64(scratch, word);
++    jit.store64(word, slotWord(slot, 0));
++    jit.load64(Address(data, Data::offsetOfSlotEpoch()), word);
++    jit.add64(TrustedImm32(1), word);
++    jit.store64(word, Address(data, Data::offsetOfSlotEpoch()));
++    slotIsNobodys.link(&jit);
++    slotIsTaken.link(&jit);
++    slotHasMore.link(&jit);
++}
++
 +// A0 = base, A1 = site. Result in A0. Light (stubPreservesCalleeSaves()): ARM64's T11 and T12 are T9 and rax here (rax is thisGPR,
 +// which a property read has nothing to do with).
 +static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
@@ -5391,6 +5898,84 @@ index 0000000000..bdd92d37d3
 +        miss.append(jit.jump());
 +
 +    miss.link(&jit);
++    if (operation == Entry::operationAOTGetById) {
++        // An empty slot — a site's first access, or one whose Data has been replaced — and the slots that cannot be filled. ARM64's
++        // block follows; here A2-A4 and rax are its T11-T13 and T15, the Data is kept in T9 (which prepareMissAtSite() writes
++        // anyway), and the Instance is read where it always is, since there is no register to spare for a copy of it.
++        constexpr GPRReg index = X86Registers::eax; // thisGPR, which a property read has nothing to do with.
++        constexpr GPRReg data = T9;
++        constexpr GPRReg selector = A5;
++        constexpr GPRReg b1 = A2;
++        constexpr GPRReg b2 = A3;
++        constexpr GPRReg b3 = A4;
++        CCallHelpers::JumpList notInTable;
++        CCallHelpers::JumpList notOwn;
++        loadIndexOfCaller(jit, index, b1, b2);
++        // An object with a known shape: the program's dispatch table gives the locations of its properties.
++        loadDataOfSlot(jit, A1, data, index);
++        countMissOfSlot(jit, data, index, b1, b2, b3);
++        notInTable.append(jit.branchIfNotCell(A0));
++        findInDispatchTable(jit, A1, selector, b1, b2, b3, data, index, notInTable, notOwn);
++        // The location is in b2: in words from the start of the object, or negative for one in its butterfly.
++        Jump isOutOfLine = jit.branch64(CCallHelpers::LessThan, b2, TrustedImm32(0));
++        fillEmptySlotFromDispatchTable(jit, A1, data, b2, b1, b3);
++        jit.load64(CCallHelpers::BaseIndex(A0, b2, CCallHelpers::TimesEight), A0);
++        jit.ret();
++
++        isOutOfLine.link(&jit);
++        jit.loadPtr(Address(A0, JSObject::butterflyOffset()), b3);
++        jit.load64(CCallHelpers::BaseIndex(b3, b2, CCallHelpers::TimesEight), A0);
++        jit.ret();
++
++        // No own property with that name. See Instance::lookAtObjectPrototype(): the name's bit in the set of the ones
++        // Object.prototype has says whether it does, and if it does not the answer is undefined, worked out here.
++        notOwn.link(&jit);
++        jit.load32(Address(A0, JSCell::structureIDOffset()), b2);
++        orStructureIDBase(jit, b2);
++        jit.loadPtr(Address(b2, Structure::prototypeOffset()), b2);
++        jit.loadPtr(Address(instanceGPR, Instance::offsetOfObjectPrototype()), b3);
++        notInTable.append(jit.branchPtr(CCallHelpers::NotEqual, b2, b3));
++        jit.load32(Address(b3, JSCell::structureIDOffset()), b2);
++        notInTable.append(jit.branch32(CCallHelpers::NotEqual, b2, Address(instanceGPR, Instance::offsetOfStructureIDOfObjectPrototype())));
++        jit.loadPtr(Address(instanceGPR, Instance::offsetOfSelectorsOnObjectPrototype()), b1);
++        jit.move(selector, b2);
++        jit.urshift32(TrustedImm32(3), b2);
++        jit.load8(CCallHelpers::BaseIndex(b1, b2, CCallHelpers::TimesOne), b3);
++        jit.move(selector, b2);
++        jit.and32(TrustedImm32(7), b2);
++        jit.urshift32(b2, b3);
++        notInTable.append(jit.branchTest32(CCallHelpers::NonZero, b3, TrustedImm32(1)));
++        jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), A0);
++        jit.ret();
++        notInTable.link(&jit);
++
++        // A slot that is of no use to the site's own cache anymore: one that was given up on, or one whose Data is not this
++        // function's. See branchIfSlotIsStillOfUse() (AOTThunks.cpp). The megamorphic cache is what is left.
++        CCallHelpers::JumpList notFound;
++        notFound.append(jit.branchIfNotCell(A0));
++        notFound.append(jit.branchIfNotObject(A0));
++        jit.load32(Address(A1, OBJECT_OFFSETOF(Slot, offset)), b1);
++        jit.and32(TrustedImm32(Slot::attemptsMask), b1);
++        Jump hasGivenUp = jit.branch32(CCallHelpers::Equal, b1, TrustedImm32(Slot::attemptsMask));
++        loadDataOfSlot(jit, A1, data, index);
++        Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(A1, OBJECT_OFFSETOF(Slot, structureID)));
++        jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), b1);
++        notFound.append(jit.branchPtr(CCallHelpers::NotEqual, data, b1));
++        Jump isNobodys = jit.jump();
++        hasGivenUp.link(&jit);
++        loadDataOfSlot(jit, A1, data, index);
++        isTaken.link(&jit);
++        isNobodys.link(&jit);
++        siteOfSlot(jit, data, A1, b3);
++        loadInfo(jit, instanceGPR, index, data);
++        jit.loadPtr(Address(data, FunctionInfo::offsetOfSites()), b1);
++        jit.load32(CCallHelpers::BaseIndex(b1, b3, CCallHelpers::TimesFour), b2);
++        jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), b2);
++        jit.loadPtr(Address(data, FunctionInfo::offsetOfIdentifiers()), b1);
++        jit.loadPtr(CCallHelpers::BaseIndex(b1, b2, CCallHelpers::TimesEight), b1);
++        getFromMegamorphicCache(jit, b1, notFound);
++        notFound.link(&jit);
++    }
 +    missAtSite(jit, operation, 1, Returns::Value);
 +    if (!missAndUpdateCache.empty()) {
 +        // Bypass the front end that probes the megamorphic cache first: a hit there would keep the site's own cache from ever being
@@ -6037,7 +6622,8 @@ index 0000000000..bdd92d37d3
 +    goOnIntoNextStub(jit);
 +}
 +
-+// A0 = base, A1 = property. Result in A0. TODO(x86-aot-port): a property name in the megamorphic cache, as on ARM64.
++// A0 = base, A1 = property. Result in A0. An element, a string's character, a typed array's, or, for a property name, the VM's
++// megamorphic cache.
 +static void generateGetByVal(CCallHelpers& jit)
 +{
 +    constexpr FPRReg number = FPRInfo::fpRegT0;
@@ -6162,12 +6748,34 @@ index 0000000000..bdd92d37d3
 +
 +    // A double with an integral value names the same property as the integer. So does -0.
 +    notInt32.link(&jit);
-+    slow.append(jit.branchTest64(CCallHelpers::Zero, A1, T9));
++    Jump notNumber = jit.branchTest64(CCallHelpers::Zero, A1, T9);
 +    jit.add64(T9, A1, storage);
 +    jit.move64ToDouble(storage, number);
 +    jit.branchConvertDoubleToInt32(number, storage, slow, FPRInfo::fpRegT1, false);
 +    jit.or64(T9, storage, A1);
 +    jit.jump().linkTo(haveIndex, &jit);
++
++    // A property name (an atom string or a symbol) of a property the object has: the VM's megamorphic cache says where it is
++    // (filled in by getByIdAndFillMegamorphicCache(), which the operation calls). As ARM64's, and as this file's
++    // generatePutByVal() does for a store. uid is A2: the index path's A2, A3 and A4 are done with by here, and the helper
++    // takes a uid in A2.
++    notNumber.link(&jit);
++    {
++        constexpr GPRReg uid = A2;
++        slow.append(jit.branchIfNotCell(A0));
++        slow.append(jit.branchIfNotObject(A0));
++        slow.append(jit.branchIfNotCell(A1));
++        Jump isSymbol = jit.branchIfSymbol(A1);
++        slow.append(jit.branchIfNotString(A1));
++        jit.loadPtr(Address(A1, JSString::offsetOfValue()), uid);
++        slow.append(jit.branchIfRopeStringImpl(uid));
++        slow.append(jit.branchTest32(CCallHelpers::Zero, Address(uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
++        Jump haveName = jit.jump();
++        isSymbol.link(&jit);
++        jit.loadPtr(Address(A1, Symbol::offsetOfSymbolImpl()), uid);
++        haveName.link(&jit);
++        getFromMegamorphicCache(jit, uid, slow);
++    }
 +
 +    slow.link(&jit);
 +    callBinaryOperation(jit, Entry::operationAOTGetByVal);
@@ -7036,6 +7644,11 @@ index 0000000000..bdd92d37d3
 +// data[index], its value at data[index + 1], `data` = rcx), or jumps to `notThere`. Jumps to `otherwise` for a key, or a key it
 +// collides with, of a kind this code does not handle. Uses the tag registers as temporaries, and so checks types without them from
 +// the hash on: whoever continues from any exit puts them back (restoreTagRegisters()).
++// Two keys of the same hash and length, different strings, are compared a character at a time here; longer ones go to the function,
++// whose comparison (WTF::equal) takes many characters at a time. (A Map keyed by text of 50 to 100 KB, looked up with equal copies
++// of it, spent a quarter of its time in this loop.)
++static constexpr unsigned maxCharactersComparedInMapStub = 32;
++
 +template<typename MapOrSet>
 +static void findInMapOrSetOnX86(CCallHelpers& jit, CCallHelpers::JumpList& otherwise, CCallHelpers::JumpList& notThere)
 +{
@@ -7111,10 +7724,11 @@ index 0000000000..bdd92d37d3
 +    next.append(jit.branch32(CCallHelpers::NotEqual, scratch2, hash));
 +    jit.load32(Address(entryImpl, StringImpl::lengthMemoryOffset()), scratch2);
 +    next.append(jit.branch32(CCallHelpers::NotEqual, scratch2, Address(keyImpl, StringImpl::lengthMemoryOffset())));
-+    // Same hash and same length. Compare the characters, if both strings are 8-bit. The index is set aside for that: there is no
-+    // other register.
++    // Same hash and same length. Compare the characters, if both strings are 8-bit and short (see
++    // maxCharactersComparedInMapStub). The index is set aside for that: there is no other register.
 +    otherwise.append(jit.branchTest32(CCallHelpers::Zero, scratch, TrustedImm32(StringImpl::flagIs8Bit())));
 +    otherwise.append(jit.branchTest32(CCallHelpers::Zero, Address(keyImpl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
++    otherwise.append(jit.branch32(CCallHelpers::Above, scratch2, TrustedImm32(maxCharactersComparedInMapStub)));
 +    jit.push(index);
 +    jit.move(scratch2, index); // The length, counted down.
 +    jit.loadPtr(Address(entryImpl, StringImpl::dataOffset()), entryImpl);
@@ -8038,6 +8652,126 @@ index a326fc023a..2de7792972 100644
          return;
      }
      SpeculatedType type;
+diff --git a/Source/JavaScriptCore/dfg/DFGOperations.cpp b/Source/JavaScriptCore/dfg/DFGOperations.cpp
+index 46244422f1..aefa3cec30 100644
+--- a/Source/JavaScriptCore/dfg/DFGOperations.cpp
++++ b/Source/JavaScriptCore/dfg/DFGOperations.cpp
+@@ -182,11 +182,6 @@ static ALWAYS_INLINE void putWithThis(JSGlobalObject* globalObject, EncodedJSVal
+     baseValue.putInline(globalObject, ident, putValue, slot);
+ }
+ 
+-static ALWAYS_INLINE EncodedJSValue parseIntResult(double input)
+-{
+-    return JSValue::encode(jsNumber(input));
+-}
+-
+ ALWAYS_INLINE static JSValue getByValObject(JSGlobalObject* globalObject, VM& vm, JSObject* base, PropertyName propertyName)
+ {
+     Structure& structure = *base->structure();
+@@ -2012,7 +2007,6 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpMatchFastGlobalString, EncodedJSValue, (
+         })));
+ }
+ 
+-
+ JSC_DEFINE_JIT_OPERATION(operationParseIntGenericNoRadix, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedValue))
+ {
+     VM& vm = globalObject->vm();
+@@ -2023,13 +2017,13 @@ JSC_DEFINE_JIT_OPERATION(operationParseIntGenericNoRadix, EncodedJSValue, (JSGlo
+     JSValue value = JSValue::decode(encodedValue);
+     if (value.isNumber()) {
+         if (auto result = parseIntDouble(value.asNumber()))
+-            OPERATION_RETURN(scope, parseIntResult(result.value()));
++            OPERATION_RETURN(scope, JSValue::encode(jsNumber(result.value())));
+     }
+ 
+-    OPERATION_RETURN(scope, toStringView(globalObject, value, [&] (StringView view) {
+-        // This version is as if radix was undefined. Hence, undefined.toNumber() === 0.
+-        return parseIntResult(parseInt(view, 0));
+-    }));
++    JSString* string = value.toString(globalObject);
++    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
++
++    OPERATION_RETURN(scope, JSValue::encode(jsNumber(parseIntString(globalObject, string, 0))));
+ }
+ 
+ JSC_DEFINE_JIT_OPERATION(operationParseIntStringNoRadix, EncodedJSValue, (JSGlobalObject* globalObject, JSString* string))
+@@ -2039,11 +2033,8 @@ JSC_DEFINE_JIT_OPERATION(operationParseIntStringNoRadix, EncodedJSValue, (JSGlob
+     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+-    auto view = string->view(globalObject);
+-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+-
+     // This version is as if radix was undefined. Hence, undefined.toNumber() === 0.
+-    OPERATION_RETURN(scope, parseIntResult(parseInt(view, 0)));
++    OPERATION_RETURN(scope, JSValue::encode(jsNumber(parseIntString(globalObject, string, 0))));
+ }
+ 
+ JSC_DEFINE_JIT_OPERATION(operationParseIntDoubleNoRadix, EncodedJSValue, (JSGlobalObject* globalObject, double value))
+@@ -2054,9 +2045,9 @@ JSC_DEFINE_JIT_OPERATION(operationParseIntDoubleNoRadix, EncodedJSValue, (JSGlob
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+     if (auto result = parseIntDouble(value))
+-        OPERATION_RETURN(scope, parseIntResult(result.value()));
++        OPERATION_RETURN(scope, JSValue::encode(jsNumber(result.value())));
+ 
+-    OPERATION_RETURN(scope, parseIntResult(parseInt(String::number(value), 0)));
++    OPERATION_RETURN(scope, JSValue::encode(jsNumber(parseInt(String::number(value), 0))));
+ }
+ 
+ JSC_DEFINE_JIT_OPERATION(operationParseIntString, EncodedJSValue, (JSGlobalObject* globalObject, JSString* string, int32_t radix))
+@@ -2066,10 +2057,7 @@ JSC_DEFINE_JIT_OPERATION(operationParseIntString, EncodedJSValue, (JSGlobalObjec
+     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+-    auto view = string->view(globalObject);
+-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+-
+-    OPERATION_RETURN(scope, parseIntResult(parseInt(view, radix)));
++    OPERATION_RETURN(scope, JSValue::encode(jsNumber(parseIntString(globalObject, string, radix))));
+ }
+ 
+ JSC_DEFINE_JIT_OPERATION(operationParseIntGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, int32_t radix))
+@@ -2082,12 +2070,13 @@ JSC_DEFINE_JIT_OPERATION(operationParseIntGeneric, EncodedJSValue, (JSGlobalObje
+     JSValue value = JSValue::decode(encodedValue);
+     if (radix == 10 && value.isNumber()) {
+         if (auto result = parseIntDouble(value.asNumber()))
+-            OPERATION_RETURN(scope, parseIntResult(result.value()));
++            OPERATION_RETURN(scope, JSValue::encode(jsNumber(result.value())));
+     }
+ 
+-    OPERATION_RETURN(scope, toStringView(globalObject, value, [&] (StringView view) {
+-        return parseIntResult(parseInt(view, radix));
+-    }));
++    JSString* string = value.toString(globalObject);
++    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
++
++    OPERATION_RETURN(scope, JSValue::encode(jsNumber(parseIntString(globalObject, string, radix))));
+ }
+ 
+ JSC_DEFINE_JIT_OPERATION(operationParseIntDouble, EncodedJSValue, (JSGlobalObject* globalObject, double value, int32_t radix))
+@@ -2099,10 +2088,10 @@ JSC_DEFINE_JIT_OPERATION(operationParseIntDouble, EncodedJSValue, (JSGlobalObjec
+ 
+     if (radix == 10) {
+         if (auto result = parseIntDouble(value))
+-            OPERATION_RETURN(scope, parseIntResult(result.value()));
++            OPERATION_RETURN(scope, JSValue::encode(jsNumber(result.value())));
+     }
+ 
+-    OPERATION_RETURN(scope, parseIntResult(parseInt(String::number(value), radix)));
++    OPERATION_RETURN(scope, JSValue::encode(jsNumber(parseInt(String::number(value), radix))));
+ }
+ 
+ JSC_DEFINE_JIT_OPERATION(operationParseIntInt32, EncodedJSValue, (JSGlobalObject* globalObject, int32_t value, int32_t radix))
+@@ -2115,7 +2104,7 @@ JSC_DEFINE_JIT_OPERATION(operationParseIntInt32, EncodedJSValue, (JSGlobalObject
+     if (radix == 10)
+         OPERATION_RETURN(scope, JSValue::encode(jsNumber(value)));
+ 
+-    OPERATION_RETURN(scope, parseIntResult(parseInt(String::number(value), radix)));
++    OPERATION_RETURN(scope, JSValue::encode(jsNumber(parseInt(String::number(value), radix))));
+ }
+ 
+ JSC_DEFINE_JIT_OPERATION(operationResolvePromiseFirstResolving, void, (JSGlobalObject* globalObject, JSPromise* promise, EncodedJSValue encodedArgument))
 diff --git a/Source/JavaScriptCore/ffi/FFICallHost.cpp b/Source/JavaScriptCore/ffi/FFICallHost.cpp
 index f8e046f978..6f0a26fb9a 100644
 --- a/Source/JavaScriptCore/ffi/FFICallHost.cpp
@@ -9971,6 +10705,661 @@ index f3ac1fada1..1a0fb6ea3a 100644
                  && !isDenseEnoughForVector(newLength, countElements()))) {
              RELEASE_AND_RETURN(scope, setLengthWithArrayStorage(
                  globalObject, newLength, throwException,
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp b/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
+index 0859686ecc..bdeb5ebf91 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
+@@ -362,6 +362,11 @@ static double toDouble(std::span<const CharacterType> characters)
+     if (characters.empty())
+         return 0.0;
+ 
++    // Only these characters can start a StrNumericLiteral once white space is skipped.
++    auto first = characters.front();
++    if (!isASCIIDigit(first) && first != '.' && first != '+' && first != '-' && first != 'I')
++        return PNaN;
++
+     double number;
+     if (characters.front() == '0' && characters.size() > 2) {
+         if ((characters[1] | 0x20) == 'x' && isASCIIHexDigit(characters[2]))
+@@ -527,6 +532,9 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
+ 
+ JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+ {
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
+     JSValue value = callFrame->argument(0);
+     JSValue radixValue = callFrame->argument(1);
+ 
+@@ -539,10 +547,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, Call
+         }
+     }
+ 
+-    // If ToString throws, we shouldn't call ToInt32.
+-    return toStringView(globalObject, value, [&] (StringView view) {
+-        return JSValue::encode(jsNumber(parseInt(view, radixValue.toInt32(globalObject))));
+-    });
++    JSString* string = value.toString(globalObject);
++    RETURN_IF_EXCEPTION(scope, { });
++
++    int32_t radix = radixValue.toInt32(globalObject);
++    RETURN_IF_EXCEPTION(scope, { });
++
++    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(parseIntString(globalObject, string, radix))));
+ }
+ 
+ JSC_DEFINE_HOST_FUNCTION(globalFuncParseFloat, (JSGlobalObject* globalObject, CallFrame* callFrame))
+diff --git a/Source/JavaScriptCore/runtime/JSMicrotask.cpp b/Source/JavaScriptCore/runtime/JSMicrotask.cpp
+index b2a4d9add3..ce81a32a22 100644
+--- a/Source/JavaScriptCore/runtime/JSMicrotask.cpp
++++ b/Source/JavaScriptCore/runtime/JSMicrotask.cpp
+@@ -1805,7 +1805,11 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resoluti
+     asyncModuleExecutionResume(module->realm(), vm, module, resolution, status);
+ }
+ 
+-void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, std::span<const JSValue, maxMicrotaskArguments> arguments, MicrotaskCallCache* microtaskCallCache)
++#if USE(BUN_JSC_ADDITIONS)
++void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache* microtaskCallCache)
++#else
++void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, MicrotaskCallCache* microtaskCallCache)
++#endif
+ {
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+@@ -1816,14 +1820,14 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+     }
+ 
+     case InternalMicrotask::PromiseResolveThenableJobFast: {
+-        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
+-        auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
++        auto* promise = uncheckedDowncast<JSPromise>(argument0);
++        auto* promiseToResolve = uncheckedDowncast<JSPromise>(argument1);
+ 
+         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+             RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
+ 
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument2);
+ #endif
+ 
+         scope.release();
+@@ -1832,16 +1836,16 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+     }
+ 
+     case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotaskFast: {
+-        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
+-        JSValue context = arguments[1];
++        auto* promise = uncheckedDowncast<JSPromise>(argument0);
++        JSValue context = argument1;
+         auto task = static_cast<InternalMicrotask>(payload);
+ 
+ #if USE(BUN_JSC_ADDITIONS)
+-        // arguments[2] is the async context captured for `task`, if any.
++        // argument2 is the async context captured for `task`, if any.
+         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+-            RELEASE_AND_RETURN(scope, promiseResolveThenableJobWithInternalMicrotaskFastSlow(globalObject, promise, task, context, arguments[2]));
++            RELEASE_AND_RETURN(scope, promiseResolveThenableJobWithInternalMicrotaskFastSlow(globalObject, promise, task, context, argument2));
+ 
+-        promise->performPromiseThenWithInternalMicrotask(vm, task, nullptr, context, arguments[2]);
++        promise->performPromiseThenWithInternalMicrotask(vm, task, nullptr, context, argument2);
+ #else
+         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+             RELEASE_AND_RETURN(scope, promiseResolveThenableJobWithInternalMicrotaskFastSlow(globalObject, promise, task, context));
+@@ -1852,11 +1856,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+     }
+ 
+     case InternalMicrotask::PromiseResolveThenableJob: {
+-        JSValue promise = arguments[0];
+-        JSValue then = arguments[1];
+-        JSPromise* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[2]);
++        JSValue promise = argument0;
++        JSValue then = argument1;
++        JSPromise* promiseToResolve = uncheckedDowncast<JSPromise>(argument2);
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+ 
+         auto [resolve, reject] = promiseToResolve->createResolvingFunctions(vm, globalObject);
+@@ -1867,14 +1871,14 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+ 
+     case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask: {
+         auto task = static_cast<InternalMicrotask>(payload);
+-        JSValue promise = arguments[0];
+-        JSValue then = arguments[1];
+-        JSValue context = arguments[2];
++        JSValue promise = argument0;
++        JSValue then = argument1;
++        JSValue context = argument2;
+ 
+ #if USE(BUN_JSC_ADDITIONS)
+-        // arguments[3] is the async context captured for `task`, if any.
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+-        auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context, arguments[3]);
++        // argument3 is the async context captured for `task`, if any.
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
++        auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context, argument3);
+ #else
+         auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context);
+ #endif
+@@ -1884,12 +1888,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+     }
+ 
+     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
+-        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
++        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, argument0, argument1, static_cast<JSPromise::Status>(payload)));
+     }
+ 
+     case InternalMicrotask::PromiseFulfillWithoutHandlerJob: {
+-        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
+-        JSValue resolution = arguments[1];
++        auto* promise = uncheckedDowncast<JSPromise>(argument0);
++        JSValue resolution = argument1;
+ #if USE(BUN_JSC_ADDITIONS)
+         // hostLoadImportedModule may have force-settled this promise inline
+         // while a synchronous loadModule was active; the queued pipeFrom job
+@@ -1914,33 +1918,33 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+     }
+ 
+     case InternalMicrotask::PromiseRaceResolveJob: {
+-        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
+-        RELEASE_AND_RETURN(scope, promiseRaceResolveJob(promise->realm(), vm, promise, arguments[1], static_cast<JSPromise::Status>(payload)));
++        auto* promise = uncheckedDowncast<JSPromise>(argument0);
++        RELEASE_AND_RETURN(scope, promiseRaceResolveJob(promise->realm(), vm, promise, argument1, static_cast<JSPromise::Status>(payload)));
+     }
+ 
+     case InternalMicrotask::PromiseAllResolveJob: {
+-        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(arguments[0]);
++        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(argument0);
+         auto* resultPromise = uncheckedDowncast<JSPromise>(globalContext->promise());
+-        RELEASE_AND_RETURN(scope, promiseAllResolveJob(resultPromise->realm(), vm, globalContext, arguments[1], static_cast<uint64_t>(arguments[2].asAnyInt()), static_cast<JSPromise::Status>(payload)));
++        RELEASE_AND_RETURN(scope, promiseAllResolveJob(resultPromise->realm(), vm, globalContext, argument1, static_cast<uint64_t>(argument2.asAnyInt()), static_cast<JSPromise::Status>(payload)));
+     }
+ 
+     case InternalMicrotask::PromiseAllSettledResolveJob: {
+-        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(arguments[0]);
++        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(argument0);
+         auto* resultPromise = uncheckedDowncast<JSPromise>(globalContext->promise());
+-        RELEASE_AND_RETURN(scope, promiseAllSettledResolveJob(resultPromise->realm(), vm, globalContext, arguments[1], static_cast<uint64_t>(arguments[2].asAnyInt()), static_cast<JSPromise::Status>(payload)));
++        RELEASE_AND_RETURN(scope, promiseAllSettledResolveJob(resultPromise->realm(), vm, globalContext, argument1, static_cast<uint64_t>(argument2.asAnyInt()), static_cast<JSPromise::Status>(payload)));
+     }
+ 
+     case InternalMicrotask::PromiseAnyResolveJob: {
+-        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(arguments[0]);
++        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(argument0);
+         auto* resultPromise = uncheckedDowncast<JSPromise>(globalContext->promise());
+-        RELEASE_AND_RETURN(scope, promiseAnyResolveJob(resultPromise->realm(), vm, globalContext, arguments[1], static_cast<uint64_t>(arguments[2].asAnyInt()), static_cast<JSPromise::Status>(payload)));
++        RELEASE_AND_RETURN(scope, promiseAnyResolveJob(resultPromise->realm(), vm, globalContext, argument1, static_cast<uint64_t>(argument2.asAnyInt()), static_cast<JSPromise::Status>(payload)));
+     }
+ 
+     case InternalMicrotask::PromiseReactionJob: {
+-        JSValue promiseOrCapability = arguments[0];
+-        JSValue handler = arguments[1];
++        JSValue promiseOrCapability = argument0;
++        JSValue handler = argument1;
+ #if USE(BUN_JSC_ADDITIONS)
+-        // arguments[3] is the async context captured by performPromiseThen when the
++        // argument3 is the async context captured by performPromiseThen when the
+         // payload says so; otherwise it is performPromiseThenWithContext's handler
+         // context, possibly paired with an async context in an InternalFieldTuple
+         // [userContext, asyncContext]. The scope stays active through
+@@ -1949,11 +1953,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+         JSValue userContext;
+         JSValue asyncContext;
+         if (payload & promiseReactionJobAsyncContextFlag)
+-            asyncContext = arguments[3];
++            asyncContext = argument3;
+         else {
+             // performPromiseThenWithContext pairs a cell handler context into a
+             // tuple whether or not an async context was captured.
+-            userContext = arguments[3];
++            userContext = argument3;
+             asyncContext = AsyncContextSwapScope::unwrapContextTuple(userContext);
+         }
+         AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+@@ -1968,11 +1972,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+             // When userContext is defined (not empty, undefined, or null), pass 2 arguments and use userContext as the cell context
+             // When userContext is empty/undefined/null, pass 1 argument only
+             if (userContext.isEmpty() || userContext.isUndefinedOrNull())
+-                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, arguments[2]);
++                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2);
+             else
+-                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(userContext), "handler is not a function"_s, microtaskCallCache, arguments[2], userContext);
++                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(userContext), "handler is not a function"_s, microtaskCallCache, argument2, userContext);
+ #else
+-            result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, arguments[2]);
++            result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2);
+ #endif
+             if (catchScope.exception()) {
+                 if (promiseOrCapability.isUndefinedOrNull()) {
+@@ -2030,18 +2034,18 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+     }
+ 
+     case InternalMicrotask::InvokeFunctionJob: {
+-        JSValue handler = arguments[0];
++        JSValue handler = argument0;
+         scope.release();
+         callMicrotask(globalObject, handler, jsUndefined(), nullptr, "handler is not a function"_s, microtaskCallCache);
+         return;
+     }
+ 
+     case InternalMicrotask::AsyncFunctionResume: {
+-        JSValue resolution = arguments[1];
+-        JSValue contextArg = arguments[2];
++        JSValue resolution = argument1;
++        JSValue contextArg = argument2;
+ 
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(contextArg);
+         JSGlobalObject* generatorGlobalObject = generator->realm();
+@@ -2054,84 +2058,84 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+ 
+     case InternalMicrotask::AsyncFromSyncIteratorContinue:
+     case InternalMicrotask::AsyncFromSyncIteratorDone: {
+-        JSValue contextArg = arguments[2];
++        JSValue contextArg = argument2;
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         auto* iterator = uncheckedDowncast<JSAsyncFromSyncIterator>(contextArg);
+-        RELEASE_AND_RETURN(scope, asyncFromSyncIteratorContinueOrDone(iterator->realm(), vm, iterator, arguments[1], static_cast<JSPromise::Status>(payload), task == InternalMicrotask::AsyncFromSyncIteratorDone, microtaskCallCache));
++        RELEASE_AND_RETURN(scope, asyncFromSyncIteratorContinueOrDone(iterator->realm(), vm, iterator, argument1, static_cast<JSPromise::Status>(payload), task == InternalMicrotask::AsyncFromSyncIteratorDone, microtaskCallCache));
+     }
+ 
+     case InternalMicrotask::AsyncGeneratorYieldAwaited: {
+-        JSValue contextArg = arguments[2];
++        JSValue contextArg = argument2;
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
+         scope.release();
+-        asyncGeneratorYieldAwaited(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
++        asyncGeneratorYieldAwaited(generator->realm(), generator, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
+         return;
+     }
+ 
+     case InternalMicrotask::AsyncGeneratorBodyCallNormal: {
+-        JSValue contextArg = arguments[2];
++        JSValue contextArg = argument2;
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
+         scope.release();
+-        asyncGeneratorBodyCallNormal(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
++        asyncGeneratorBodyCallNormal(generator->realm(), generator, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
+         return;
+     }
+ 
+     case InternalMicrotask::AsyncGeneratorBodyCallReturn: {
+-        JSValue contextArg = arguments[2];
++        JSValue contextArg = argument2;
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
+         scope.release();
+-        asyncGeneratorBodyCallReturn(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
++        asyncGeneratorBodyCallReturn(generator->realm(), generator, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
+         return;
+     }
+ 
+     case InternalMicrotask::AsyncGeneratorAwaitReturn: {
+-        JSValue contextArg = arguments[2];
++        JSValue contextArg = argument2;
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
+         scope.release();
+-        asyncGeneratorAwaitReturnContinuation(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload));
++        asyncGeneratorAwaitReturnContinuation(generator->realm(), generator, argument1, static_cast<JSPromise::Status>(payload));
+         return;
+     }
+ 
+     case InternalMicrotask::AsyncGeneratorDriverResume: {
+-        JSValue contextArg = arguments[2];
++        JSValue contextArg = argument2;
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         scope.release();
+-        asyncGeneratorDriverResume(vm, contextArg, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
++        asyncGeneratorDriverResume(vm, contextArg, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
+         return;
+     }
+ 
+     case InternalMicrotask::PromiseFinallyReactionJob: {
+         // Phase 1: Original promise settled
+-        // arguments[0] = unused (we get resultPromise from context)
+-        // arguments[1] = value/reason from original promise
+-        // arguments[2] = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=onFinally)
+-        // arguments[3] = captured async context (USE(BUN_JSC_ADDITIONS))
++        // argument0 = unused (we get resultPromise from context)
++        // argument1 = value/reason from original promise
++        // argument2 = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=onFinally)
++        // argument3 = captured async context (USE(BUN_JSC_ADDITIONS))
+         // payload = Fulfilled/Rejected status
+-        JSValue contextArg = arguments[2];
++        JSValue contextArg = argument2;
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         auto* resultPromise = uncheckedDowncast<JSPromise>(uncheckedDowncast<JSSlimPromiseReaction>(contextArg)->promise());
+         scope.release();
+         promiseFinallyReactionJob(resultPromise->realm(), vm,
+             resultPromise,
+-            arguments[1],
++            argument1,
+             uncheckedDowncast<JSSlimPromiseReaction>(contextArg),
+             static_cast<JSPromise::Status>(payload),
+             microtaskCallCache);
+@@ -2140,15 +2144,15 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+ 
+     case InternalMicrotask::PromiseFinallyAwaitJob: {
+         // Phase 2: onFinally's result settled
+-        // arguments[0] = unused (we get resultPromise from context)
+-        // arguments[1] = settled value from onFinally's result
+-        // arguments[2] = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=originalValue, perCellBit=wasFulfilled)
++        // argument0 = unused (we get resultPromise from context)
++        // argument1 = settled value from onFinally's result
++        // argument2 = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=originalValue, perCellBit=wasFulfilled)
+         // payload = status of onFinally's result
+-        auto* context = uncheckedDowncast<JSSlimPromiseReaction>(arguments[2]);
++        auto* context = uncheckedDowncast<JSSlimPromiseReaction>(argument2);
+         auto* resultPromise = uncheckedDowncast<JSPromise>(context->promise());
+         scope.release();
+         promiseFinallyAwaitJob(resultPromise->realm(), vm,
+-            arguments[1],
++            argument1,
+             context,
+             static_cast<JSPromise::Status>(payload));
+         return;
+@@ -2157,11 +2161,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+ #if USE(BUN_JSC_ADDITIONS)
+     case InternalMicrotask::BunPerformMicrotaskJob: {
+         // Inlined performMicrotask logic (no longer dispatched through a JS trampoline).
+-        // arguments[0] = job function (callable)
+-        // arguments[1] = async context to set
+-        // arguments[2] = extra arg 0 (optional)
+-        // arguments[3] = extra arg 1 (optional)
+-        JSValue job = arguments[0];
++        // argument0 = job function (callable)
++        // argument1 = async context to set
++        // argument2 = extra arg 0 (optional)
++        // argument3 = extra arg 1 (optional)
++        JSValue job = argument0;
+         if (job.isEmpty() || job.isUndefinedOrNull())
+             return;
+ 
+@@ -2169,17 +2173,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+         if (callData.type == CallData::Type::None)
+             return;
+ 
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[1]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument1);
+ 
+         {
+             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+ 
+             // Call job with extra arguments using optimized callMicrotask path
+             auto* jobCell = dynamicCastToCell(job);
+-            if (!arguments[3].isEmpty())
+-                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, arguments[2], arguments[3]);
+-            else if (!arguments[2].isEmpty())
+-                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, arguments[2]);
++            if (!argument3.isEmpty())
++                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, argument2, argument3);
++            else if (!argument2.isEmpty())
++                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, argument2);
+             else
+                 callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache);
+ 
+@@ -2204,14 +2208,14 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+ 
+     case InternalMicrotask::BunInvokeJobWithArguments: {
+         // Simple job invocation with arguments:
+-        // arguments[0]: job function
+-        // arguments[1-4]: arguments (optional)
+-        JSValue job = arguments[0];
++        // argument0: job function
++        // argument1 to argument3: arguments (optional)
++        JSValue job = argument0;
+         MarkedArgumentBuffer args;
+         // Add non-empty arguments only
+-        for (size_t i = 1; i < maxMicrotaskArguments; ++i) {
+-            if (!arguments[i].isEmpty())
+-                args.append(arguments[i]);
++        for (JSValue argument : { argument1, argument2, argument3 }) {
++            if (!argument.isEmpty())
++                args.append(argument);
+         }
+         ASSERT(!args.hasOverflowed());
+         scope.release();
+@@ -2221,131 +2225,131 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+ #endif
+ 
+     case InternalMicrotask::AsyncModuleExecutionDone: {
+-        auto* module = uncheckedDowncast<JSModuleRecord>(arguments[2]);
+-        RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, arguments[1], static_cast<JSPromise::Status>(payload)));
++        auto* module = uncheckedDowncast<JSModuleRecord>(argument2);
++        RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, argument1, static_cast<JSPromise::Status>(payload)));
+     }
+ 
+     case InternalMicrotask::AsyncModuleExecutionResume: {
+         // resolveWithInternalMicrotaskForAsyncAwait wraps the module together
+         // with Bun's async context in an InternalFieldTuple when an async
+         // context is active at await time.
+-        JSValue contextArg = arguments[2];
++        JSValue contextArg = argument2;
+ #if USE(BUN_JSC_ADDITIONS)
+-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
++        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+ #endif
+         auto* module = uncheckedDowncast<JSModuleRecord>(contextArg);
+-        RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(module->realm(), vm, module, arguments[1], static_cast<JSPromise::Status>(payload)));
++        RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(module->realm(), vm, module, argument1, static_cast<JSPromise::Status>(payload)));
+     }
+ 
+     case InternalMicrotask::ModuleRegistryFetchSettled: {
+-        moduleRegistryFetchSettled(globalObject, vm, scope, arguments, payload);
++        moduleRegistryFetchSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleRegistryModuleSettled: {
+-        moduleRegistryModuleSettled(globalObject, vm, arguments, payload);
++        moduleRegistryModuleSettled(globalObject, vm, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleGraphLoadingError: {
+-        moduleGraphLoadingError(globalObject, vm, scope, arguments, payload);
++        moduleGraphLoadingError(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadStep: {
+-        moduleLoadStep(globalObject, vm, scope, arguments, payload);
++        moduleLoadStep(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadTopSettled: {
+-        moduleLoadTopSettled(globalObject, vm, scope, arguments, payload);
++        moduleLoadTopSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadTopRejected: {
+-        moduleLoadTopRejected(globalObject, vm, arguments, payload);
++        moduleLoadTopRejected(globalObject, vm, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadSpecifierTransform: {
+-        moduleLoadSpecifierTransform(globalObject, vm, scope, arguments, payload);
++        moduleLoadSpecifierTransform(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadCombinedLoadSettled: {
+-        moduleLoadCombinedLoadSettled(globalObject, vm, scope, arguments, payload);
++        moduleLoadCombinedLoadSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadCombinedStateSettled: {
+-        moduleLoadCombinedStateSettled(globalObject, vm, scope, arguments, payload);
++        moduleLoadCombinedStateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadLinkEvaluateSettled: {
+-        moduleLoadLinkEvaluateSettled(globalObject, vm, scope, arguments, payload);
++        moduleLoadLinkEvaluateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadReturnRecord: {
+-        moduleLoadReturnRecord(globalObject, vm, scope, arguments, payload);
++        moduleLoadReturnRecord(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadReturnModuleKey: {
+         // loadAndEvaluateModule: extract module key from AbstractModuleRecord
+-        // arguments[0] = resultPromise
+-        // arguments[1] = resolution (AbstractModuleRecord*) or error
+-        auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
++        // argument0 = resultPromise
++        // argument1 = resolution (AbstractModuleRecord*) or error
++        auto* resultPromise = uncheckedDowncast<JSPromise>(argument0);
+         auto status = static_cast<JSPromise::Status>(payload);
+         scope.release();
+         if (status == JSPromise::Status::Fulfilled) {
+-            auto* module = downcast<AbstractModuleRecord>(arguments[1]);
++            auto* module = downcast<AbstractModuleRecord>(argument1);
+             resultPromise->fulfillPromise(vm, identifierToJSValue(vm, module->moduleKey()));
+         } else
+-            resultPromise->rejectPromise(vm, arguments[1]);
++            resultPromise->rejectPromise(vm, argument1);
+         return;
+     }
+ 
+     case InternalMicrotask::ModuleLoadStoreError: {
+-        moduleLoadStoreError(globalObject, arguments, payload);
++        moduleLoadStoreError(globalObject, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::DynamicImportLoadSettled: {
+-        dynamicImportLoadSettled(globalObject, vm, scope, arguments, payload, /* deferred */ false);
++        dynamicImportLoadSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload, /* deferred */ false);
+         return;
+     }
+ 
+     case InternalMicrotask::DynamicImportDeferLoadSettled: {
+-        dynamicImportLoadSettled(globalObject, vm, scope, arguments, payload, /* deferred */ true);
++        dynamicImportLoadSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload, /* deferred */ true);
+         return;
+     }
+ 
+     case InternalMicrotask::DynamicImportEvaluateSettled: {
+-        dynamicImportEvaluateSettled(globalObject, vm, scope, arguments, payload);
++        dynamicImportEvaluateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::DynamicImportDeferDependencySettled: {
+-        dynamicImportDeferDependencySettled(globalObject, vm, scope, arguments, payload);
++        dynamicImportDeferDependencySettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+     case InternalMicrotask::ImportModuleNamespace: {
+-        importModuleNamespace(globalObject, vm, scope, arguments, payload);
++        importModuleNamespace(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+         return;
+     }
+ 
+ #if ENABLE(WEBASSEMBLY)
+     case InternalMicrotask::WebAssemblyCompileStreaming:
+         scope.release();
+-        webAssemblyCompileStreaming(globalObject, vm, arguments[1], uncheckedDowncast<JSWebAssemblyStreamingContext>(arguments[2].asCell()), static_cast<JSPromise::Status>(payload));
++        webAssemblyCompileStreaming(globalObject, vm, argument1, uncheckedDowncast<JSWebAssemblyStreamingContext>(argument2.asCell()), static_cast<JSPromise::Status>(payload));
+         return;
+ 
+     case InternalMicrotask::WebAssemblyInstantiateStreaming:
+         scope.release();
+-        webAssemblyInstantiateStreaming(globalObject, vm, arguments[1], uncheckedDowncast<JSWebAssemblyStreamingContext>(arguments[2].asCell()), static_cast<JSPromise::Status>(payload));
++        webAssemblyInstantiateStreaming(globalObject, vm, argument1, uncheckedDowncast<JSWebAssemblyStreamingContext>(argument2.asCell()), static_cast<JSPromise::Status>(payload));
+         return;
+ #endif
+ 
+diff --git a/Source/JavaScriptCore/runtime/JSMicrotask.h b/Source/JavaScriptCore/runtime/JSMicrotask.h
+index ed78a91cf1..b9077cf48c 100644
+--- a/Source/JavaScriptCore/runtime/JSMicrotask.h
++++ b/Source/JavaScriptCore/runtime/JSMicrotask.h
+@@ -36,7 +36,12 @@ class JSAsyncGenerator;
+ class JSModuleRecord;
+ class ThrowScope;
+ 
+-void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, std::span<const JSValue, maxMicrotaskArguments>, MicrotaskCallCache* = nullptr);
++#if USE(BUN_JSC_ADDITIONS)
++// maxMicrotaskArguments is 4 here: the last one is the async context, or an argument of Bun's own jobs.
++void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache* = nullptr);
++#else
++void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, MicrotaskCallCache* = nullptr);
++#endif
+ 
+ void asyncModuleResolveEvaluation(JSGlobalObject*, VM&, ThrowScope&, JSModuleRecord*, JSValue result);
+ 
+diff --git a/Source/JavaScriptCore/runtime/JSModuleLoader.cpp b/Source/JavaScriptCore/runtime/JSModuleLoader.cpp
+index 5a050d840a..b778bad0d7 100644
+--- a/Source/JavaScriptCore/runtime/JSModuleLoader.cpp
++++ b/Source/JavaScriptCore/runtime/JSModuleLoader.cpp
+@@ -1399,8 +1399,7 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
+     size_t i = 0;
+     while (i < tasks.size()) {
+         auto t = tasks[i++];
+-        std::array<const JSValue, maxMicrotaskArguments> args { { t.arg0, t.arg1, t.arg2, t.arg3 } };
+-        runInternalMicrotask(globalObject, vm, t.task, t.payload, args);
++        runInternalMicrotask(globalObject, vm, t.task, t.payload, t.arg0, t.arg1, t.arg2, t.arg3);
+         if (scope.exception()) [[unlikely]] {
+             // The remaining entries are reactions that performPromiseThen…/
+             // triggerPromiseReactions diverted off the global microtask queue.
+diff --git a/Source/JavaScriptCore/runtime/JSPromise.cpp b/Source/JavaScriptCore/runtime/JSPromise.cpp
+index 434d4fba13..c53f9f406b 100644
+--- a/Source/JavaScriptCore/runtime/JSPromise.cpp
++++ b/Source/JavaScriptCore/runtime/JSPromise.cpp
+@@ -1104,13 +1104,7 @@ void JSPromise::resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject* global
+             }
+         }
+         if (error) [[unlikely]] {
+-            std::array<JSValue, maxMicrotaskArguments> arguments { {
+-                jsUndefined(),
+-                error,
+-                context
+-                BUN_ASYNC_CONTEXT
+-            } };
+-            runInternalMicrotask(globalObject, vm, task, static_cast<uint8_t>(JSPromise::Status::Rejected), arguments);
++            runInternalMicrotask(globalObject, vm, task, static_cast<uint8_t>(JSPromise::Status::Rejected), jsUndefined(), error, context BUN_ASYNC_CONTEXT);
+             return;
+         }
+ 
 diff --git a/Source/JavaScriptCore/runtime/MegamorphicCache.cpp b/Source/JavaScriptCore/runtime/MegamorphicCache.cpp
 index 351824d683..d4230abfe7 100644
 --- a/Source/JavaScriptCore/runtime/MegamorphicCache.cpp
@@ -9983,6 +11372,80 @@ index 351824d683..d4230abfe7 100644
  #include "ProgramExecutable.h"
  
  #include <wtf/TZoneMallocInlines.h>
+diff --git a/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp b/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp
+index 12e2f633cf..acd89dcd44 100644
+--- a/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp
++++ b/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp
+@@ -55,9 +55,19 @@ bool QueuedTask::isRunnable() const
+     return uncheckedDowncast<JSGlobalObject>(dispatcher())->microtaskRunnability() == QueuedTaskResult::Executed;
+ }
+ 
+-static bool runMicrotask(JSGlobalObject* globalObject, TopExceptionScope& catchScope, VM& vm, QueuedTask& task, MicrotaskCallCache* microtaskCallCache)
++#if USE(BUN_JSC_ADDITIONS)
++#define BUN_MICROTASK_ARGUMENT3_PARAMETER , JSValue argument3
++#define BUN_MICROTASK_ARGUMENT3 , argument3
++#define BUN_MICROTASK_ARGUMENT3_OF(arguments) , arguments[3]
++#else
++#define BUN_MICROTASK_ARGUMENT3_PARAMETER
++#define BUN_MICROTASK_ARGUMENT3
++#define BUN_MICROTASK_ARGUMENT3_OF(arguments)
++#endif
++
++static bool runMicrotask(JSGlobalObject* globalObject, TopExceptionScope& catchScope, VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2 BUN_MICROTASK_ARGUMENT3_PARAMETER, MicrotaskCallCache* microtaskCallCache)
+ {
+-    runInternalMicrotask(globalObject, vm, task.job(), task.payload(), task.arguments(), microtaskCallCache);
++    runInternalMicrotask(globalObject, vm, job, payload, argument0, argument1, argument2 BUN_MICROTASK_ARGUMENT3, microtaskCallCache);
+     if (auto* exception = catchScope.exception()) [[unlikely]] {
+         if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+             return false;
+@@ -79,7 +89,8 @@ void runMicrotaskWithDebugger(JSGlobalObject* globalObject, VM& vm, QueuedTask&
+             return;
+     }
+ 
+-    if (!runMicrotask(globalObject, catchScope, vm, task, nullptr)) [[unlikely]]
++    auto arguments = task.arguments();
++    if (!runMicrotask(globalObject, catchScope, vm, task.job(), task.payload(), arguments[0], arguments[1], arguments[2] BUN_MICROTASK_ARGUMENT3_OF(arguments), nullptr)) [[unlikely]]
+         return;
+ 
+     if (auto* debugger = globalObject->debugger(); debugger && identifier) [[unlikely]] {
+@@ -192,7 +203,8 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
+                 return { globalObject, false };
+ 
+             auto task = m_queue.dequeue();
+-            if (!runMicrotask(globalObject, catchScope, vm, task, &microtaskCallCache)) [[unlikely]] {
++            auto arguments = task.arguments();
++            if (!runMicrotask(globalObject, catchScope, vm, task.job(), task.payload(), arguments[0], arguments[1], arguments[2] BUN_MICROTASK_ARGUMENT3_OF(arguments), &microtaskCallCache)) [[unlikely]] {
+                 clear();
+                 return { nullptr, true };
+             }
+diff --git a/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h b/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h
+index 4ca651c9a1..198b66e5c3 100644
+--- a/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h
++++ b/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h
+@@ -114,13 +114,21 @@ inline void JSGlobalObject::queueMicrotask(VM& vm, QueuedTask&& task)
+ 
+ inline void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2)
+ {
+-    queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2 });
++    if (!m_canFastQueueMicrotask || vm.crossTaskToken()) [[unlikely]] {
++        queueMicrotaskSlow(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2 });
++        return;
++    }
++    SUPPRESS_UNCOUNTED_ARG m_microtaskQueue->enqueue(QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2 });
+ }
+ 
+ #if USE(BUN_JSC_ADDITIONS)
+ inline void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+ {
+-    queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
++    if (!m_canFastQueueMicrotask || vm.crossTaskToken()) [[unlikely]] {
++        queueMicrotaskSlow(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
++        return;
++    }
++    SUPPRESS_UNCOUNTED_ARG m_microtaskQueue->enqueue(QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
+ }
+ #endif
+ 
 diff --git a/Source/JavaScriptCore/runtime/Options.cpp b/Source/JavaScriptCore/runtime/Options.cpp
 index 5dbdc3ecdc..546abe7074 100644
 --- a/Source/JavaScriptCore/runtime/Options.cpp
@@ -10036,6 +11499,43 @@ index 7ac0274b6e..812cfdaf6f 100644
      v(Unsigned, aotLoopSplittingPolicy, 3, Normal, "Which loops useAOTLoopSplitting applies to. 1: all. 2: loops that contain something the fast copy improves (arithmetic, indexed element accesses, a call it can elide). 3: loops that make no calls. 4: loops that satisfy both 2 and 3. 5: loops that make no calls, or that contain a call the fast copy elides or an indexed element access."_s) \
      \
      v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
+diff --git a/Source/JavaScriptCore/runtime/ParseInt.h b/Source/JavaScriptCore/runtime/ParseInt.h
+index dacbaebaec..4150a9c638 100644
+--- a/Source/JavaScriptCore/runtime/ParseInt.h
++++ b/Source/JavaScriptCore/runtime/ParseInt.h
+@@ -273,6 +273,32 @@ static ALWAYS_INLINE typename std::invoke_result<CallbackWhenNoException, String
+ // Mapping from integers 0..35 to digit identifying this value, for radix 2..36.
+ inline constexpr char radixDigits[37] = "0123456789abcdefghijklmnopqrstuvwxyz";
+ 
++ALWAYS_INLINE static double parseIntString(JSGlobalObject* globalObject, JSString* string, int32_t radix)
++{
++    VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
++    // A short rope is copied out rather than flattened in place: the number token being parsed is rarely
++    // used again, so allocating a StringImpl for it would only add work for the allocator and the sweeper.
++    constexpr unsigned maxLengthForStackCopy = 64;
++    if (string->isNonSubstringRope() && string->length() <= maxLengthForStackCopy) {
++        if (string->is8Bit()) {
++            std::array<Latin1Character, maxLengthForStackCopy> buffer;
++            auto characters = std::span { buffer }.first(string->length());
++            string->resolveToBuffer(characters);
++            return parseInt(StringView { characters }, radix);
++        }
++        std::array<char16_t, maxLengthForStackCopy> buffer;
++        auto characters = std::span { buffer }.first(string->length());
++        string->resolveToBuffer(characters);
++        return parseInt(StringView { characters }, radix);
++    }
++
++    auto view = string->view(globalObject);
++    RETURN_IF_EXCEPTION(scope, { });
++    return parseInt(view, radix);
++}
++
+ } // namespace JSC
+ 
+ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 diff --git a/Source/JavaScriptCore/runtime/PrototypeKey.h b/Source/JavaScriptCore/runtime/PrototypeKey.h
 index 2fe8317eea..37fd7f51b9 100644
 --- a/Source/JavaScriptCore/runtime/PrototypeKey.h
@@ -10425,6 +11925,44 @@ index f48a8a6a3b..86c7e65d54 100644
      auto view = thisString->view(globalObject);
      RETURN_IF_EXCEPTION(scope, { });
      JSValue a0 = callFrame->argument(0);
+diff --git a/Source/JavaScriptCore/runtime/StringPrototypeInlines.h b/Source/JavaScriptCore/runtime/StringPrototypeInlines.h
+index 3b496b59d4..096050af54 100644
+--- a/Source/JavaScriptCore/runtime/StringPrototypeInlines.h
++++ b/Source/JavaScriptCore/runtime/StringPrototypeInlines.h
+@@ -1530,6 +1530,13 @@ ALWAYS_INLINE JSString* replaceOneWithStringUsingRegExpSearch(VM& vm, JSGlobalOb
+     if (!result)
+         return string;
+ 
++    if (replacementString.isEmpty()) {
++        if (!result.start)
++            return jsSubstringOfResolved(vm, string, result.end, source.length() - result.end);
++        if (result.end == source.length())
++            return jsSubstringOfResolved(vm, string, 0, result.start);
++    }
++
+     auto before = StringView { source }.substring(0, result.start);
+     auto after = StringView { source }.substring(result.end, source.length() - result.end);
+ 
+diff --git a/Source/JavaScriptCore/runtime/TopExceptionScope.h b/Source/JavaScriptCore/runtime/TopExceptionScope.h
+index 4d00f17fe8..0a74b1ade9 100644
+--- a/Source/JavaScriptCore/runtime/TopExceptionScope.h
++++ b/Source/JavaScriptCore/runtime/TopExceptionScope.h
+@@ -77,12 +77,10 @@ ALWAYS_INLINE void TopExceptionScope::clearException()
+ 
+ ALWAYS_INLINE bool TopExceptionScope::clearExceptionExceptTermination()
+ {
+-    if (m_vm.hasPendingTerminationException()) [[unlikely]] {
+-#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+-        m_vm.exception();
+-#endif
++    if (!exception())
++        return true;
++    if (m_vm.hasPendingTerminationException()) [[unlikely]]
+         return false;
+-    }
+     m_vm.clearException();
+     return true;
+ }
 diff --git a/Source/JavaScriptCore/runtime/VM.cpp b/Source/JavaScriptCore/runtime/VM.cpp
 index e55096c301..dab6862830 100644
 --- a/Source/JavaScriptCore/runtime/VM.cpp
@@ -11541,6 +13079,71 @@ index 9f18146bf2..8f6bbed8d6 100644
                  if (HashTranslator::equal(StringEntry { string }, value))
                      return string;
              }
+diff --git a/Source/WTF/wtf/text/StringCommon.cpp b/Source/WTF/wtf/text/StringCommon.cpp
+index cf9b84a7ac..725ba65772 100644
+--- a/Source/WTF/wtf/text/StringCommon.cpp
++++ b/Source/WTF/wtf/text/StringCommon.cpp
+@@ -32,6 +32,21 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+ 
+ namespace WTF {
+ 
++SUPPRESS_NODELETE
++const uint8_t* find8VectorizedImpl(const uint8_t* pointer, uint8_t character, size_t length)
++{
++    constexpr size_t thresholdLength = 64;
++
++    size_t runway = std::min(thresholdLength, length);
++    if (auto* result = findImpl(pointer, character, runway))
++        return result;
++    if (runway == length)
++        return nullptr;
++
++    // We rely on memchr already having SIMD optimization, so we don’t have to write our own.
++    return static_cast<const uint8_t*>(memchr(pointer + runway, character, length - runway)); // NOLINT
++}
++
+ SUPPRESS_NODELETE SUPPRESS_ASAN
+ const float* findFloatAlignedImpl(const float* pointer, float target, size_t length)
+ {
+diff --git a/Source/WTF/wtf/text/StringCommon.h b/Source/WTF/wtf/text/StringCommon.h
+index 2121a85633..72a09a383e 100644
+--- a/Source/WTF/wtf/text/StringCommon.h
++++ b/Source/WTF/wtf/text/StringCommon.h
+@@ -618,22 +618,22 @@ ALWAYS_INLINE static size_t NODELETE findInner(std::span<const SearchCharacterTy
+     return index + i;
+ }
+ 
++WTF_EXPORT_PRIVATE const uint8_t* NODELETE find8VectorizedImpl(const uint8_t* pointer, uint8_t character, size_t length);
++
+ SUPPRESS_NODELETE ALWAYS_INLINE const uint8_t* NODELETE find8(const uint8_t* pointer, uint8_t character, size_t length)
+ {
+-    constexpr size_t thresholdLength = 16;
+-
+-    size_t index = 0;
+-    size_t runway = std::min(thresholdLength, length);
+-    for (; index < runway; ++index) {
+-        if (pointer[index] == character)
+-            return pointer + index;
+-    }
+-    if (runway == length)
++    if (length < SIMD::stride<uint8_t>) {
++        for (size_t index = 0; index < length; ++index) {
++            if (pointer[index] == character)
++                return pointer + index;
++        }
+         return nullptr;
++    }
+ 
+-    ASSERT(index < length);
+-    // We rely on memchr already having SIMD optimization, so we don’t have to write our own.
+-    return static_cast<const uint8_t*>(memchr(pointer + index, character, length - index));
++    if (auto index = SIMD::findFirstNonZeroIndex(SIMD::equal(SIMD::load(pointer), SIMD::splat<uint8_t>(character))))
++        return pointer + index.value();
++
++    return find8VectorizedImpl(pointer, character, length);
+ }
+ 
+ template<typename UnsignedType>
 diff --git a/Source/bmalloc/CMakeLists.txt b/Source/bmalloc/CMakeLists.txt
 index 0c3e67772a..b4a4c8dfd1 100644
 --- a/Source/bmalloc/CMakeLists.txt
@@ -12446,6 +14049,48 @@ index dfb74c367d..1d1bbc51a5 100644
          list(APPEND dst_files ${dst_file})
      endforeach ()
      add_custom_target(${target_name} ALL DEPENDS ${dst_files})
+diff --git a/Tools/TestWebKitAPI/Tests/WTF/StringCommon.cpp b/Tools/TestWebKitAPI/Tests/WTF/StringCommon.cpp
+index 935e54d20d..66411fabb6 100644
+--- a/Tools/TestWebKitAPI/Tests/WTF/StringCommon.cpp
++++ b/Tools/TestWebKitAPI/Tests/WTF/StringCommon.cpp
+@@ -229,23 +229,32 @@ static void testFindBoundaryLengths(FindFunction findFunction)
+ {
+     // Boundary lengths around the new intermediate SIMD tier find16()/find32() gained for
+     // the [stride, threshold) gap (stride 8 for uint16_t / 4 for uint32_t on 128-bit SIMD;
+-    // threshold is 32). Place the target character at every position for each length.
+-    for (size_t length : { 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64 }) {
++    // threshold is 32), and around the lengths where find8() changes how it searches (16 and 64).
++    // Place the target character at every position for each length.
++    constexpr auto target = static_cast<UnsignedType>(0xBEEF);
++    for (size_t length : { 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 79, 80, 81, 128 }) {
+         Vector<UnsignedType> buffer(length, [](size_t i) {
+             return static_cast<UnsignedType>(0x1000 + (i % 100));
+         });
+ 
+-        EXPECT_EQ(findFunction(buffer.span().data(), static_cast<UnsignedType>(0xBEEF), length), nullptr) << "length=" << length;
++        EXPECT_EQ(findFunction(buffer.span().data(), target, length), nullptr) << "length=" << length;
+ 
+         for (size_t position = 0; position < length; ++position) {
+             auto withTarget = buffer;
+-            withTarget[position] = 0xBEEF;
+-            EXPECT_EQ(findFunction(withTarget.span().data(), static_cast<UnsignedType>(0xBEEF), length), withTarget.span().data() + position)
++            withTarget[position] = target;
++            EXPECT_EQ(findFunction(withTarget.span().data(), target, length), withTarget.span().data() + position)
+                 << "length=" << length << " position=" << position;
+         }
+     }
+ }
+ 
++TEST(WTF_StringCommon, Find8BoundaryLengths)
++{
++    testFindBoundaryLengths<uint8_t>([](const uint8_t* pointer, uint8_t character, size_t length) {
++        return WTF::find8(pointer, character, length);
++    });
++}
++
+ TEST(WTF_StringCommon, Find16BoundaryLengths)
+ {
+     testFindBoundaryLengths<uint16_t>([](const uint16_t* pointer, uint16_t character, size_t length) {
 diff --git a/build-icu.ps1 b/build-icu.ps1
 index de16575461..dd18e3f63b 100644
 --- a/build-icu.ps1
@@ -12549,5 +14194,5 @@ index de16575461..dd18e3f63b 100644
      Write-Host ":: WARNING: ICU data library not found. Listing generated files..."
      Get-ChildItem -Path $OutputDir -Recurse -Filter "*.lib" | ForEach-Object {
 -- 
-2.54.0 (Apple Git-157)
+2.43.0
 

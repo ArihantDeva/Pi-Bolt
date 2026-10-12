@@ -38,7 +38,7 @@ function gitBashCandidates(): string[] {
 	if (git) {
 		// <git>\cmd\git.exe, <git>\mingw64\bin\git.exe or <git>\bin\git.exe: Git Bash is <git>\bin\bash.exe.
 		let root = dirname(dirname(git));
-		if (/^mingw(?:32|64)$/i.test(basename(root))) root = dirname(root);
+		if (/^(?:mingw(?:32|64)|ucrt64|clang64|clangarm64)$/i.test(basename(root))) root = dirname(root);
 		candidates.push(join(root, "bin", "bash.exe"));
 	}
 	return candidates;
@@ -282,6 +282,94 @@ export function getMsysBash(shell: string): string | undefined {
 			return bash;
 	}
 	return undefined;
+}
+
+/**
+ * Windows, Git for Windows: its bin\bash.exe is a launcher that sets a few variables and starts usr\bin\bash.exe, and that second
+ * process start was a third of every bash tool call (46 -> 31 ms). The bash it starts, and what it sets, as the launcher would:
+ * MSYSTEM (always the subsystem's own: MINGW64, UCRT64...), EXEPATH (the launcher's folder), PLINK_PROTOCOL=ssh unless set, and
+ * PATH starting with <git>\<subsystem>\bin;<git>\usr\bin;<home>\bin (HOME, else HOMEDRIVE+HOMEPATH where that folder is, else
+ * the profile; and only a full path: a relative one would put a folder of the project before the system's). Only where Git's
+ * layout says so unambiguously (one subsystem with git.exe, usr\bin\bash.exe with its msys-2.0.dll), checked again at each use
+ * (Git updated while Pi runs), and only in a runtime without job objects (the default build); undefined otherwise, and the
+ * launcher is started as before.
+ */
+export interface DirectGitBash {
+	bash: string;
+	environment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+}
+const directGitBashOf = new Map<string, { direct: DirectGitBash; git: string } | undefined>();
+
+/**
+ * A variable of a Windows environment object, taken out with all its spellings (PATH and Path both, as an environment merged
+ * from two can have): the value a child would see (the exact upper-case name's, which sorts first in its environment block, else
+ * any), and the spelling to put it back under.
+ */
+function takeWindowsVariable(env: NodeJS.ProcessEnv, name: string): { key: string; value: string | undefined } {
+	const keys = Object.keys(env).filter((key) => key.toUpperCase() === name);
+	const key = keys.includes(name) ? name : (keys[0] ?? name);
+	const value = env[key];
+	for (const k of keys) delete env[k];
+	return { key, value };
+}
+
+export function getDirectGitBash(shell: string): DirectGitBash | undefined {
+	if (process.platform !== "win32") return undefined;
+	// Where a job object takes in what the shell starts (see getWindowsJobs), the launcher stays in front: the job is attached
+	// once the shell is running, and the launcher's own start is the time that leaves for it to be in place before bash has
+	// started anything. Started directly, bash could have started a program outside the job by then (seen under heavy load).
+	if (getWindowsJobs()) return undefined;
+	if (directGitBashOf.has(shell)) {
+		const known = directGitBashOf.get(shell);
+		if (!known || (existsSync(known.direct.bash) && existsSync(known.git))) return known?.direct;
+	}
+	let direct: DirectGitBash | undefined;
+	let git = "";
+	const launcherDir = dirname(shell);
+	const root = dirname(launcherDir);
+	const bash = join(root, "usr", "bin", "bash.exe");
+	const subsystems = ["mingw64", "ucrt64", "clang64", "clangarm64", "mingw32"].filter((name) =>
+		existsSync(join(root, name, "bin", "git.exe")),
+	);
+	if (
+		basename(shell).toLowerCase() === "bash.exe" &&
+		basename(launcherDir).toLowerCase() === "bin" &&
+		existsSync(bash) &&
+		existsSync(join(root, "usr", "bin", "msys-2.0.dll")) &&
+		subsystems.length === 1
+	) {
+		const subsystem = subsystems[0];
+		git = join(root, subsystem, "bin", "git.exe");
+		direct = {
+			bash,
+			environment(env) {
+				const out: NodeJS.ProcessEnv = { ...env };
+				const take = (name: string) => takeWindowsVariable(out, name);
+				const homeVar = take("HOME");
+				const homeDrive = out[Object.keys(out).find((k) => k.toUpperCase() === "HOMEDRIVE") ?? "HOMEDRIVE"];
+				const homePath = out[Object.keys(out).find((k) => k.toUpperCase() === "HOMEPATH") ?? "HOMEPATH"];
+				const profile = out[Object.keys(out).find((k) => k.toUpperCase() === "USERPROFILE") ?? "USERPROFILE"];
+				const fromDrive = homeDrive && homePath ? `${homeDrive}${homePath}` : undefined;
+				const home =
+					homeVar.value || (fromDrive && isAbsolute(fromDrive) && existsSync(fromDrive) ? fromDrive : profile);
+				if (homeVar.value !== undefined) out[homeVar.key] = homeVar.value;
+				const path = take("PATH");
+				const prefix = [
+					join(root, subsystem, "bin"),
+					join(root, "usr", "bin"),
+					...(home && isAbsolute(home) && /^(?:[a-z]:|\\\\)/i.test(home) ? [join(home, "bin")] : []),
+				];
+				out[path.key] = [...prefix, path.value].filter(Boolean).join(delimiter);
+				out[take("MSYSTEM").key] = subsystem.toUpperCase();
+				out[take("EXEPATH").key] = launcherDir;
+				const plink = take("PLINK_PROTOCOL");
+				out[plink.key] = plink.value || "ssh";
+				return out;
+			},
+		};
+	}
+	directGitBashOf.set(shell, direct && { direct, git });
+	return direct;
 }
 
 /**

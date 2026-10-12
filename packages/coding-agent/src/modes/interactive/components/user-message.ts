@@ -1,6 +1,7 @@
 import { Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { mentionsAny } from "./assistant-message.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -15,6 +16,9 @@ export class UserMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
+	/** The children's lines with the prompt markers added, and the lines they were added to. */
+	private markedFrom?: string[];
+	private markedLines: string[] = [];
 
 	constructor(
 		text: string,
@@ -28,6 +32,11 @@ export class UserMessageComponent extends Container {
 		this.outputPad = outputPad;
 		this.markdownTransformers = markdownTransformers;
 		this.rebuild();
+	}
+
+	/** Whether this message may show code highlighted in one of `languages` (lowercase names): AssistantMessageComponent.mayHighlight(). */
+	mayHighlight(languages: ReadonlySet<string>): boolean {
+		return this.markdownTransformers.length > 0 || mentionsAny(this.text, languages);
 	}
 
 	setOutputPad(padding: number): void {
@@ -58,14 +67,19 @@ export class UserMessageComponent extends Container {
 		);
 	}
 
-	override render(width: number): string[] {
-		const lines = super.render(width);
+	override renderShared(width: number): string[] {
+		const lines = super.renderShared(width);
 		if (lines.length === 0) {
 			return lines;
 		}
-
-		lines[0] = OSC133_ZONE_START + lines[0];
-		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
-		return lines;
+		// The marked lines are kept with the lines they were made from: same lines, same array (renderShared()).
+		if (lines !== this.markedFrom) {
+			const marked = lines.slice();
+			marked[0] = OSC133_ZONE_START + marked[0];
+			marked[marked.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + marked[marked.length - 1];
+			this.markedFrom = lines;
+			this.markedLines = marked;
+		}
+		return this.markedLines;
 	}
 }
