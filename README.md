@@ -55,9 +55,9 @@ or in Command Prompt:
 powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"
 ```
 
-or `npm install -g --allow-scripts=pi-bolt pi-bolt`, or `bun add -g --trust pi-bolt` (the flags let the package manager run the
-script that puts the Windows executable in place). Then run `pi-bolt` in your project. Your Pi configuration in `~/.pi/agent` is
-used as is; new to Pi? Run `/login` to connect a provider. `pi-bolt update` installs the latest release.
+or `npm install -g --allow-scripts=pi-bolt pi-bolt`, or `bun add -g --trust pi-bolt`. Then run `pi-bolt` in your project. Your
+Pi configuration in `~/.pi/agent` is used as is; new to Pi? Run `/login` to connect a provider. `pi-bolt update` installs the
+latest release.
 
 The installer verifies the release signature and offers three optional extensions by OpenSec:
 
@@ -71,7 +71,7 @@ The installer verifies the release signature and offers three optional extension
 
 The default build has no JIT: Pi's own code is compiled machine code, and an extension loaded at run time is interpreted. Light
 extensions don't notice. For extensions that do heavy work (search, parsing) or use `bun:ffi`, install the JIT
-build. (For pi-fff, `opensec-pi-fff` is as fast on the default build as pi-fff is with the JIT.) Pi itself stays compiled, so it is within about 5% of the default.
+build. Pi itself stays compiled, so it is within about 5% of the default.
 
 ```bash
 curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=arm64-jit sh   # macOS
@@ -198,17 +198,8 @@ See [docs/PLUGINS.md](docs/PLUGINS.md).
 
 ### Pi and Pi-Bolt side by side
 
-Pi-Bolt uses Pi's agent directory (`~/.pi/agent`: auth, models, sessions, settings), so your Pi setup works in it as it is.
-It never changes what Pi loads:
-
-- Until you install or remove a package with `pi-bolt`, Pi-Bolt loads the packages in `settings.json`'s `packages`, as Pi does.
-- The first `pi-bolt install` or `pi-bolt remove` gives Pi-Bolt a list of its own, `piBolt.packages`, made from `packages`, and
-  changes only that list. Pi keeps using `packages` (it does not read `piBolt`). A package you install later with `pi install`
-  is Pi's; install it with `pi-bolt install` too to have it in Pi-Bolt.
-- OpenSec's extensions (`opensec-pi-subagents`, `opensec-pi-todo`, `opensec-pi-fff`) are Bun builds that only Pi-Bolt runs: they
-  are only ever in Pi-Bolt's list. Pi-Bolt moves them there from `packages`, where installers before 0.8.4 put them.
-
-So the two can load different packages, for example a todo list each:
+Pi-Bolt uses Pi's agent directory (`~/.pi/agent`), so your Pi setup works in it as it is. Packages you install with `pi-bolt`
+go to Pi-Bolt's own list, `piBolt.packages`, and Pi keeps using `packages`, so each can load different packages:
 
 ```json
 {
@@ -217,26 +208,16 @@ So the two can load different packages, for example a todo list each:
 }
 ```
 
-- Each settings file counts on its own: the global one (`~/.pi/agent/settings.json`) and a project's (`.pi/settings.json`).
-- An empty list (`"piBolt": { "packages": [] }`) loads no packages from that file in Pi-Bolt.
-- Both lists install into the same folders (`~/.pi/agent/npm` and `~/.pi/agent/git`, or `.pi/npm` and `.pi/git` for a
-  project). Removing a package from Pi-Bolt's list keeps its files when Pi's list still has it. A package in both lists
-  should have the same version in both: each runtime installs the version its own list asks for over the other's.
+Without `piBolt.packages`, Pi-Bolt loads `packages`. See [Configuration](https://pi-bolt.opensec.in/docs/configuration.html).
 
 ## Herdr
 
-In a [Herdr](https://herdr.dev) pane, Pi-Bolt shows up as `pi-bolt`: idle, working (also while background subagents run), or
-blocked when an extension waits for an answer during a run. It also hands Herdr the command that reopens its session, so a
-Herdr restart brings the same conversation back in the same pane. There is nothing to install. Pi-Bolt does not load the file
-`herdr integration install pi` writes (stock Pi still uses it), and `"-builtin:herdr"` in the `extensions` setting turns this
-off. Restoring a session needs Herdr 0.9.2 or later, with `pi-bolt` on the Herdr server's `PATH`: start Herdr from a terminal,
-not with `brew services`.
+In a [Herdr](https://herdr.dev) pane, Pi-Bolt shows up as `pi-bolt` (idle, working or blocked), and a Herdr restart reopens
+the same conversation in the same pane. There is nothing to install; `"-builtin:herdr"` in the `extensions` setting turns it
+off. Restoring a session needs Herdr 0.9.2 or later.
 
-To start other agents in Herdr panes from a Pi-Bolt session, add the third-party
-[pi-herdr](https://www.npmjs.com/package/@andrewjacop/pi-herdr) (MIT): `pi-bolt install npm:@andrewjacop/pi-herdr`. Herdr
-starts Pi agents as `pi`, so the Pi agents it spawns run stock Pi, which must be installed (Claude Code, Codex and the other
-agents it supports need only their own CLIs). Pi-Bolt turns off pi-herdr's own report of the Pi-Bolt pane
-(`PI_HERDR_NO_SELF_REPORT=1`), so the pane keeps showing `pi-bolt` and can still be restored.
+To start other agents in Herdr panes from Pi-Bolt, install [pi-herdr](https://www.npmjs.com/package/@andrewjacop/pi-herdr):
+`pi-bolt install npm:@andrewjacop/pi-herdr`.
 
 ## How it works
 
