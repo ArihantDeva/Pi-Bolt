@@ -291,7 +291,8 @@ export function getMsysBash(shell: string): string | undefined {
  * PATH starting with <git>\<subsystem>\bin;<git>\usr\bin;<home>\bin (HOME, else HOMEDRIVE+HOMEPATH where that folder is, else
  * the profile; and only a full path: a relative one would put a folder of the project before the system's). Only where Git's
  * layout says so unambiguously (one subsystem with git.exe, usr\bin\bash.exe with its msys-2.0.dll), checked again at each use
- * (Git updated while Pi runs); undefined otherwise, and the launcher is started as before.
+ * (Git updated while Pi runs), and only in a runtime without job objects (the default build); undefined otherwise, and the
+ * launcher is started as before.
  */
 export interface DirectGitBash {
 	bash: string;
@@ -314,6 +315,10 @@ function takeWindowsVariable(env: NodeJS.ProcessEnv, name: string): { key: strin
 
 export function getDirectGitBash(shell: string): DirectGitBash | undefined {
 	if (process.platform !== "win32") return undefined;
+	// Where a job object takes in what the shell starts (see getWindowsJobs), the launcher stays in front: the job is attached
+	// once the shell is running, and the launcher's own start is the time that leaves for it to be in place before bash has
+	// started anything. Started directly, bash could have started a program outside the job by then (seen under heavy load).
+	if (getWindowsJobs()) return undefined;
 	if (directGitBashOf.has(shell)) {
 		const known = directGitBashOf.get(shell);
 		if (!known || (existsSync(known.direct.bash) && existsSync(known.git))) return known?.direct;
