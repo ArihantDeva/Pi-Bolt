@@ -162,6 +162,12 @@ default build, though, a native program whose own parent has already exited (a d
 found, and keeps running: end it in Task Manager, or use the `-jit` build (`$env:PIBOLT_VARIANT = "x64-jit"` before installing),
 which ends those too.
 
+**The first start after installing or updating an extension takes seconds.** Microsoft Defender checks each file of a newly
+installed package the first time it is read (about 15-20 ms a file; a large extension has hundreds), and the extension's
+TypeScript is compiled once into `~\.pi\agent\cache\jiti`. Later starts use that cache and read files Defender has already
+checked: pi-subagents, for one, loads in about 0.5 s instead of 8. This is Defender doing its job; do not exclude Pi's folders
+from it.
+
 **The bash tool says `shellPath` "is not a bash".** `shellPath` names the bash the bash tool runs (Git Bash's `bash.exe`, say).
 `cmd.exe` and PowerShell are not one; PowerShell commands go through the PowerShell tool.
 
