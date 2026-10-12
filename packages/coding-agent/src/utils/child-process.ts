@@ -46,19 +46,30 @@ export function spawnProcessSync(
  * there, for the package update check to run before any trust decision. Found nowhere, a path that does not exist, so that
  * spawning it fails as a missing command does. (cross-spawn still runs a .cmd through cmd.exe with its arguments escaped.)
  */
+// What resolveWindowsCommand found, by PATH, PATHEXT and name: the search is a check of every PATH folder for each extension
+// (5-10 ms for an npm or git started by name), and it is taken again only when the file is gone.
+const resolvedWindowsCommands = new Map<string, string>();
+
 function resolveWindowsCommand(command: string, env: NodeJS.ProcessEnv | undefined): string {
 	if (/[\\/]/.test(command)) return command;
 	const source = env ?? process.env;
 	// (An environment merged from two may have both PATH and Path: PATH, as cross-spawn takes it.)
 	const pathKey = "PATH" in source ? "PATH" : Object.keys(source).find((key) => key.toLowerCase() === "path");
-	const dirs = windowsPathDirectories(pathKey ? (source[pathKey] ?? "") : "").filter((dir) => isAbsolute(dir));
+	const pathValue = pathKey ? (source[pathKey] ?? "") : "";
+	const key = `${pathValue}\0${source.PATHEXT ?? ""}\0${command}`;
+	const cached = resolvedWindowsCommands.get(key);
+	if (cached && isProgramFile(cached)) return cached;
+	const dirs = windowsPathDirectories(pathValue).filter((dir) => isAbsolute(dir));
 	const pathExtensions = (source.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
 	// (As `which` has it: a name with a dot is also tried as it is.)
 	const extensions = command.includes(".") ? ["", ...pathExtensions] : pathExtensions;
 	for (const dir of dirs) {
 		for (const extension of extensions) {
 			const file = join(dir, command + extension);
-			if (isProgramFile(file)) return file;
+			if (isProgramFile(file)) {
+				resolvedWindowsCommands.set(key, file);
+				return file;
+			}
 		}
 	}
 	// (In a folder that cannot exist: not one of Windows's own programs of that name, were PATH empty.)

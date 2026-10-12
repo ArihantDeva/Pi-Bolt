@@ -7,6 +7,7 @@ import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
+	getDirectGitBash,
 	getMsysBash,
 	getShellConfig,
 	getShellEnv,
@@ -123,10 +124,13 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			// stopping it finds them all (getMsysBash, killProcessTree).
 			const msysBash = getMsysBash(shellConfig.shell);
 			const msys = msysBash ? { bash: msysBash, group: randomUUID() } : undefined;
-			const shellEnv = env ?? getShellEnv();
+			// Windows, Git for Windows: its bash itself, without the launcher in front (see getDirectGitBash).
+			const direct = commandFromStdin ? undefined : getDirectGitBash(shellConfig.shell);
+			const shellExe = direct?.bash ?? shellConfig.shell;
+			const shellEnv = direct ? direct.environment(env ?? getShellEnv()) : (env ?? getShellEnv());
 			const shellArgs = commandFromStdin ? shellConfig.args : [...shellConfig.args, command];
-			const msysSpawn = commandFromStdin ? undefined : msysShellSpawn(shellConfig.shell, shellArgs);
-			const child = spawn(shellConfig.shell, msysSpawn?.args ?? shellArgs, {
+			const msysSpawn = commandFromStdin ? undefined : msysShellSpawn(shellExe, shellArgs);
+			const child = spawn(shellExe, msysSpawn?.args ?? shellArgs, {
 				cwd,
 				detached: process.platform !== "win32",
 				env: msys ? { ...shellEnv, [MSYS_SHELL_GROUP_VARIABLE]: msys.group } : shellEnv,

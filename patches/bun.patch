@@ -40,10 +40,17 @@ FileSink kept alive until its close callback returns, and its microtask checkpoi
 after a failed read; stdio with no FileSink writes synchronously; a blob owns its string; children's
 stdout and stderr non-blocking, with EAGAIN handled; spawnSync no longer points the VM at the loop it
 waits on; the idle full collection also has mimalloc give back the memory it keeps.
+
+Windows (0.8.5): the sockets' sweep timer stops with the last socket, so an idle process no longer wakes every 4 seconds
+(oven-sh/bun#37096), and a task left queued after a tick wakes the poll (oven-sh/bun#42968). The runtime transpiler
+cache's default folder is @t@pi-bolt, beside stock Bun's @t@, whose entries the two runtimes took for stale and rewrote in
+turn.
 ---
  Cargo.lock                                    |    1 +
  packages/bun-usockets/src/bsd.c               |   10 +-
  .../bun-usockets/src/eventing/epoll_kqueue.c  |    7 +-
+ packages/bun-usockets/src/eventing/libuv.c    |   15 +-
+ packages/bun-usockets/src/internal/internal.h |    3 -
  .../libuv/win-thread-stack-reservation.patch  |   19 +
  .../page-commit-on-demand-default.patch       |   22 +
  scripts/build/CLAUDE.md                       |    2 +-
@@ -97,6 +104,7 @@ waits on; the idle full collection also has mimalloc give back the memory it kee
  src/jsc/CachedBytecode.rs                     |   36 +
  src/jsc/GarbageCollectionController.rs        |   40 +-
  src/jsc/JSType.rs                             |  144 +-
+ src/jsc/RuntimeTranspilerCache.rs             |   11 +-
  src/jsc/VirtualMachine.rs                     |   19 +-
  src/jsc/bindings/BunClientData.cpp            |    8 +-
  src/jsc/bindings/BunClientData.h              |    2 +-
@@ -124,7 +132,7 @@ waits on; the idle full collection also has mimalloc give back the memory it kee
  src/runtime/cli/run_command.rs                |    5 +
  src/runtime/error.rs                          |    3 -
  src/runtime/image/backend_wic.rs              |    8 +-
- src/runtime/jsc_hooks.rs                      |   12 +
+ src/runtime/jsc_hooks.rs                      |   37 +-
  src/runtime/node/net/BlockList.rs             |    2 +-
  src/runtime/shell/subproc.rs                  |   25 +-
  src/runtime/timer/mod.rs                      |    5 +
@@ -139,6 +147,7 @@ waits on; the idle full collection also has mimalloc give back the memory it kee
  src/spawn_sys/spawn_process.rs                |   17 +-
  src/standalone_graph/StandaloneModuleGraph.rs |  270 +++-
  src/sys/lib.rs                                |   99 +-
+ test/cli/run/transpiler-cache.test.ts         |    8 +-
  test/harness.ts                               |   13 +
  test/js/bun/io/bun-write.test.js              |   20 +
  test/js/bun/jsc/heapStats-mimalloc.test.ts    |   58 +-
@@ -167,7 +176,7 @@ waits on; the idle full collection also has mimalloc give back the memory it kee
  test/napi/napi-app/binding.gyp                |   10 +
  ...eue_async_work_in_finalizer_experimental.c |   87 ++
  test/napi/napi.test.ts                        |   81 ++
- 126 files changed, 6371 insertions(+), 882 deletions(-)
+ 130 files changed, 6404 insertions(+), 911 deletions(-)
  create mode 100644 patches/libuv/win-thread-stack-reservation.patch
  create mode 100644 patches/mimalloc/page-commit-on-demand-default.patch
  create mode 100644 test/js/node/process/fd-nonblock-fixture.js
@@ -242,6 +251,46 @@ index 28a2040a..6806c094 100644
      if (!handed_off && will_idle_inside_event_loop) {
          static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
          static _Thread_local uint64_t last_idle_sweep_ns = 0;
+diff --git a/packages/bun-usockets/src/eventing/libuv.c b/packages/bun-usockets/src/eventing/libuv.c
+index a76d0e73..38efaace 100644
+--- a/packages/bun-usockets/src/eventing/libuv.c
++++ b/packages/bun-usockets/src/eventing/libuv.c
+@@ -475,17 +475,10 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
+   struct us_internal_callback_t *internal_cb =
+       (struct us_internal_callback_t *)t;
+ 
+-  // Match the epoll_kqueue backend: re-arming is allowed (uv_timer_start
+-  // restarts an already-running timer). The one-shot guard only applies to
+-  // the sweep timer, which is set with the same args from every new socket
+-  // context — restarting it would skew the 4s tick.
+-  if (internal_cb->loop->data.sweep_timer == t) {
+-    if (internal_cb->has_added_timer_to_event_loop) {
+-      return;
+-    }
+-    internal_cb->has_added_timer_to_event_loop = 1;
+-  }
+-
++  // (Re-arming is allowed, as on the epoll/kqueue backend. The sweep timer is set only when its count (sockets, connecting
++  // sockets and QUIC connections) goes from 0 to 1, and stopped when it goes back to 0, so it is not restarted mid-tick; a
++  // one-shot guard here kept it from being stopped, and an idle process woke every 4 s forever once it had had a socket.
++  // oven-sh/bun#37096.)
+   internal_cb->cb = (void (*)(struct us_internal_callback_t *))cb;
+ 
+   uv_timer_t *uv_timer = (uv_timer_t *)(internal_cb + 1);
+diff --git a/packages/bun-usockets/src/internal/internal.h b/packages/bun-usockets/src/internal/internal.h
+index a2569774..bb62853d 100644
+--- a/packages/bun-usockets/src/internal/internal.h
++++ b/packages/bun-usockets/src/internal/internal.h
+@@ -457,9 +457,6 @@ struct us_internal_callback_t {
+   int cb_expects_the_loop;
+   int leave_poll_ready;
+   void (*cb)(struct us_internal_callback_t *cb);
+-#ifdef LIBUS_USE_LIBUV
+-  unsigned has_added_timer_to_event_loop;
+-#endif
+ };
+ 
+ #endif
 diff --git a/patches/libuv/win-thread-stack-reservation.patch b/patches/libuv/win-thread-stack-reservation.patch
 new file mode 100644
 index 00000000..293a355f
@@ -3775,6 +3824,49 @@ index 3c21ec7b..6503c62d 100644
  
      pub const Event: JSType = JSType(0b11101111);
      pub const DOMWrapper: JSType = JSType(0b11101110);
+diff --git a/src/jsc/RuntimeTranspilerCache.rs b/src/jsc/RuntimeTranspilerCache.rs
+index 1ba5bf2d..57e4a5ed 100644
+--- a/src/jsc/RuntimeTranspilerCache.rs
++++ b/src/jsc/RuntimeTranspilerCache.rs
+@@ -65,6 +65,11 @@ bun_core::declare_scope!(cache, visible);
+ /// the cache-HIT path reinstates #33904 for them.
+ const EXPECTED_VERSION: u32 = 33;
+ 
++/// The cache's folder on Windows, beside stock Bun's `@t@` rather than in it: an entry is named by its source's hash, and the two
++/// runtimes' entries differ in version, so each took the other's for stale and wrote it again (pi-subagents, 165 entries,
++/// ~3 s on Windows, where Defender also checks each new file). BUN_RUNTIME_TRANSPILER_CACHE_PATH still names one.
++const CACHE_FOLDER: &[u8] = if cfg!(windows) { b"@t@pi-bolt" } else { b"@t@" };
++
+ /// Source files smaller than this are not written to / read from the on-disk
+ /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
+ /// typical `node_modules` tree (eslint pulls in ~1500 small CommonJS files, all
+@@ -643,7 +648,7 @@ impl RuntimeTranspilerCache {
+         let top = FileSystem::instance().top_level_dir;
+ 
+         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
+-            let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];
++            let parts: &[&[u8]] = &[dir, b"bun", CACHE_FOLDER];
+             return path_handler::join_abs_string_buf_z::<platform::Loose>(
+                 top,
+                 &mut buf[..],
+@@ -657,7 +662,7 @@ impl RuntimeTranspilerCache {
+             // On a mac, default to ~/Library/Caches/bun/*
+             // This is different than ~/.bun/install/cache, and not configurable by the user.
+             if let Some(home) = env_var::HOME.get() {
+-                let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", b"@t@"];
++                let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", CACHE_FOLDER];
+                 return path_handler::join_abs_string_buf_z::<platform::Loose>(
+                     top,
+                     &mut buf[..],
+@@ -668,7 +673,7 @@ impl RuntimeTranspilerCache {
+         }
+ 
+         if let Some(dir) = env_var::HOME.get() {
+-            let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", b"@t@"];
++            let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", CACHE_FOLDER];
+             return path_handler::join_abs_string_buf_z::<platform::Loose>(
+                 top,
+                 &mut buf[..],
 diff --git a/src/jsc/VirtualMachine.rs b/src/jsc/VirtualMachine.rs
 index 3848fa53..8c4730aa 100644
 --- a/src/jsc/VirtualMachine.rs
@@ -6759,10 +6851,63 @@ index 6ad5736f..ff5f23d0 100644
          return;
      }
 diff --git a/src/runtime/jsc_hooks.rs b/src/runtime/jsc_hooks.rs
-index 9d1ed01b..7b4c00cf 100644
+index 9d1ed01b..96b354f2 100644
 --- a/src/runtime/jsc_hooks.rs
 +++ b/src/runtime/jsc_hooks.rs
-@@ -4669,6 +4669,18 @@ fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
+@@ -915,11 +915,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
+     unsafe { (*el).tick_immediate_tasks(vm) };
+     // SAFETY: as above.
+     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
+-    #[cfg(windows)]
+-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+-        // SAFETY: `el` is the live per-thread event loop.
+-        unsafe { (*el).wakeup() };
+-    }
+ 
+     // ── pending unref ───────────────────────────────────────────────────
+     #[cfg(unix)]
+@@ -983,6 +978,15 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
+         let has_pending_immediate = has_yielded_tasks
+             || !unsafe { &*el }.immediate_tasks.is_empty()
+             || unsafe { &*el }.has_pending_tasks();
++        // `get_timeout` ignores `has_pending_immediate` on Windows, so a task
++        // left in the queue (a tick that hit its refill cap, or a hot-reload
++        // task's early return) has to wake the poll here. Otherwise the loop
++        // blocks until another thread posts. (oven-sh/bun#42968)
++        #[cfg(windows)]
++        if has_pending_immediate {
++            // SAFETY: `el` is the live per-thread event loop.
++            unsafe { (*el).wakeup() };
++        }
+         // Fold the QUIC deadline into the poll timeout.
+         // SAFETY: `loop_` is the live per-thread uws loop.
+         let quic_next_tick_us = unsafe {
+@@ -1076,11 +1080,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
+     unsafe { (*el).tick_immediate_tasks(vm) };
+     // SAFETY: as above.
+     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
+-    #[cfg(windows)]
+-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+-        // SAFETY: `el` is the live per-thread event loop.
+-        unsafe { (*el).wakeup() };
+-    }
+ 
+     #[cfg(unix)]
+     {
+@@ -1121,6 +1120,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
+         let has_pending_immediate = has_yielded_tasks
+             || !unsafe { &*el }.immediate_tasks.is_empty()
+             || unsafe { &*el }.has_pending_tasks();
++        // See `auto_tick`: a queued task must wake the libuv poll itself.
++        #[cfg(windows)]
++        if has_pending_immediate {
++            // SAFETY: `el` is the live per-thread event loop.
++            unsafe { (*el).wakeup() };
++        }
+         // SAFETY: `loop_` is the live per-thread uws loop.
+         let quic_next_tick_us = unsafe {
+             let ild = &(*loop_).internal_loop_data;
+@@ -4669,6 +4674,18 @@ fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
                  bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr(),
              )
          },
@@ -8629,6 +8774,34 @@ index dac31d39..5e5037c2 100644
              Err(_) => return false,
          }
      }
+diff --git a/test/cli/run/transpiler-cache.test.ts b/test/cli/run/transpiler-cache.test.ts
+index 606582c1..f4a18285 100644
+--- a/test/cli/run/transpiler-cache.test.ts
++++ b/test/cli/run/transpiler-cache.test.ts
+@@ -180,10 +180,13 @@ describe("transpiler cache", () => {
+     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "no-tmpdir-cache"));
+ 
+     // Stand-in for the shared, world-writable system temp dir. Pre-create
+-    // bun/@t@ inside it the way another local user could on a multi-user host.
++    // the cache folders inside it the way another local user could on a multi-user host:
++    // Pi-Bolt's (bun/@t@pi-bolt) and stock Bun's (bun/@t@).
+     const shared_tmp = join(temp_dir, "shared-tmp");
+-    const shared_cache = join(shared_tmp, "bun", "@t@");
++    const shared_cache = join(shared_tmp, "bun", "@t@pi-bolt");
++    const shared_stock_cache = join(shared_tmp, "bun", "@t@");
+     mkdirSync(shared_cache, { recursive: true });
++    mkdirSync(shared_stock_cache, { recursive: true });
+ 
+     // No per-user cache location is available (no BUN_RUNTIME_TRANSPILER_CACHE_PATH,
+     // no XDG_CACHE_HOME, no HOME) — the only remaining candidate is the shared
+@@ -205,6 +208,7 @@ describe("transpiler cache", () => {
+     // No cache entry may be written into (or read back from) a directory that
+     // another local user could own and pre-populate.
+     expect(readdirSync(shared_cache)).toEqual([]);
++    expect(readdirSync(shared_stock_cache)).toEqual([]);
+ 
+     // A per-user cache location still works.
+     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");
 diff --git a/test/harness.ts b/test/harness.ts
 index 4447b721..e339757f 100644
 --- a/test/harness.ts
@@ -11611,5 +11784,5 @@ index 6df20c4c..9a3c38fe 100644
      // This test ensures that napi_reference_unref can be called during GC
      // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.
 -- 
-2.43.0
+2.56.0.windows.1
 
