@@ -304,6 +304,7 @@ class Tty:
         return WinTty(*args, **kwargs) if WINDOWS else super().__new__(cls)
 
     def __init__(self, argv, env, cwd, cols=120, rows=40, stderr=None):
+        self.slow_quit = any(a.endswith("opencode.sh") for a in argv)
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.chdir(cwd)
@@ -353,7 +354,15 @@ class Tty:
 
     def quit(self, timeout=10):
         """Sends /quit; returns the exit status, or None if it had to be killed."""
-        self.send(b"/quit\r")
+        if self.slow_quit:
+            # (OpenCode opens its command menu on "/": Enter is sent once it is open.)
+            self.send(b"/quit")
+            end = time.perf_counter() + 0.3
+            while time.perf_counter() < end:
+                self.pump(0.02)
+            self.send(b"\r")
+        else:
+            self.send(b"/quit\r")
         end = time.perf_counter() + timeout
         while time.perf_counter() < end:
             self.pump(0.02)

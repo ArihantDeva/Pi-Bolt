@@ -65,46 +65,48 @@
 </table></div>
 
 
-<h2>Against PiG and oh-my-pi</h2>
+<h2>Against PiG, oh-my-pi and OpenCode</h2>
 <p>Pi-Bolt against two other fast Pi builds: <a href="https://github.com/MichaelKinsy/PiG">PiG</a> 0.4.1, a port of Pi to Go
   (based on Pi 1.0.3), and <a href="https://github.com/can1357/oh-my-pi">oh-my-pi</a> 18.8.7, a fork of Pi with many more
-  built-in features, on Bun. Same machines, method and runs as above.</p>
+  built-in features, on Bun; and <a href="https://github.com/anomalyco/opencode">OpenCode</a> 2.0, in a run of its own next to
+  Pi-Bolt on the same machines, with its own server in the same process tree (<code>--standalone</code>).</p>
 <div class="tabs" data-group="bench">
   <div data-tab="linux" data-title="Linux">
 <div class="table"><table>
-  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">PiG 0.4.1</th><th class="n">oh-my-pi 18.8.7</th></tr></thead>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">PiG 0.4.1</th><th class="n">oh-my-pi 18.8.7</th><th class="n">OpenCode 2.0</th></tr></thead>
   <tbody>
-    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.6 s</td><td class="n">77.5 s</td><td class="n">3.3 s</td></tr>
-    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">2.6 s</td><td class="n">16.7 s</td><td class="n best">2.2 s</td></tr>
-    <tr><td>Memory after a 4.2M-token session</td><td class="n best">134 MB</td><td class="n">349 MB</td><td class="n">–</td></tr>
-    <tr><td>Memory of a session in tmux</td><td class="n best">22 MB</td><td class="n">48 MB</td><td class="n">334 MB</td></tr>
-    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">193 ms</td><td class="n">2,458 ms</td><td class="n">2,800 ms</td></tr>
-    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">61 ms</td><td class="n">227 ms</td><td class="n">1,524 ms</td></tr>
-    <tr><td>Peak memory, one prompt (<code>-p</code>)</td><td class="n">123 MB</td><td class="n best">55 MB</td><td class="n">505 MB</td></tr>
-    <tr><td>Ready to type</td><td class="n">38 ms</td><td class="n best">31 ms</td><td class="n">890 ms</td></tr>
+    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.6 s</td><td class="n">77.5 s</td><td class="n">3.3 s</td><td class="n">2.4 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">2.6 s</td><td class="n">16.7 s</td><td class="n best">2.2 s</td><td class="n">8.6 s</td></tr>
+    <tr><td>Memory after a 4.2M-token session</td><td class="n best">134 MB</td><td class="n">349 MB</td><td class="n">–</td><td class="n">273 MB¹</td></tr>
+    <tr><td>Memory of a session in tmux</td><td class="n best">22 MB</td><td class="n">48 MB</td><td class="n">334 MB</td><td class="n">–²</td></tr>
+    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">193 ms</td><td class="n">2,458 ms</td><td class="n">2,800 ms</td><td class="n">8,593 ms</td></tr>
+    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">61 ms</td><td class="n">227 ms</td><td class="n">1,524 ms</td><td class="n">2,220 ms</td></tr>
+    <tr><td>Peak memory, one prompt (<code>-p</code>)</td><td class="n">123 MB</td><td class="n best">55 MB</td><td class="n">505 MB</td><td class="n">346 MB</td></tr>
+    <tr><td>Ready to type</td><td class="n">38 ms</td><td class="n best">31 ms</td><td class="n">890 ms</td><td class="n">1,687 ms</td></tr>
   </tbody>
 </table></div>
 
   </div>
   <div data-tab="macos" data-title="macOS">
 <div class="table"><table>
-  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">PiG 0.4.1</th><th class="n">oh-my-pi 18.8.7</th></tr></thead>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">PiG 0.4.1</th><th class="n">oh-my-pi 18.8.7</th><th class="n">OpenCode 2.0</th></tr></thead>
   <tbody>
-    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.4 s</td><td class="n">56.8 s</td><td class="n">2.5 s</td></tr>
-    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">6.5 s</td><td class="n">16.5 s</td><td class="n best">5.1 s</td></tr>
-    <tr><td>Memory after a 4.2M-token session</td><td class="n best">38 MB</td><td class="n">330 MB</td><td class="n">–</td></tr>
-    <tr><td>Memory of a session in tmux</td><td class="n best">24 MB</td><td class="n">55 MB</td><td class="n">330 MB</td></tr>
-    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">139 ms</td><td class="n">2,367 ms</td><td class="n">2,374 ms</td></tr>
-    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">49 ms</td><td class="n">230 ms</td><td class="n">1,030 ms</td></tr>
-    <tr><td>Peak memory, one prompt (<code>-p</code>)</td><td class="n">70 MB</td><td class="n best">50 MB</td><td class="n">419 MB</td></tr>
-    <tr><td>Ready to type</td><td class="n">41 ms</td><td class="n best">39 ms</td><td class="n">612 ms</td></tr>
+    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.4 s</td><td class="n">56.8 s</td><td class="n">2.5 s</td><td class="n">1.7 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">6.5 s</td><td class="n">16.5 s</td><td class="n best">5.1 s</td><td class="n">13.6 s</td></tr>
+    <tr><td>Memory after a 4.2M-token session</td><td class="n best">38 MB</td><td class="n">330 MB</td><td class="n">–</td><td class="n">260 MB¹</td></tr>
+    <tr><td>Memory of a session in tmux</td><td class="n best">24 MB</td><td class="n">55 MB</td><td class="n">330 MB</td><td class="n">–²</td></tr>
+    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">139 ms</td><td class="n">2,367 ms</td><td class="n">2,374 ms</td><td class="n">6,493 ms</td></tr>
+    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">49 ms</td><td class="n">230 ms</td><td class="n">1,030 ms</td><td class="n">1,548 ms</td></tr>
+    <tr><td>Peak memory, one prompt (<code>-p</code>)</td><td class="n">70 MB</td><td class="n best">50 MB</td><td class="n">419 MB</td><td class="n">379 MB</td></tr>
+    <tr><td>Ready to type</td><td class="n">41 ms</td><td class="n best">39 ms</td><td class="n">612 ms</td><td class="n">1,489 ms</td></tr>
   </tbody>
 </table></div>
 
   </div>
 </div>
 <p>PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with a little less CPU. Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files
-  fastest. oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–).</p>
+  fastest. oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–). ¹ OpenCode's process
+  without its server process, so its memory is higher. ² OpenCode did not finish its answers in tmux.</p>
 
 <h2>Why a large file write takes so long on stock Pi</h2>
 <p>Those 20 to 40 seconds are not the disk. A model writes a file by streaming the <code>write</code> tool call's arguments, the whole
