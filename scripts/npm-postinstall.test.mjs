@@ -193,7 +193,8 @@ function run(pkgDir, { fetch, key, env = {}, runsVersion = () => true, hasAvx2 =
 	const promise = install.installWindows({
 		pkgDir,
 		version: VERSION,
-		env,
+		// An x64 machine unless a test says otherwise (on an ARM host process.arch would be arm64).
+		env: { PROCESSOR_ARCHITECTURE: "AMD64", ...env },
 		fetch,
 		key,
 		runsVersion,
