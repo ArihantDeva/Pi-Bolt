@@ -475,10 +475,11 @@ function Install-PiBoltRelease($state) {
 		$file = Join-Path $tmp $archive
 		$from = ''
 		if ($state.Source -ne 'github' -and -not $env:PIBOLT_DOWNLOAD_BASE) {
-			# The npm package pi-bolt-win32-x64 (of the same version) is a .tgz with the release's .zip in it.
+			# The npm package @kushalkhemka/pi-bolt-win32-x64 (of the same version) is a .tgz with the release's .zip in it. (Releases
+			# before 0.8.5 have none: they come from GitHub.)
 			$registry = if ($env:PIBOLT_NPM_REGISTRY) { $env:PIBOLT_NPM_REGISTRY.TrimEnd('/') } else { 'https://registry.npmjs.org' }
 			$tgz = Join-Path $tmp 'npm.tgz'
-			if ((Get-PiBoltFile $client "$registry/$name/-/$name-$($state.Version).tgz" $tgz 'downloading')) {
+			if ((Get-PiBoltFile $client "$registry/@kushalkhemka/$name/-/$name-$($state.Version).tgz" $tgz 'downloading')) {
 				if (Get-PiBoltTarEntry $tgz "package/$archive" $file) {
 					Show-PiBoltProgress 'verifying the checksum'
 					if (Test-PiBoltChecksum $sums $archive $file) { $from = 'npm' }
