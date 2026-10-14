@@ -311,6 +311,64 @@
       },
       "description": "npm or git package sources, as strings or objects with resource filtering."
     },
+    "piBolt": {
+      "type": "object",
+      "properties": {
+        "packages": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Load all resources from the package."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "source"
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string"
+                  },
+                  "autoload": {
+                    "type": "boolean",
+                    "description": "When false, start empty and only apply explicit resource patterns."
+                  },
+                  "extensions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "skills": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "prompts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "themes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ],
+            "description": "Package source for npm or git packages. Use the string form to load all resources or the object form to filter resources."
+          },
+          "description": "Pi-Bolt's own package sources, loaded by Pi-Bolt in place of packages; Pi keeps using packages."
+        }
+      },
+      "description": "Pi-Bolt only settings."
+    },
     "extensions": {
       "type": "array",
       "items": {
