@@ -174,6 +174,7 @@ export {
 	type OverlayMargin,
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
+	renderFakeCursor,
 	renderSharedLines,
 	type SizeValue,
 	type TUI,
