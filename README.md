@@ -43,6 +43,8 @@ lower is better. See [Benchmarks](#benchmarks).</sub>
 curl -fsSL https://pi-bolt.opensec.in/install.sh | sh
 ```
 
+The same command installs Pi-Bolt on Linux x86-64 and ARM64, on macOS, and on Android in Termux.
+
 On Windows, in PowerShell:
 
 ```powershell
@@ -74,8 +76,8 @@ extensions don't notice. For extensions that do heavy work (search, parsing) or 
 build. Pi itself stays compiled, so it is within about 5% of the default.
 
 ```bash
-curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=arm64-jit sh   # macOS
-curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=x64-jit sh     # Linux
+curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=arm64-jit sh   # macOS, Linux ARM64, Termux
+curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=x64-jit sh     # Linux x86-64
 ```
 
 On Windows, run `$env:PIBOLT_VARIANT = "x64-jit"` before the PowerShell command. With npm, keep `PIBOLT_VARIANT` set in your
@@ -91,19 +93,31 @@ Download a build from the [latest release](https://github.com/opensec-git/Pi-Bol
 |---|---|
 | `pi-bolt-linux-x64.tar.xz` | **Linux**, CPUs with AVX2 (Intel Haswell, AMD Zen and later) |
 | `pi-bolt-linux-x64-baseline.tar.xz` | Linux, any x86-64 CPU |
+| `pi-bolt-linux-arm64.tar.xz` | **Linux** ARM64, any 64-bit ARM CPU (Raspberry Pi 3 and later, AWS Graviton, Ampere) |
 | `pi-bolt-darwin-arm64.tar.xz` | **macOS**, Apple silicon |
 | `pi-bolt-win32-x64.zip` | **Windows** x64; compiled code on CPUs with AVX2, bytecode on others |
 
 `-jit` builds are for heavy use of plugins loaded at run time; the runtime archive is for [compiling plugins in](docs/PLUGINS.md).
+In Termux, use the installer: it sets the executable's loader to Termux's glibc ([below](#android-termux)).
 
 </details>
 
+### Android (Termux)
+
+In [Termux](https://termux.dev), run the same `curl ... | sh` command. Pi-Bolt is a glibc program and Android's libc is not
+glibc, so the installer first installs Termux's glibc (`pkg install glibc-repo && pkg install glibc`, after asking), sets it as
+the executable's loader, and links `pi-bolt` into `$PREFIX/bin`. `pi-bolt` is a small launcher that starts Pi-Bolt in Android's
+time zone and without Termux's `LD_PRELOAD` (a library of Android's libc, which glibc cannot load); the programs Pi-Bolt starts
+get it back. The installer copies Termux's `resolv.conf` and `hosts` to `$PREFIX/glibc/etc`, where Termux's glibc reads them.
+
 ### Requirements
 
-- **Linux** x86-64 with glibc 2.17 or later (Ubuntu 20.04+, Debian 11+, RHEL/Rocky 8+, Amazon Linux 2). musl is not supported.
+- **Linux** x86-64 or ARM64 with glibc 2.17 or later (Ubuntu 20.04+, Debian 11+, RHEL/Rocky 8+, Amazon Linux 2, Raspberry Pi
+  OS 64-bit). musl is not supported.
+- **Android** 7 or later on 64-bit ARM, in Termux.
 - **macOS** 13 or later on Apple silicon. Install with the installer or npm ([Troubleshooting](docs/TROUBLESHOOTING.md#macos)).
 - **Windows** 10 (1809) or later, or Windows 11, on x64. Install with the installer or npm; for problems, see [Troubleshooting: Windows](docs/TROUBLESHOOTING.md#windows).
-- Linux and Windows on ARM64 are not available yet.
+- Windows on ARM64 runs the x64 build, in Windows 11's x64 emulation.
 
 Pi-Bolt installs next to Pi as `pi-bolt`, so both can stay installed. Running the installer again updates, reinstalls or
 uninstalls it.

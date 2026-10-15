@@ -53,9 +53,9 @@ the engine or the build. On Windows, the same for older CPUs is Intel SDE (`-snb
 
 ## What a release holds
 
-- The archives: `pi-bolt-linux-x64`, `-baseline` and `-jit` and `pi-bolt-darwin-arm64` and `-jit` (`.tar.xz` and `.tar.gz`);
-  `pi-bolt-win32-x64` and `-jit` (`.zip`); the runtimes `pi-bolt-runtime-linux-x64.tar.gz`, `pi-bolt-runtime-darwin-arm64.tar.gz`
-  and `pi-bolt-runtime-win32-x64.zip`.
+- The archives: `pi-bolt-linux-x64`, `-baseline` and `-jit`, `pi-bolt-linux-arm64` and `-jit`, and `pi-bolt-darwin-arm64` and
+  `-jit` (`.tar.xz` and `.tar.gz`); `pi-bolt-win32-x64` and `-jit` (`.zip`); the runtimes `pi-bolt-runtime-linux-x64.tar.gz`,
+  `pi-bolt-runtime-linux-arm64.tar.gz`, `pi-bolt-runtime-darwin-arm64.tar.gz` and `pi-bolt-runtime-win32-x64.zip`.
 - `extensions.txt`: the optional extensions the installers offer (OpenSec's `opensec-pi-subagents`, `opensec-pi-todo` and `opensec-pi-fff`), each
   with its version and npm integrity. The installers install those versions and only if the registry's tarball has that
   integrity; a release without the file pins none, and they offer nothing. Update it in the repository when either has a new
@@ -79,18 +79,20 @@ they link with (`profiles/runtime-*.hints`) (`scripts/runtime-stamp.sh`). `ci` s
 gives it, for that release's version (releases before 0.8.0 did not sign it, so their runtimes are not reused). Runtimes
 uploaded to the draft are hashed by `release`'s first job and checked again by each build job before it uses one.
 
-When it changed, build the three runtimes by hand before tagging:
+When it changed, build the four runtimes by hand before tagging:
 
-1. On Linux x86-64: `scripts/toolchain/make-sysroot.sh` once, then `scripts/fetch-sources.sh` and `scripts/build-runtime.sh`
-   ([BUILDING.md](BUILDING.md)). On a Mac with Apple silicon: `scripts/fetch-sources.sh` and `scripts/build-runtime.sh`. On
-   Windows x64: `scripts\fetch-sources.ps1` and `scripts\build-runtime.ps1` ([WINDOWS.md](WINDOWS.md)).
+1. On Linux x86-64 and on Linux ARM64: `scripts/toolchain/make-sysroot.sh` once, then `scripts/fetch-sources.sh` and
+   `scripts/build-runtime.sh` ([BUILDING.md](BUILDING.md); Linux ARM64 can be the Mac's Docker, [Linux ARM64 in a
+   container](BUILDING.md#linux-arm64-in-a-container)). On a Mac with Apple silicon: `scripts/fetch-sources.sh` and
+   `scripts/build-runtime.sh`. On Windows x64: `scripts\fetch-sources.ps1` and `scripts\build-runtime.ps1` ([WINDOWS.md](WINDOWS.md)).
    `fetch-sources` stops when `.work/webkit` or `.work/bun` is not the pinned commit with the current patch applied (sources of
    an earlier engine, or a fetch that stopped halfway): delete that folder and run it again.
 2. On each, `scripts/package-release.sh` (Windows: `scripts\package-release.ps1`) and keep `pi-bolt-runtime-<platform>.tar.gz`
-   (Windows: `.zip`) from `dist/X.Y.Z`. Run `tests/aot/run.sh` and `tests/runtime/run.sh` there (Windows: the `.ps1` ones).
-3. Make a draft for the tag and upload all three: `gh release create bolt-vX.Y.Z --draft --title "Pi-Bolt X.Y.Z" --notes ""`,
-   then `gh release upload bolt-vX.Y.Z pi-bolt-runtime-linux-x64.tar.gz pi-bolt-runtime-darwin-arm64.tar.gz
-   pi-bolt-runtime-win32-x64.zip`.
+   (Windows: `.zip`) from `dist/X.Y.Z`. Run `tests/aot/run.sh` and `tests/runtime/run.sh` there (Windows: the `.ps1` ones; Linux
+   ARM64: `tests/termux/run.sh` too).
+3. Make a draft for the tag and upload all four: `gh release create bolt-vX.Y.Z --draft --title "Pi-Bolt X.Y.Z" --notes ""`,
+   then `gh release upload bolt-vX.Y.Z pi-bolt-runtime-linux-x64.tar.gz pi-bolt-runtime-linux-arm64.tar.gz
+   pi-bolt-runtime-darwin-arm64.tar.gz pi-bolt-runtime-win32-x64.zip`.
 4. Push the tag (or run `release` for it): it builds Pi on those runtimes.
 
 Say in the release notes, for each runtime, where it was built, the engine commits it was built from (`.work/webkit` and
@@ -113,19 +115,19 @@ launcher there, and where install scripts are blocked the placeholder runs that 
 install script must run (with pnpm or Bun, allow it, or run `node "$(npm root -g)\pi-bolt\install.cjs"`). So the
 `pi-bolt-win32-*` packages are published before `pi-bolt`, as `publish` does.
 
-`publish` publishes the eight packages with npm's trusted publishing: npm trusts this repository's `publish.yml` through OpenID
+`publish` publishes the ten packages with npm's trusted publishing: npm trusts this repository's `publish.yml` through OpenID
 Connect, so no token is stored in GitHub, and each version carries a provenance statement. The job runs in the `npm`
 environment, which accepts only the `pi-bolt` branch and `bolt-v*` tags. To set it up once, logged in to npm with two-factor authentication:
 
 ```bash
-for p in pi-bolt pi-bolt-linux-x64 pi-bolt-linux-x64-baseline pi-bolt-linux-x64-jit pi-bolt-darwin-arm64 pi-bolt-darwin-arm64-jit \
-  pi-bolt-win32-x64 pi-bolt-win32-x64-jit; do
+for p in pi-bolt pi-bolt-linux-x64 pi-bolt-linux-x64-baseline pi-bolt-linux-x64-jit pi-bolt-linux-arm64 pi-bolt-linux-arm64-jit \
+  pi-bolt-darwin-arm64 pi-bolt-darwin-arm64-jit pi-bolt-win32-x64 pi-bolt-win32-x64-jit; do
   npm trust github "$p" --file publish.yml --repo opensec-git/Pi-Bolt --env npm --allow-publish --yes
 done
 ```
 
 (or on npmjs.com: each package's Settings → Trusted publishing → GitHub Actions, `opensec-git` / `Pi-Bolt` / `publish.yml`,
-environment `npm`). A package that does not exist yet (`pi-bolt-win32-x64` and `-jit` before their first release) is
+environment `npm`). A package that does not exist yet (`pi-bolt-linux-arm64` and `-jit` before their first release) is
 published once by hand, as below, and then given the trust. Then set the repository variable `NPM_TRUSTED_PUBLISHING` to
 `true` (Settings → Secrets and variables → Actions → Variables).
 

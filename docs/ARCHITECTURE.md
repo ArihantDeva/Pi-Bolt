@@ -9,6 +9,7 @@ This document explains what a Pi-Bolt executable contains, how it is built, and 
 - [JIT off and JIT on](#jit-off-and-jit-on)
 - [The x86-64 port](#the-x86-64-port)
 - [The macOS ARM64 port](#the-macos-arm64-port)
+- [The Linux ARM64 port](#the-linux-arm64-port)
 - [Limitations](#limitations)
 
 ## The executable
@@ -226,9 +227,37 @@ program `import()`s) requires the builtin modules it imports when it is evaluate
 imported before the program starts. A start of Pi then loads none of `node:http`, `https`, `net` and `tls`, which only Bedrock,
 the proxy agents and the OAuth callback servers use (the first two alone cost a start about 60 million instructions).
 
+## The Linux ARM64 port
+
+The ARM64 code generation is the macOS port's; the Linux ARM64 port is about the many kinds of ARM64 Linux machine, and Android.
+Its parts of Pi-Bolt's [WebKit patch](../patches/webkit.patch) and [Bun patch](../patches/bun.patch) apply to Linux on ARM64 only.
+
+**Address space.** Many ARM64 kernels give a process 512 GB of addresses (39-bit: Android's, the Raspberry Pi 3's and 4's) or
+4 TB (42-bit, with 64 KB pages), where 0x200000000000 is out of reach. On Linux ARM64 the static region is at 128 GB
+(0x2000000000), with the Structures' 4 GB after it at 160 GB: below where the kernel puts a program's loader (two thirds of the way
+up) and its other mappings (from the top down), on every address size.
+
+**Page size.** ARM64 kernels use 4, 16 or 64 KB pages. The heap and the code image are laid out in 64 KB pages (as are the
+executable's segments), so one executable maps them on all three.
+
+**One build for every ARM64 CPU.** The compiler leaves out what ARMv8.0 does not have (LSE atomics, JSCVT, FP16, FRINTTS, SHA3,
+DotProd: `BUN_AOT_CPU=baseline`, which `build-pi.sh` sets on Linux ARM64), so the same code runs on a Raspberry Pi 3 and on
+Graviton 4. The JIT build's JIT still uses what the CPU has.
+
+**Android.** Android's libc is not glibc, and an Android executable must be position-independent, which the static heap's
+pointers into the executable rule out. In Termux, Pi-Bolt runs as the Linux build with Termux's glibc: the executable's loader
+path (PT_INTERP) is the usual one with room after it, which the installer overwrites with Termux's
+(`$PREFIX/glibc/lib/ld-linux-aarch64.so.1`), so nothing in the file moves. Android's system call filter kills an app's process
+for calls it does not allow, where other Linux kernels return ENOSYS; Termux's glibc avoids them, but the runtime makes some
+itself (`epoll_pwait2`, `close_range`, `openat2`, `pidfd_open`, ...). On Android (`/system/bin/linker64` is there) the runtime
+returns ENOSYS for a call the filter refused, from its SIGSYS handler, and falls back as on an older kernel. The installer's
+launcher starts Pi-Bolt without Termux's `LD_PRELOAD`, which glibc's loader cannot load, and Pi gives it back to the programs it
+starts.
+
 ## Limitations
 
-- **Linux x86-64 and macOS on Apple silicon** only. Windows and Linux on ARM64 are not built yet.
+- **Linux x86-64 and ARM64 (Android too, in Termux), macOS on Apple silicon and Windows x64.** Windows on ARM64 runs the x64
+  build in emulation.
 - **Code loaded at run time is not compiled ahead of time.** With the JIT off it is interpreted. Compile plugins in
   ([PLUGINS.md](PLUGINS.md)) or use the JIT-on build.
 - **No type feedback.** A warmed-up JIT specializes on the types it actually observes, and the AOT compiler can only use what
