@@ -108,18 +108,20 @@ not yet built bit for bit the same twice; the prebuilt heap of a Pi build is che
 ## npm
 
 The installer downloads the executable from npm when it can (`pi-bolt-<platform>-<variant>@X.Y.Z`, the release's `.tar.xz`, or on
-Windows its `.zip`, in a package), a CDN that is fast where GitHub's downloads are slow, and from GitHub otherwise. The checksums
-and their signature always come from the GitHub release.
+Windows its `.zip` in `@kushalkhemka/pi-bolt-win32-<variant>@X.Y.Z`, as npm refuses the unscoped Windows names), a CDN that is
+fast where GitHub's downloads are slow, and from GitHub otherwise. The checksums and their signature always come from the GitHub
+release.
 
 The `pi-bolt` package works natively on Windows, as Bun's and Claude Code's packages do: its `bin` is `bin/pi-bolt.exe` on every
 platform, a placeholder without a `#!` line (so npm's `pi-bolt.cmd` and `pi-bolt.ps1` start it directly), which its install
 script, `npm/install.cjs`, replaces. On Windows that script downloads the build of the package's version from
-`pi-bolt-win32-<variant>` on npm (or the GitHub release if that fails) and checks it as `install.ps1` does: the Ed25519 signature
-of the release's `SHA256SUMS` by `keys/release.pub`, the version on its first line, the build's SHA-256. If a check fails it
+`@kushalkhemka/pi-bolt-win32-<variant>` on npm (or the GitHub release if that fails) and checks it as `install.ps1` does: the
+Ed25519 signature of the release's `SHA256SUMS` by `keys/release.pub`, the version on its first line, the build's SHA-256. If a check fails it
 installs nothing; otherwise it puts `pi-bolt.exe` and its files in the package's `bin` folder. On Linux and macOS it puts the `sh`
 launcher there, and where install scripts are blocked the placeholder runs that launcher itself, as before. On Windows the
 install script must run (with pnpm or Bun, allow it, or run `node "$(npm root -g)\pi-bolt\install.cjs"`). So the
-`pi-bolt-win32-*` packages are published before `pi-bolt`, as `publish` does.
+`@kushalkhemka/pi-bolt-win32-*` packages are published before `pi-bolt`, as `publish` does. A build npm does not publish there
+is a warning, not a failure: the installers download it from GitHub, and `pi-bolt` is still published.
 
 `publish` publishes the ten packages with npm's trusted publishing: npm trusts this repository's `publish.yml` through OpenID
 Connect, so no token is stored in GitHub, and each version carries a provenance statement. The job runs in the `npm`
@@ -127,7 +129,7 @@ environment, which accepts only the `pi-bolt` branch and `bolt-v*` tags. To set 
 
 ```bash
 for p in pi-bolt pi-bolt-linux-x64 pi-bolt-linux-x64-baseline pi-bolt-linux-x64-jit pi-bolt-linux-arm64 pi-bolt-linux-arm64-jit \
-  pi-bolt-darwin-arm64 pi-bolt-darwin-arm64-jit pi-bolt-win32-x64 pi-bolt-win32-x64-jit; do
+  pi-bolt-darwin-arm64 pi-bolt-darwin-arm64-jit @kushalkhemka/pi-bolt-win32-x64 @kushalkhemka/pi-bolt-win32-x64-jit; do
   npm trust github "$p" --file publish.yml --repo opensec-git/Pi-Bolt --env npm --allow-publish --yes
 done
 ```
