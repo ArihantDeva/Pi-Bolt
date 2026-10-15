@@ -27,6 +27,7 @@ import {
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { loadDoctor } from "./cli/doctor.lazy.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
@@ -66,6 +67,7 @@ import { loadAcpMode } from "./extensions/acp/mode.lazy.ts";
 import { quietOtherHerdrReporters } from "./extensions/herdr/index.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
+import { loadMcpMode } from "./extensions/mcp-server/mode.lazy.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
@@ -114,8 +116,8 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
-	// ACP runs headless as RPC does (stdin and stdout carry the protocol); it differs only in the loop that serves it.
-	if (parsed.mode === "rpc" || parsed.mode === "acp") {
+	// ACP and MCP run headless as RPC does (stdin and stdout carry the protocol); they differ only in the loop that serves it.
+	if (parsed.mode === "rpc" || parsed.mode === "acp" || parsed.mode === "mcp") {
 		return "rpc";
 	}
 	if (parsed.mode === "json") {
@@ -127,7 +129,7 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 	return "interactive";
 }
 
-function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc" | "acp"> {
+function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc" | "acp" | "mcp"> {
 	return appMode === "json" ? "json" : "text";
 }
 
@@ -624,6 +626,12 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
+	// `pi-bolt doctor` (Pi-Bolt only): a report for an issue. It exits: the extensions it loaded may keep timers running.
+	if (PIBOLT && args[0] === "doctor") {
+		const { runDoctor } = await loadDoctor();
+		process.exit(await runDoctor(args.slice(1), { cwd, agentDir, extensionFactories }));
+	}
+
 	if (args[0] === "mcp") {
 		const { runMcpCommand } = await loadMcpCommand();
 		process.exitCode = await runMcpCommand(args.slice(1), { cwd, agentDir });
@@ -672,7 +680,7 @@ export async function main(args: string[], options?: MainOptions) {
 		takeOverStdout();
 	}
 
-	if ((parsed.mode === "rpc" || parsed.mode === "acp") && parsed.fileArgs.length > 0) {
+	if ((parsed.mode === "rpc" || parsed.mode === "acp" || parsed.mode === "mcp") && parsed.fileArgs.length > 0) {
 		console.error(chalk.red(`Error: @file arguments are not supported in ${parsed.mode.toUpperCase()} mode`));
 		process.exit(1);
 	}
@@ -776,8 +784,9 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
-	// Loaded only for `--acp`: other modes never load the ACP code.
+	// Loaded only for `--acp` and `--mcp`: other modes never load their code.
 	const acp = parsed.mode === "acp" ? await loadAcpMode() : undefined;
+	const mcp = parsed.mode === "mcp" ? await loadMcpMode() : undefined;
 	const runtimeExtensionFactories = acp ? [...extensionFactories, acp.acpExtension] : extensionFactories;
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
@@ -918,6 +927,11 @@ export async function main(args: string[], options?: MainOptions) {
 	if (acp) {
 		// The editor chooses each session's directory, so ACP creates its runtimes itself, one per session.
 		await acp.runAcpMode({ createRuntime, agentDir, sessionDir: explicitSessionDir, offline: offlineMode });
+		return;
+	}
+	if (mcp) {
+		// Each call names its session and directory, so MCP creates its runtimes itself, one per session.
+		await mcp.runMcpMode({ createRuntime, agentDir, sessionDir: explicitSessionDir, offline: offlineMode, cwd });
 		return;
 	}
 	const runtime = await createAgentSessionRuntime(createRuntime, {

@@ -159,6 +159,10 @@ else
 	warn "no training profile at $PROFILE: building without one (run scripts/train-profile.sh for the fastest startup)"
 fi
 
+# Which engine the runtime is (scripts/runtime-stamp.sh), for `pi-bolt doctor`: PIBOLT_RUNTIME_STAMP (the release workflow's),
+# else the RUNTIME_STAMP that build-runtime.sh or fetch-runtime.sh put beside the runtime; unknown otherwise.
+RUNTIME_STAMP="${PIBOLT_RUNTIME_STAMP:-$(cat "$(dirname "$BUN")/RUNTIME_STAMP" 2>/dev/null || true)}"
+[[ "$RUNTIME_STAMP" =~ ^[0-9a-f]{16}$ ]] || RUNTIME_STAMP=""
 # Everything the compiler prints, for when the build stops: the reason is often an "AOT: " line, which is not shown otherwise.
 TEMP_DIR="${TMPDIR:-/tmp}"
 BUILD_LOG="${PIBOLT_BUILD_LOG:-$(mktemp "${TEMP_DIR%/}/pibolt-build.XXXXXX")}"
@@ -189,7 +193,8 @@ BUILD_ARGS=(build --compile --no-compile-autoload-bunfig --no-compile-autoload-d
 if ! (
 	cd "$AGENT" || exit 1
 	# What `pi --version` and `pi update` know themselves by (packages/coding-agent/src/pi-bolt.ts).
-	env "${BUILD_ENV[@]}" "$BUN" "${BUILD_ARGS[@]}" --define "PIBOLT_BUILD=\"$PIBOLT_VERSION $CPU_VARIANT jit-$JIT\"" \
+	env "${BUILD_ENV[@]}" "$BUN" "${BUILD_ARGS[@]}" \
+		--define "PIBOLT_BUILD=\"$PIBOLT_VERSION $CPU_VARIANT jit-$JIT${RUNTIME_STAMP:+ $RUNTIME_STAMP}\"" \
 		"${ENTRIES[@]}" --outfile "$OUT/pi" 2>&1 | tee "$BUILD_LOG" | grep -v "^AOT: " | tail -3
 ); then
 	tail -n 12 "$BUILD_LOG" >&2

@@ -306,7 +306,8 @@ function buildExecutable(
 	const args = [
 		...kit.args.map((arg) => arg.split(KIT_FOLDER).join(kitDir)),
 		"--define",
-		`PIBOLT_BUILD="${build.version} ${build.variant} jit-${build.jit ? "on" : "off"}"`,
+		// (The release's runtime, so its runtime stamp too.)
+		`PIBOLT_BUILD="${build.version} ${build.variant} jit-${build.jit ? "on" : "off"}${build.runtimeStamp ? ` ${build.runtimeStamp}` : ""}"`,
 		"./.pibolt-plugins/entry.ts",
 		...kit.entries.slice(1),
 		"--outfile",
