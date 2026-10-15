@@ -7,6 +7,7 @@ import chalk from "chalk";
 import { COMMAND_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR, PRODUCT_NAME } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
+import { PIBOLT } from "../pi-bolt.ts";
 
 export type Mode = "text" | "json" | "rpc" | "acp" | "mcp";
 
@@ -299,7 +300,7 @@ ${chalk.bold("Commands:")}
   ${COMMAND_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${COMMAND_NAME} auth <command>            Print credentials or check provider readiness
   ${COMMAND_NAME} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
-  ${COMMAND_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
+${PIBOLT ? `  ${COMMAND_NAME} doctor                    Print a report of this installation, to paste into an issue\n` : ""}  ${COMMAND_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider to search for --model (requires --model)
