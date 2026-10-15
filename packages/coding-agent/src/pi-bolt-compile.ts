@@ -471,14 +471,22 @@ function status(): void {
 		console.log(chalk.dim(`pi-bolt update compiles in the extensions chosen before (${installDir}/compile.json).`));
 }
 
-/** `pi-bolt compile --off`: no extensions compiled in, from now on; the release's executable back (from the installer). */
-function off(installAgain: () => Promise<boolean>): Promise<boolean> {
+/**
+ * `pi-bolt compile --off`: the release's executable back (from the installer, which does not compile anything in for it), and no
+ * extensions compiled in by later updates. The record goes only once the release is installed: a failed reinstall leaves the
+ * compiled build running, and the next update compiling the same extensions into it.
+ */
+async function off(installAgain: () => Promise<boolean>): Promise<boolean> {
 	const { installDir } = installation();
+	if (!(await installAgain())) return false;
 	rmSync(join(installDir, "compile.json"), { force: true });
-	return installAgain();
+	return true;
 }
 
-/** `pi-bolt compile [options]`. Returns the exit status. `installAgain` installs this version's release again. */
+/**
+ * `pi-bolt compile [options]`. Returns the exit status. `installAgain` installs this version's release again, without compiling
+ * extensions into it.
+ */
 export async function runPiBoltCompile(args: string[], installAgain: () => Promise<boolean>): Promise<number> {
 	const options: CompileOptions = {};
 	let mode: "compile" | "status" | "off" = "compile";

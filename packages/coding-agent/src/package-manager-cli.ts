@@ -817,7 +817,10 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
  * Updates a Pi-Bolt installation to the latest release: the installer, run again, replaces the executable in place (same
  * variant, same folder). One installed with the npm package is updated with the package manager instead.
  */
-async function runPiBoltSelfUpdate(version: string, options: { reinstall?: boolean } = {}): Promise<boolean> {
+async function runPiBoltSelfUpdate(
+	version: string,
+	options: { reinstall?: boolean; recompile?: boolean } = {},
+): Promise<boolean> {
 	if (piBoltInstallMethod() === "npm") {
 		console.log(
 			`This Pi-Bolt was installed with the npm package. Update it with the package manager that installed it:`,
@@ -862,7 +865,7 @@ async function runPiBoltSelfUpdate(version: string, options: { reinstall?: boole
 	);
 	// Extensions `pi-bolt compile` compiled in before are compiled into this release too, by the release itself.
 	const installDir = piBoltUpdateEnvironment(version).PIBOLT_INSTALL;
-	if (installDir && piBoltCompileWanted(installDir)) {
+	if (options.recompile !== false && installDir && piBoltCompileWanted(installDir)) {
 		console.log(chalk.dim(`Compiling the extensions compiled in before into Pi-Bolt ${version}...`));
 		const compiled = spawnProcessSync(installed, ["compile", "--after-update"], {
 			cwd: homedir(),
@@ -1072,7 +1075,7 @@ export async function handlePackageCommand(
 	if (PIBOLT && args[0] === "compile") {
 		const build = PIBOLT;
 		process.exitCode = await runPiBoltCompile(args.slice(1), () =>
-			runPiBoltSelfUpdate(build.version, { reinstall: true }),
+			runPiBoltSelfUpdate(build.version, { reinstall: true, recompile: false }),
 		);
 		return true;
 	}

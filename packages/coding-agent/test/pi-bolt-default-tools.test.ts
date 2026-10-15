@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { DEFAULT_TOOL_NAMES, defaultToolNamesFor } from "../src/core/settings-manager.ts";
+import { DEFAULT_TOOL_NAMES, defaultToolNamesFor, SettingsManager } from "../src/core/settings-manager.ts";
 import type * as PiBolt from "../src/pi-bolt.ts";
 
 // A Pi-Bolt build (scripts/build-pi.sh defines PIBOLT_BUILD); the tests run as Pi otherwise. (vi.mock runs before the imports.)
@@ -25,5 +25,26 @@ describe("Pi-Bolt's default tools", () => {
 
 	test("a package that only has fff in its name is not FFF", () => {
 		expect(defaultToolNamesFor(["/x/node_modules/opensec-pi-fff-extras/index.js"])).toEqual(DEFAULT_TOOL_NAMES);
+	});
+
+	// A defaultTools setting of only +name/-name entries changes the default tools, FFF or not.
+	test("a setting that only adds or removes changes the defaults these extensions give", () => {
+		const fff = defaultToolNamesFor(["builtin:opensec-pi-fff"]);
+		expect(SettingsManager.inMemory({ defaultTools: ["+codemode"] }).getDefaultTools(fff)).toEqual([
+			"read",
+			"bash",
+			"edit",
+			"write",
+			"codemode",
+		]);
+		expect(SettingsManager.inMemory({ defaultTools: ["-write"] }).getDefaultTools(fff)).toEqual([
+			"read",
+			"bash",
+			"edit",
+		]);
+		expect(SettingsManager.inMemory({ defaultTools: ["read", "grep"] }).getDefaultTools(fff)).toEqual([
+			"read",
+			"grep",
+		]);
 	});
 });

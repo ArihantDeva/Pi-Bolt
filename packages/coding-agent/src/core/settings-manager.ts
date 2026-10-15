@@ -145,12 +145,12 @@ function mergeDefaultTools(base: string[] | undefined, overrides: string[] | und
 }
 
 /**
- * Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name` adds
+ * Resolve a merged `defaultTools` list: plain names replace `base` (`DEFAULT_TOOL_NAMES`), then `+name` adds
  * and `-name` removes a tool, in list order.
  */
-function resolveDefaultTools(entries: string[]): string[] {
+function resolveDefaultTools(entries: string[], base: readonly string[]): string[] {
 	const plain = entries.filter((entry) => !isToolModifier(entry));
-	return applyToolModifiers(plain.length > 0 || entries.length === 0 ? plain : DEFAULT_TOOL_NAMES, entries);
+	return applyToolModifiers(plain.length > 0 || entries.length === 0 ? plain : base, entries);
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1634,10 +1634,11 @@ export class SettingsManager {
 	}
 
 	/** The resolved `defaultTools` selection, or undefined when no settings layer sets it. */
-	getDefaultTools(): string[] | undefined {
+	/** `base`: what a list of only `+name`/`-name` entries changes (Pi-Bolt: `defaultToolNamesFor()`, which knows the extensions). */
+	getDefaultTools(base: readonly string[] = DEFAULT_TOOL_NAMES): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		if (tools === undefined) return undefined;
-		return resolveDefaultTools(Array.isArray(tools) ? tools.filter((tool) => typeof tool === "string") : []);
+		return resolveDefaultTools(Array.isArray(tools) ? tools.filter((tool) => typeof tool === "string") : [], base);
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

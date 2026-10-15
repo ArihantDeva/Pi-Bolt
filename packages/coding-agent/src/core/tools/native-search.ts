@@ -10,7 +10,7 @@
  * order. Regular expressions are JavaScript's, with ripgrep's (?i) and (?P<name>...) understood; like ripgrep, a match is
  * within one line.
  */
-import { type Dirent, existsSync, readFileSync } from "node:fs";
+import { type Dirent, existsSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -234,6 +234,29 @@ function globalExcludesFile(): string {
 	return path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "git", "ignore");
 }
 
+/**
+ * The info/exclude file of the repository whose working folder is `dir`, as `git rev-parse --git-path info/exclude` finds it: in
+ * `.git`, or, where `.git` is a file (a linked worktree, a submodule), in the folder it names, or in that one's common folder.
+ */
+function excludeFileOf(dir: string): string {
+	const dotGit = path.join(dir, ".git");
+	try {
+		if (statSync(dotGit).isDirectory()) return path.join(dotGit, "info", "exclude");
+		const gitDir = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"))?.[1];
+		if (!gitDir) return path.join(dotGit, "info", "exclude");
+		const resolved = path.resolve(dir, gitDir);
+		let common = resolved;
+		try {
+			common = path.resolve(resolved, readFileSync(path.join(resolved, "commondir"), "utf8").trim());
+		} catch {
+			// (A submodule's folder, or an older layout: its own info/exclude.)
+		}
+		return path.join(common, "info", "exclude");
+	} catch {
+		return path.join(dotGit, "info", "exclude");
+	}
+}
+
 /** The git repository folder `dir` is in (where .git is), or undefined. */
 function repositoryOf(dir: string): string | undefined {
 	for (let current = dir; ; ) {
@@ -283,7 +306,7 @@ export async function walk(options: WalkOptions): Promise<WalkEntry[]> {
 	const rules: IgnoreRule[] = [];
 	if (repository) {
 		rules.push(...readRules(globalExcludesFile(), "", true));
-		rules.push(...readRules(path.join(repository, ".git", "info", "exclude"), "", true));
+		rules.push(...readRules(excludeFileOf(repository), "", true));
 		// The ignore files of the folders from the repository's down to the search folder's parent.
 		let dir = repository;
 		for (const segment of rootRel ? rootRel.split("/") : []) {
@@ -309,7 +332,7 @@ export async function walk(options: WalkOptions): Promise<WalkEntry[]> {
 		if (task.rel !== "" && names.has(".git")) {
 			// A repository of its own: the ignore rules of the one around it stop here.
 			taskRules = taskRules.filter((rule) => !rule.git);
-			taskRules.push(...readRules(path.join(task.abs, ".git", "info", "exclude"), base, true));
+			taskRules.push(...readRules(excludeFileOf(task.abs), base, true));
 			taskGit = true;
 		}
 		if (taskGit && names.has(".gitignore")) {
@@ -405,7 +428,10 @@ export interface NativeGrepOptions {
 	signal?: AbortSignal;
 }
 
-/** A ripgrep (Rust) regular expression as JavaScript's: (?i) and (?P<name>...), the forms that differ and are common. */
+/**
+ * A ripgrep (Rust) regular expression as JavaScript's: (?i), (?P<name>...) and \x{...}/\u{...} code points, the forms that
+ * differ and are common.
+ */
 export function translatePattern(pattern: string): { source: string; ignoreCase: boolean } {
 	let source = pattern;
 	let ignoreCase = false;
@@ -414,6 +440,17 @@ export function translatePattern(pattern: string): { source: string; ignoreCase:
 		source = source.slice(4);
 	}
 	source = source.replace(/\(\?P</g, "(?<");
+	// `\x{1F600}` and `\u{65}`, a code point (in JavaScript without the u flag, `\u{65}` is 65 u's): as \uXXXX, or two for
+	// a code point past U+FFFF. (An escaped backslash before it is left alone.)
+	source = source.replace(/(?<!\\)((?:\\\\)*)\\[xu]\{([0-9A-Fa-f]{1,6})\}/g, (match, slashes: string, hex: string) => {
+		const codePoint = Number.parseInt(hex, 16);
+		if (codePoint > 0x10ffff) return match; // (Not a code point: left for the expression to refuse.)
+		const units = String.fromCodePoint(codePoint);
+		const escaped = [...Array(units.length).keys()]
+			.map((k) => `\\u${units.charCodeAt(k).toString(16).padStart(4, "0")}`)
+			.join("");
+		return `${slashes}${units.length > 1 ? `(?:${escaped})` : escaped}`;
+	});
 	return { source, ignoreCase };
 }
 
@@ -421,6 +458,9 @@ export function translatePattern(pattern: string): { source: string; ignoreCase:
  * The longest run of plain characters every match of `source` contains, when it is easy to be sure of one (no alternation,
  * outside any group, not made optional): files without it need no regular expression run over them.
  */
+/** Escapes that are one character of the pattern and match no particular text: classes, anchors, white space. */
+const SIMPLE_ESCAPES = "dDwWsSbBAzZntrfv";
+
 export function requiredLiteral(source: string): string | undefined {
 	if (source.includes("|") || source.includes("(?")) return undefined;
 	let best = "";
@@ -433,6 +473,10 @@ export function requiredLiteral(source: string): string | undefined {
 	for (let i = 0; i < source.length; i++) {
 		const c = source[i];
 		if (c === "\\") {
+			// A class or an anchor (`\d`, `\b`), or an escaped sign (`\.`): one character, and not a known one. An escape that
+			// stands for a character or more (`\x66`, `\u{1F600}`, `\p{L}`, `\1`) has a length of its own: no literal then.
+			const next = source[i + 1] ?? "";
+			if (/[0-9A-Za-z]/.test(next) && !SIMPLE_ESCAPES.includes(next)) return undefined;
 			end();
 			i++;
 			continue;

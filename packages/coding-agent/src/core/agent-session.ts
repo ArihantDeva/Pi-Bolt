@@ -3737,16 +3737,16 @@ export class AgentSession {
 		const previousFlagValues = oldRunner.getFlagValues();
 		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
 		oldRunner.invalidate();
-		const getDefaultTools = () =>
-			this._usesDefaultTools
-				? applyToolModifiers(
-						this.settingsManager.getDefaultTools() ??
-							defaultToolNamesFor(
-								this._resourceLoader.getExtensions().extensions.map((extension) => extension.path),
-							),
-						this._defaultToolModifiers,
-					)
-				: [];
+		const getDefaultTools = () => {
+			if (!this._usesDefaultTools) return [];
+			const builtIn = defaultToolNamesFor(
+				this._resourceLoader.getExtensions().extensions.map((extension) => extension.path),
+			);
+			return applyToolModifiers(
+				this.settingsManager.getDefaultTools(builtIn) ?? builtIn,
+				this._defaultToolModifiers,
+			);
+		};
 		const previousDefaultTools = new Set(getDefaultTools());
 		await this.settingsManager.reload();
 		this.syncQueueModesFromSettings();

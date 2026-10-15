@@ -279,10 +279,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const toolListError = options.tools ? getToolListError(options.tools) : undefined;
 	if (toolListError) throw new Error(`Invalid tools option: ${toolListError}`);
+	const builtInDefaultTools = defaultToolNamesFor(
+		resourceLoader.getExtensions().extensions.map((extension) => extension.path),
+	);
 	const defaultToolNames = options.noTools
 		? []
-		: (settingsManager.getDefaultTools() ??
-			defaultToolNamesFor(resourceLoader.getExtensions().extensions.map((extension) => extension.path)));
+		: (settingsManager.getDefaultTools(builtInDefaultTools) ?? builtInDefaultTools);
 	// A `tools` list of only `+name`/`-name` entries changes the default selection instead of
 	// replacing it, like the `defaultTools` setting.
 	const toolModifiers = options.tools?.some(isToolModifier) ? options.tools : undefined;

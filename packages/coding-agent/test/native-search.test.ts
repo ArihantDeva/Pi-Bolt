@@ -88,6 +88,8 @@ describe("regular expressions", () => {
 	test("ripgrep's inline flag and named groups", () => {
 		expect(translatePattern("(?i)foo")).toEqual({ source: "foo", ignoreCase: true });
 		expect(translatePattern("(?P<word>\\w+)")).toEqual({ source: "(?<word>\\w+)", ignoreCase: false });
+		expect(translatePattern("n\\u{65}edle")).toEqual({ source: "n\\u0065edle", ignoreCase: false });
+		expect(translatePattern("\\x{1F600}|\\\\u{65}").source).toBe("(?:\\ud83d\\ude00)|\\\\u{65}");
 	});
 
 	test("the literal every match contains, only when it is sure", () => {
@@ -96,6 +98,12 @@ describe("regular expressions", () => {
 		expect(requiredLiteral("foo|bar")).toBeUndefined();
 		expect(requiredLiteral("(abc)?def")).toBe("def");
 		expect(requiredLiteral("a.b")).toBeUndefined();
+		// An escape that stands for a character (or more) is not its text: `\x66oo` matches "foo", not "66oo".
+		expect(requiredLiteral("\\x66oo")).toBeUndefined();
+		expect(requiredLiteral("n\\u0065edle")).toBeUndefined();
+		expect(requiredLiteral("\\p{L}abc")).toBeUndefined();
+		expect(requiredLiteral("(a)\\1bcd")).toBeUndefined();
+		expect(requiredLiteral("needle\\.\\d+")).toBe("needle");
 	});
 });
 
@@ -184,6 +192,10 @@ describe("grep", () => {
 		expect(where(await grep("needle\\w*\\(", {}))).toEqual(["src/a.ts:3:function needleFn() {}"]);
 	});
 
+	test("an escape that stands for a character", async () => {
+		expect(where(await grep("\\x6eeedle two"))).toEqual(["src/sub/b.ts:1:needle two"]);
+	});
+
 	test("a match is within one line", async () => {
 		expect(where(await grep("needle = 1;\\s+const"))).toEqual([]);
 		expect(where(await grep("other = 2;\\s*"))).toEqual(["src/a.ts:2:const other = 2;"]);
@@ -245,6 +257,8 @@ describe.skipIf(!has("rg") || !has("fd"))("the same results as ripgrep and fd", 
 		{ pattern: "^const \\w+ = \\d;$" },
 		{ pattern: "needle", context: 1 },
 		{ pattern: "(?i)NEEDLE (two|upper)" },
+		{ pattern: "\\x6eeedle" },
+		{ pattern: "n\\u{65}edle \\w+" },
 	])("grep %o", async (input) => {
 		const withRg = await createGrepTool(root, { native: false }).execute("t", input);
 		const inProcess = await createGrepTool(root, { native: true }).execute("t", input);
@@ -259,4 +273,31 @@ describe.skipIf(!has("rg") || !has("fd"))("the same results as ripgrep and fd", 
 			expect(text(inProcess)).toEqual(text(withFd));
 		},
 	);
+});
+
+const git = (cwd: string, ...args: string[]) =>
+	spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main", ...args], {
+		cwd,
+		stdio: "ignore",
+	}).status === 0;
+
+// A linked worktree's .git is a file naming its folder in the main repository, whose info/exclude it shares.
+describe.skipIf(!has("git"))("a linked worktree", () => {
+	test("its info/exclude is the repository's, as git rev-parse --git-path info/exclude finds it", async () => {
+		const top = mkdtempSync(join(tmpdir(), "pibolt-worktree-"));
+		try {
+			const main = join(top, "main");
+			mkdirSync(main);
+			expect(git(main, "init", "-q") && git(main, "commit", "-q", "--allow-empty", "-m", "x")).toBe(true);
+			expect(git(main, "worktree", "add", "-q", join(top, "linked"))).toBe(true);
+			writeFileSync(join(main, ".git", "info", "exclude"), "secret.txt\n");
+			writeFileSync(join(top, "linked", "secret.txt"), "needle\n");
+			writeFileSync(join(top, "linked", "plain.txt"), "needle\n");
+			const rels = (await walk({ root: join(top, "linked"), requireGit: true })).map((entry) => entry.rel);
+			expect(rels).toContain("plain.txt");
+			expect(rels).not.toContain("secret.txt");
+		} finally {
+			rmSync(top, { recursive: true, force: true });
+		}
+	});
 });
