@@ -94,8 +94,10 @@ export function extensionOfStack(stack: string | undefined, extensionPaths: read
 	if (!stack) return undefined;
 	const roots = extensionPaths.filter((path) => isAbsolute(path)).map((path) => ({ path, root: extensionRoot(path) }));
 	for (const file of stackFiles(stack)) {
+		// The extension's own file first: single-file extensions in one folder share it as their root.
+		if (extensionPaths.includes(file)) return file;
 		const owner = roots
-			.filter(({ path, root }) => file === path || file.startsWith(root + sep))
+			.filter(({ root }) => file.startsWith(root + sep))
 			.sort((a, b) => b.root.length - a.root.length)[0];
 		if (owner) return owner.path;
 	}

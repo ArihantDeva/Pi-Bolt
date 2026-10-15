@@ -209,13 +209,23 @@ function piBoltOnPath(env: NodeJS.ProcessEnv = process.env): PathEntry[] {
 			} catch {
 				continue;
 			}
-			const real = realpathOr(path);
+			const real = npmShimTarget(path) ?? realpathOr(path);
 			if (seen.has(real)) continue;
 			seen.add(real);
 			entries.push({ path, real });
 		}
 	}
 	return entries;
+}
+
+/**
+ * What a shim npm made on Windows starts: pi-bolt.cmd, pi-bolt.ps1 and pi-bolt (for Git Bash) in npm's global folder are
+ * scripts that run node_modules\pi-bolt\bin\pi-bolt.exe beside them, which no link leads to.
+ */
+function npmShimTarget(path: string): string | undefined {
+	if (process.platform !== "win32" || /\.exe$/i.test(path)) return undefined;
+	const target = join(dirname(path), "node_modules", "pi-bolt", "bin", "pi-bolt.exe");
+	return existsSync(target) ? realpathOr(target) : undefined;
 }
 
 /** The npm package's launcher (npm/bin/pi-bolt): it starts the executable of its version from ~/.pi-bolt/npm. */
@@ -311,7 +321,8 @@ export function verifyReleaseSums(
 	if (firstLine(text) !== `# pi-bolt ${version}`) {
 		return { status: "bad", detail: `the signed SHA256SUMS is not release ${version}'s` };
 	}
-	const listed = archives.find((archive) => new RegExp(` [ *]?${archive.replace(/[.]/g, "\\.")}$`, "m").test(text));
+	const files = new Set(text.split(/\r?\n/).map((line) => line.split(/\s+[ *]?/)[1]));
+	const listed = archives.find((archive) => files.has(archive));
 	if (!listed) return { status: "bad", detail: `the signed SHA256SUMS lists no ${archives.join(" or ")}` };
 	return { status: "verified", detail: `signature verified, ${listed} listed` };
 }
@@ -995,7 +1006,7 @@ export function redactReport(text: string, homes: readonly string[]): string {
 	// Longest first, and only where a path starts (not inside another path: /private/var/... holds /var/...).
 	for (const home of [...new Set(homes)].filter((h) => h.length > 1).sort((a, b) => b.length - a.length)) {
 		const escaped = home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-		result = result.replace(new RegExp(`(^|[\\s"'(=:,>])${escaped}(?=[\\/]|$|[\\s"'),;:])`, "gm"), "$1~");
+		result = result.replace(new RegExp(`(^|[\\s"'(=:,>])${escaped}(?=[\\\\/]|$|[\\s"'),;:])`, "gm"), "$1~");
 	}
 	return result
 		.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1***@")

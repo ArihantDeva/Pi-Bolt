@@ -139,6 +139,11 @@ describe("extensionDisplayName and extensionOfStack", () => {
 		].join("\n");
 		expect(extensionOfStack(stack, [join(foo, "index.ts"), join(bar, "index.ts")])).toBe(join(bar, "index.ts"));
 		expect(extensionOfStack("Error\n    at main (/$bunfs/root/pi:1:1)", [join(foo, "index.ts")])).toBeUndefined();
+		// Single-file extensions in one folder: the frame's own file names it.
+		const folder = join(tempDir, "extensions");
+		mkdirSync(folder);
+		const single = `Error\n    at <anonymous> (${join(folder, "b.ts")}:2:3)`;
+		expect(extensionOfStack(single, [join(folder, "a.ts"), join(folder, "b.ts")])).toBe(join(folder, "b.ts"));
 		expect(extensionOfStack(undefined, [join(foo, "index.ts")])).toBeUndefined();
 	});
 });

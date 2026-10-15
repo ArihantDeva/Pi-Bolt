@@ -58,6 +58,17 @@ describe("the release signature", () => {
 		expect(result).toEqual({ status: "verified", detail: "signature verified, pi-bolt-darwin-arm64.tar.xz listed" });
 	});
 
+	it("reads checksum lines of either form", () => {
+		const binary = Buffer.from("# pi-bolt 0.8.8\nabc123 *pi-bolt-win32-x64.zip\n", "utf8");
+		expect(
+			verifyReleaseSums(binary, sign(null, binary, privateKey), "0.8.8", ["pi-bolt-win32-x64.zip"], key).status,
+		).toBe("verified");
+		// (A name is matched as it is, not as a pattern: "." is no wildcard.)
+		expect(
+			verifyReleaseSums(binary, sign(null, binary, privateKey), "0.8.8", ["pi-bolt-win32-x64Xzip"], key).status,
+		).toBe("bad");
+	});
+
 	it("rejects another key's signature, another release's checksums, and checksums without this build", () => {
 		const other = generateKeyPairSync("ed25519").privateKey;
 		expect(verifyReleaseSums(sums, sign(null, sums, other), "0.8.8", archives, key).status).toBe("bad");
@@ -218,6 +229,13 @@ describe("the report", () => {
 				"  - Pi-Bolt 0.9.0 is out: `pi-bolt update`.",
 				"",
 			].join("\n"),
+		);
+	});
+
+	it("keeps a Windows home folder out", () => {
+		const text = "C:\\Users\\Alice\\.pi\\agent\nproject C:\\Users\\Alice: nothing\nD:\\C:\\Users\\Alice\\x";
+		expect(redactReport(text, ["C:\\Users\\Alice"])).toBe(
+			"~\\.pi\\agent\nproject ~: nothing\nD:\\C:\\Users\\Alice\\x",
 		);
 	});
 
