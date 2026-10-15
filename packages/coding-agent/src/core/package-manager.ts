@@ -1835,10 +1835,7 @@ export class DefaultPackageManager implements PackageManager {
 			// A compiled Bun executable is the bun CLI when started with BUN_BE_BUN=1, so it always carries a package
 			// manager. Use it where npm is not installed; npm on PATH keeps lifecycle scripts, npm config and lockfiles.
 			if (isBunBinary && !this.isNpmOnPath()) {
-				// (In Termux, without the LD_PRELOAD Pi-Bolt gives the programs it starts: runtime-setup.ts.)
-				const env: Record<string, string> = { BUN_BE_BUN: "1" };
-				if (process.env.PIBOLT_TERMUX_LD_PRELOAD !== undefined) env.LD_PRELOAD = "";
-				return { command: process.execPath, args: [], env, builtin: true };
+				return { command: process.execPath, args: [], env: { BUN_BE_BUN: "1" }, builtin: true };
 			}
 			return { command: "npm", args: [] };
 		}

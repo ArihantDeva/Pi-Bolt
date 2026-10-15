@@ -975,7 +975,7 @@ is_arm64() { case "$(uname -m)" in aarch64 | arm64) return 0 ;; *) return 1 ;; e
 
 # Termux, the Linux environment of Android: TERMUX_VERSION is set in its shells, and its prefix is where it always is.
 is_termux() {
-	[ "$(uname -s)" = Linux ] || return 1
+	[ "$(uname -s)" = Linux ] && [ -n "${PREFIX:-}" ] || return 1
 	[ -n "${TERMUX_VERSION:-}" ] && return 0
 	case "${PREFIX:-}" in */com.termux/files/usr) return 0 ;; esac
 	return 1
@@ -1005,7 +1005,8 @@ setup_termux() {
 	fi
 	for file in resolv.conf hosts; do
 		if [ ! -e "$PREFIX/glibc/etc/$file" ] && [ -e "$PREFIX/etc/$file" ]; then
-			mkdir -p "$PREFIX/glibc/etc" && cp "$PREFIX/etc/$file" "$PREFIX/glibc/etc/$file"
+			{ mkdir -p "$PREFIX/glibc/etc" && cp "$PREFIX/etc/$file" "$PREFIX/glibc/etc/$file"; } ||
+				fail "could not copy $PREFIX/etc/$file to $PREFIX/glibc/etc"
 		fi
 	done
 	if [ -n "${LD_PRELOAD+x}" ]; then
@@ -1041,12 +1042,14 @@ set_interpreter() {
 # write_termux_launcher FILE DIR: the command that starts DIR/pi in Termux: without Termux's LD_PRELOAD (kept for the programs Pi
 # starts, in PIBOLT_TERMUX_LD_PRELOAD), and in Android's time zone, which glibc does not find by itself.
 write_termux_launcher() {
+	# (The folder in single quotes, each of its own as '\'': it is the user's choice, and may have any character.)
+	dir=$(printf '%s' "$2" | sed "s/'/'\\\\''/g")
 	cat >"$1" <<EOF
 #!$PREFIX/bin/sh
 # Pi-Bolt in Termux, written by its installer (install.sh).
 if [ -n "\${LD_PRELOAD+x}" ]; then export PIBOLT_TERMUX_LD_PRELOAD="\$LD_PRELOAD"; unset LD_PRELOAD; fi
 if [ -z "\${TZ:-}" ]; then TZ=\$(getprop persist.sys.timezone 2>/dev/null) || TZ=""; if [ -n "\$TZ" ]; then export TZ; else unset TZ; fi; fi
-exec "$2/pi" "\$@"
+exec '$dir/pi' "\$@"
 EOF
 	chmod 755 "$1"
 }

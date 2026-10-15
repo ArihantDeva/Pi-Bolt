@@ -24,8 +24,8 @@ int main(int argc, char** argv)
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
         // Refused to apps until Android 11 (pidfd_open), 12 (the other pidfd calls), 15 (epoll_pwait2), or always (rseq, openat2,
         // fchmodat2, io_uring, futex_waitv). Not clone3 and close_range (refused until Android 15 and 14): Termux's glibc does not
-        // make them, and the glibc this runs with does, where no handler sees them (with every signal blocked, or in the child
-        // of posix_spawn, whose handlers are reset).
+        // make them (its close_range() and syscall() emulate close_range), and the glibc this runs with does, where no handler sees
+        // them (with every signal blocked, or in the child of posix_spawn, whose handlers are reset).
         REFUSE(293), // rseq
         REFUSE(424), // pidfd_send_signal
         REFUSE(425), // io_uring_setup

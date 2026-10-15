@@ -103,7 +103,7 @@ mkdir -p "$WORK/extensions" && cp "$ROOT/tests/termux/termux-env.js" "$ROOT/test
 for filter in "" "$WORK/android-filter"; do
 	what="the programs Pi starts get Termux's LD_PRELOAD back, in Android's time zone${filter:+, under the Android filter}"
 	out=$(LD_PRELOAD="$PRELOAD" $filter pi-bolt -ne -e "$WORK/extensions/termux-env.js" --offline --no-session -p hi 2>&1 </dev/null)
-	want="termux-env: sync=$PRELOAD async=$PRELOAD tz=Asia/Kolkata"
+	want="termux-env: sync=$PRELOAD async=$PRELOAD glibc-after=true tz=Asia/Kolkata"
 	if grep -qxF "$want" <<<"$out"; then pass "$what"; else fail "$what" "$out"; fi
 done
 
