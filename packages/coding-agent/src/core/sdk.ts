@@ -19,7 +19,7 @@ import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import {
 	applyToolModifiers,
-	DEFAULT_TOOL_NAMES,
+	defaultToolNamesFor,
 	getToolListError,
 	isToolModifier,
 	SettingsManager,
@@ -279,7 +279,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const toolListError = options.tools ? getToolListError(options.tools) : undefined;
 	if (toolListError) throw new Error(`Invalid tools option: ${toolListError}`);
-	const defaultToolNames = options.noTools ? [] : (settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES);
+	const defaultToolNames = options.noTools
+		? []
+		: (settingsManager.getDefaultTools() ??
+			defaultToolNamesFor(resourceLoader.getExtensions().extensions.map((extension) => extension.path)));
 	// A `tools` list of only `+name`/`-name` entries changes the default selection instead of
 	// replacing it, like the `defaultTools` setting.
 	const toolModifiers = options.tools?.some(isToolModifier) ? options.tools : undefined;

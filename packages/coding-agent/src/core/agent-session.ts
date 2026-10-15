@@ -132,7 +132,7 @@ import {
 import {
 	applyToolModifiers,
 	type CacheWarmingMode,
-	DEFAULT_TOOL_NAMES,
+	defaultToolNamesFor,
 	type SettingsManager,
 } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
@@ -3740,7 +3740,10 @@ export class AgentSession {
 		const getDefaultTools = () =>
 			this._usesDefaultTools
 				? applyToolModifiers(
-						this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES,
+						this.settingsManager.getDefaultTools() ??
+							defaultToolNamesFor(
+								this._resourceLoader.getExtensions().extensions.map((extension) => extension.path),
+							),
 						this._defaultToolModifiers,
 					)
 				: [];

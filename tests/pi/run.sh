@@ -121,4 +121,7 @@ bedrock() {
 }
 bedrock "Bedrock loads (the request is refused)" AWS_ENDPOINT_URL_BEDROCK_RUNTIME=http://127.0.0.1:1
 bedrock "Bedrock loads behind a proxy (the proxy refuses)" AWS_ENDPOINT_URL_BEDROCK_RUNTIME=https://127.0.0.1:1 HTTPS_PROXY=http://127.0.0.1:1 https_proxy=http://127.0.0.1:1
+
+# Pi-Bolt's grep and find tools, in-process: on by default, and not with FFF loaded.
+python3 search-tools.py "$PI" || status=1
 exit $status

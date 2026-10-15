@@ -215,6 +215,10 @@ pi-bolt compile
 It compiles the extensions installed on this machine into your Pi-Bolt (Linux and macOS) with the release's own compiler, and
 `pi-bolt update` compiles them into each new release. See [docs/PLUGINS.md](docs/PLUGINS.md).
 
+Pi-Bolt's `grep` and `find` tools are on by default and search in-process, following `.gitignore`, with nothing to install.
+With [`opensec-pi-fff`](https://www.npmjs.com/package/opensec-pi-fff) or `@ff-labs/pi-fff` loaded, FFF's search tools are used
+instead.
+
 ### Pi and Pi-Bolt side by side
 
 Pi-Bolt uses Pi's agent directory (`~/.pi/agent`), so your Pi setup works in it as it is. Packages you install with `pi-bolt`

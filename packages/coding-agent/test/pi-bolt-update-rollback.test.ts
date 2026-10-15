@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { DEFAULT_TOOL_NAMES, defaultToolNamesFor } from "../src/core/settings-manager.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
 import { piBoltChannel, setPiBoltChannel } from "../src/pi-bolt.ts";
 import { rollBackInstallation, swapFolderContents } from "../src/pi-bolt-rollback.ts";
@@ -143,6 +144,11 @@ describe("Pi itself (not a Pi-Bolt build) is unchanged", () => {
 		} finally {
 			error.mockRestore();
 		}
+	});
+
+	test("the default tools are Pi's, FFF or not", () => {
+		expect(DEFAULT_TOOL_NAMES).toEqual(["read", "bash", "edit", "write"]);
+		expect(defaultToolNamesFor(["builtin:opensec-pi-fff"])).toEqual(["read", "bash", "edit", "write"]);
 	});
 
 	test("compile is not a command: it stays a message to the model", async () => {
