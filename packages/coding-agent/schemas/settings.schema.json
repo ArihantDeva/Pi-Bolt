@@ -364,7 +364,7 @@
             ],
             "description": "Package source for npm or git packages. Use the string form to load all resources or the object form to filter resources."
           },
-          "description": "Pi-Bolt's own package sources, loaded by Pi-Bolt in place of packages; Pi keeps using packages."
+          "description": "Pi-Bolt package additions and same-identity replacements over this file's shared packages. Use -<source> strings to exclude inherited packages. An empty list inherits shared packages."
         }
       },
       "description": "Pi-Bolt only settings."

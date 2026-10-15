@@ -45,7 +45,8 @@
 <p>These are configuration overrides, not separate installations. Pi and Pi-Bolt share installed package files, so selecting
   different versions or Git refs of the same package can replace the files used by both.</p>
 <p><strong>Existing configurations:</strong> <code>piBolt.packages</code> is now additive, including existing lists and empty
-  arrays. Shared packages previously absent from that list are inherited again. Add <code>-source</code> entries for packages
+  arrays. Packages copied into both lists load once, with the Pi-Bolt entry taking precedence. Shared packages previously absent
+  from that list are inherited again. Add <code>-source</code> entries for packages
   you want excluded; remove copied entries to let future shared changes apply to them. No automatic conversion preserves the
   old independent-list behaviour.</p>
 <p>The installer uses <code>--pi-bolt</code> for OpenSec's optional Bun-only extensions. The existing startup repair for older

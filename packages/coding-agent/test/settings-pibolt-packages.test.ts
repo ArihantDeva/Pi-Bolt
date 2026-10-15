@@ -133,6 +133,28 @@ describe("Pi-Bolt additive package inheritance", () => {
 		expect((await packages.resolve()).extensions).toHaveLength(6);
 	});
 
+	// #28: older versions copied the shared list; those snapshots must not load duplicate resources.
+	test("legacy copied lists load each package once, retain filters and inherit later additions", async () => {
+		installedNpm("tools");
+		const shared = localPackage("shared");
+		const own = localPackage("own");
+		const copied: PackageSource[] = ["npm:tools", { source: shared, extensions: ["-extensions/a.ts"] }, own];
+		writeSettings({ packages: ["npm:tools", shared], piBolt: { packages: copied } });
+		const { settings, packages } = manager();
+		const resolved = await packages.resolve();
+		expect(packages.listConfiguredPackages()).toHaveLength(3);
+		expect(resolved.extensions).toHaveLength(5);
+		expect(new Set(resolved.extensions.map((entry) => entry.path)).size).toBe(5);
+		expect(resolved.extensions.filter((entry) => entry.enabled)).toHaveLength(4);
+		expect(readSettings()).toEqual({ packages: ["npm:tools", shared], piBolt: { packages: copied } });
+		const later = localPackage("later");
+		writeSettings({ ...readSettings(), packages: ["npm:tools", shared, later] });
+		await settings.reload();
+		expect(packages.listConfiguredPackages()).toHaveLength(4);
+		expect((await packages.resolve()).extensions).toHaveLength(7);
+		expect(readSettings().piBolt?.packages).toEqual(copied);
+	});
+
 	test("empty overlays inherit and empty project packages do not disable global resolution", async () => {
 		const shared = localPackage("shared");
 		writeSettings({ packages: [shared], piBolt: { packages: [] } }, { packages: [], piBolt: { packages: [] } });
