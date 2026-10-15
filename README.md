@@ -98,7 +98,8 @@ Download a build from the [latest release](https://github.com/opensec-git/Pi-Bol
 | `pi-bolt-darwin-arm64.tar.xz` | **macOS**, Apple silicon |
 | `pi-bolt-win32-x64.zip` | **Windows** x64; compiled code on CPUs with AVX2, bytecode on others |
 
-`-jit` builds are for heavy use of plugins loaded at run time; the runtime archive is for [compiling plugins in](docs/PLUGINS.md).
+`-jit` builds are for heavy use of plugins loaded at run time; the runtime and kit archives are what `pi-bolt compile` builds
+with ([compiling plugins in](docs/PLUGINS.md)).
 In Termux, use the installer: it sets the executable's loader to Termux's glibc ([below](#android-termux)).
 
 </details>
@@ -205,13 +206,14 @@ working set.)
 ## Plugins
 
 Pi extensions work unchanged. The default build has no JIT, so an extension loaded at run time is interpreted; compile the ones
-you use every day into the executable, where they run as machine code:
+you use every day into Pi-Bolt, where they run as machine code:
 
 ```bash
-scripts/build-pi.sh --plugins my-plugins/plugins.ts --out out/pi-bolt-plugins
+pi-bolt compile
 ```
 
-See [docs/PLUGINS.md](docs/PLUGINS.md).
+It compiles the extensions installed on this machine into your Pi-Bolt (Linux and macOS) with the release's own compiler, and
+`pi-bolt update` compiles them into each new release. See [docs/PLUGINS.md](docs/PLUGINS.md).
 
 ### Pi and Pi-Bolt side by side
 

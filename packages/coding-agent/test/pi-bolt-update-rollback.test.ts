@@ -144,4 +144,8 @@ describe("Pi itself (not a Pi-Bolt build) is unchanged", () => {
 			error.mockRestore();
 		}
 	});
+
+	test("compile is not a command: it stays a message to the model", async () => {
+		expect(await handlePackageCommand(["compile"])).toBe(false);
+	});
 });

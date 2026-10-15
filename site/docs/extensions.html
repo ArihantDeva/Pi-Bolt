@@ -133,8 +133,17 @@
 <span class="p">$ </span>pi-bolt install npm:opensec-pi-fff</pre>
 
 <h2 id="compile-extensions-in">Compile extensions in<a class="anchor" href="#compile-extensions-in" aria-label="Link to this section">#</a></h2>
-<p>An extension compiled into the executable runs as machine code like Pi itself, with no startup cost. It needs a Pi-Bolt build
-  environment (see <a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/BUILDING.md">Building</a>).</p>
+<p>An extension compiled into the executable runs as machine code like Pi itself, with no startup cost. On Linux and macOS,
+  <code>pi-bolt compile</code> compiles the extensions you have installed into your Pi-Bolt:</p>
+<pre data-label="Terminal"><span class="p">$ </span>pi-bolt compile                          <span class="c"># the extensions installed here</span>
+<span class="p">$ </span>pi-bolt compile --exclude big-bundle     <span class="c"># all but these (--only: just these)</span>
+<span class="p">$ </span>pi-bolt compile --off                    <span class="c"># the release's executable again</span></pre>
+<p>It downloads its release's runtime and compile kit, checks them against the release's signature, and builds in about 20
+  seconds. The build it replaces is kept (<code>pi-bolt update --rollback</code> puts it back), and <code>pi-bolt update</code>
+  compiles the same extensions into each new release. An extension compiled in is used while its installed copy is unchanged;
+  one changed since is loaded from its files, with a warning to compile it in again.</p>
+<p>To build with a manifest of your own (on Windows too), use a Pi-Bolt build environment (see
+  <a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/BUILDING.md">Building</a>):</p>
 <ol class="steps">
   <li>
     <strong>Write a manifest</strong>

@@ -49,6 +49,7 @@ import {
 	piBoltUpdateEnvironment,
 	setPiBoltChannel,
 } from "./pi-bolt.ts";
+import { piBoltCompileWanted, runPiBoltCompile } from "./pi-bolt-compile.ts";
 import { rollbackPiBolt } from "./pi-bolt-rollback.ts";
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
 import { canonicalizePath, getCwdRelativePath } from "./utils/paths.ts";
@@ -785,7 +786,7 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
  * Updates a Pi-Bolt installation to the latest release: the installer, run again, replaces the executable in place (same
  * variant, same folder). One installed with the npm package is updated with the package manager instead.
  */
-async function runPiBoltSelfUpdate(version: string): Promise<boolean> {
+async function runPiBoltSelfUpdate(version: string, options: { reinstall?: boolean } = {}): Promise<boolean> {
 	if (piBoltInstallMethod() === "npm") {
 		console.log(
 			`This Pi-Bolt was installed with the npm package. Update it with the package manager that installed it:`,
@@ -821,7 +822,30 @@ async function runPiBoltSelfUpdate(version: string): Promise<boolean> {
 		console.error(chalk.red(`You can run the installer yourself: ${PIBOLT_INSTALL_COMMAND}`));
 		return false;
 	}
-	console.log(chalk.green(`Updated Pi-Bolt from ${PIBOLT?.version} to ${version}`));
+	console.log(
+		chalk.green(
+			options.reinstall
+				? `Installed Pi-Bolt ${version} again`
+				: `Updated Pi-Bolt from ${PIBOLT?.version} to ${version}`,
+		),
+	);
+	// Extensions `pi-bolt compile` compiled in before are compiled into this release too, by the release itself.
+	const installDir = piBoltUpdateEnvironment(version).PIBOLT_INSTALL;
+	if (installDir && piBoltCompileWanted(installDir)) {
+		console.log(chalk.dim(`Compiling the extensions compiled in before into Pi-Bolt ${version}...`));
+		const compiled = spawnProcessSync(installed, ["compile", "--after-update"], {
+			cwd: homedir(),
+			encoding: "utf8",
+			stdio: "inherit",
+		});
+		if (compiled.status !== 0) {
+			console.error(
+				chalk.yellow(
+					`The extensions were not compiled into ${version}: they load from their files until \`pi-bolt compile\` compiles them in.`,
+				),
+			);
+		}
+	}
 	return true;
 }
 
@@ -1006,6 +1030,14 @@ export async function handlePackageCommand(
 	args: string[],
 	runtimeOptions: PackageCommandRuntimeOptions = {},
 ): Promise<boolean> {
+	// Pi-Bolt: `pi-bolt compile` (pi-bolt-compile.ts). In Pi, `compile` stays a message to the model.
+	if (PIBOLT && args[0] === "compile") {
+		const build = PIBOLT;
+		process.exitCode = await runPiBoltCompile(args.slice(1), () =>
+			runPiBoltSelfUpdate(build.version, { reinstall: true }),
+		);
+		return true;
+	}
 	const options = parsePackageCommand(args);
 	if (!options) {
 		return false;

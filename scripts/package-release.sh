@@ -17,6 +17,7 @@
 #   pi-bolt-darwin-arm64.tar.gz        on macOS: JIT off, for Apple silicon (M1 and later)
 #   pi-bolt-darwin-arm64-jit.tar.gz    on macOS: JIT on
 #   pi-bolt-runtime-darwin-arm64.tar.gz
+#   pi-bolt-kit-<platform>.tar.gz      the compile kit of this platform's builds, for `pi-bolt compile` (scripts/make-kit.mjs)
 # The Pi archives also come as .tar.xz, about 40% smaller, which install.sh prefers where xz is installed.
 source "$(dirname "$0")/lib/common.sh"
 
@@ -49,11 +50,15 @@ esac
 TAR=(tar --owner=0 --group=0 --numeric-owner)
 [ "$PIBOLT_OS" = darwin ] && TAR=(env COPYFILE_DISABLE=1 tar --uid 0 --gid 0 --numeric-owner --no-xattrs --no-mac-metadata)
 
+# The compile kit comes with the first (the default) build: what it read, and how it was compiled.
+KIT="$PIBOLT_ROOT/out/pi-bolt-kit-$PIBOLT_PLATFORM"
 if [ -n "$BUILD" ]; then
+	kit=(--kit "$KIT")
 	for target in "${TARGETS[@]}"; do
 		IFS=: read -r _ out options <<<"$target"
 		# shellcheck disable=SC2086 # options is a list of words
-		"$PIBOLT_ROOT/scripts/build-pi.sh" --pi "$PI_DIR" --out "$PIBOLT_ROOT/out/$out" $options
+		"$PIBOLT_ROOT/scripts/build-pi.sh" --pi "$PI_DIR" --out "$PIBOLT_ROOT/out/$out" "${kit[@]}" $options
+		kit=()
 	done
 fi
 
@@ -79,6 +84,12 @@ for target in "${TARGETS[@]}"; do
 	"${TAR[@]}" -C "$STAGE" -czf "$DIST/pi-bolt-$name.tar.gz" "pi-bolt-$name"
 	"${TAR[@]}" -C "$STAGE" -cf - "pi-bolt-$name" | xz -T0 -9e >"$DIST/pi-bolt-$name.tar.xz" # (-T0 writes blocks, which xz -T0 can decompress in parallel)
 done
+
+if [ -z "$RUNTIME_ONLY" ]; then
+	[ -f "$KIT/kit.json" ] || die "$KIT not found: build, or run without --no-build"
+	log "pi-bolt-kit-$PIBOLT_PLATFORM.tar.gz"
+	"${TAR[@]}" -C "$(dirname "$KIT")" -czf "$DIST/pi-bolt-kit-$PIBOLT_PLATFORM.tar.gz" "$(basename "$KIT")"
+fi
 
 runtime="$(runtime_bun)"
 dir="$STAGE/pi-bolt-runtime-$PIBOLT_PLATFORM"

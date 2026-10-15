@@ -282,6 +282,19 @@ describe("what it passes over", () => {
 		assert.match(reasons[join(agentDir, "extensions", "shared")], /shared code/);
 		assert.equal(reasons[join(agentDir, "extensions", "notes.md")], "not a .ts or .js file");
 	});
+
+	it("takes no extension from a filter in the extensions setting, and reports a path that is not there", () => {
+		const agentDir = agent({
+			extensions: ["-builtin:opensec-pi-todo", "!~/old/*.ts", "+pinned.ts", "builtin:mcp", join(tmpdir(), "pibolt-no-such.ts")],
+		});
+		write(join(agentDir, "extensions", "real.ts"));
+
+		const plan = planPlugins({ agentDir });
+		assert.deepEqual(names(plan), ["real"]);
+		assert.deepEqual(plan.skipped, [
+			{ path: join(tmpdir(), "pibolt-no-such.ts"), reason: "in the extensions setting, but not found" },
+		]);
+	});
 });
 
 describe("the manifest and its folder", () => {

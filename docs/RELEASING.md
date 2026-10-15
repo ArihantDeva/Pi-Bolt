@@ -71,6 +71,9 @@ the engine or the build. On Windows, the same for older CPUs is Intel SDE (`-snb
 - The archives: `pi-bolt-linux-x64`, `-baseline` and `-jit`, `pi-bolt-linux-arm64` and `-jit`, and `pi-bolt-darwin-arm64` and
   `-jit` (`.tar.xz` and `.tar.gz`); `pi-bolt-win32-x64` and `-jit` (`.zip`); the runtimes `pi-bolt-runtime-linux-x64.tar.gz`,
   `pi-bolt-runtime-linux-arm64.tar.gz`, `pi-bolt-runtime-darwin-arm64.tar.gz` and `pi-bolt-runtime-win32-x64.zip`.
+- The compile kits `pi-bolt-kit-linux-x64.tar.gz`, `pi-bolt-kit-linux-arm64.tar.gz` and `pi-bolt-kit-darwin-arm64.tar.gz`: the
+  files of Pi each platform's default build read, its compile command and the training profile (`scripts/make-kit.mjs`, made
+  by `scripts/build-pi.sh --kit` in `package-release.sh`). `pi-bolt compile` builds with them and the runtimes.
 - `extensions.txt`: the optional extensions the installers offer (OpenSec's `opensec-pi-subagents`, `opensec-pi-todo` and `opensec-pi-fff`), each
   with its version and npm integrity. The installers install those versions and only if the registry's tarball has that
   integrity; a release without the file pins none, and they offer nothing. Update it in the repository when either has a new

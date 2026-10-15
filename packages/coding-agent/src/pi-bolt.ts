@@ -63,6 +63,11 @@ export function piBoltInstallerProcess(): { command: string; args: string[] } {
 	};
 }
 export const PIBOLT_RELEASES_URL = "https://github.com/opensec-git/Pi-Bolt/releases";
+/** The public key releases are signed with (keys/release.pub; install.sh, install.ps1 and npm/install.cjs carry it too). */
+export const PIBOLT_RELEASE_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAoLboJqtKaoISPqffk03vHZr+1sRBG3uIRIWeKOew+aY=
+-----END PUBLIC KEY-----
+`;
 export const PIBOLT_LATEST_RELEASE_API = "https://api.github.com/repos/opensec-git/Pi-Bolt/releases/latest";
 /** The releases, newest first, pre-releases among them (drafts are not shown to anyone without write access). */
 export const PIBOLT_RELEASES_API = "https://api.github.com/repos/opensec-git/Pi-Bolt/releases?per_page=30";

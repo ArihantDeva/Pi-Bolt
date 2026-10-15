@@ -6,6 +6,9 @@ pi-bolt-darwin-arm64-jit.tar.gz
 pi-bolt-darwin-arm64-jit.tar.xz
 pi-bolt-darwin-arm64.tar.gz
 pi-bolt-darwin-arm64.tar.xz
+pi-bolt-kit-darwin-arm64.tar.gz
+pi-bolt-kit-linux-arm64.tar.gz
+pi-bolt-kit-linux-x64.tar.gz
 pi-bolt-linux-arm64-jit.tar.gz
 pi-bolt-linux-arm64-jit.tar.xz
 pi-bolt-linux-arm64.tar.gz

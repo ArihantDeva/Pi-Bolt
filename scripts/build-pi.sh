@@ -32,12 +32,15 @@
 #   --keep-bytecode   keep the bytecode in the prebuilt heap (by default it is left out, which is what lets the compiler inline
 #                     Pi's own functions, and saves memory)
 #   --stable          build with a stock Bun instead (PIBOLT_STABLE_BUN, default `bun`): the comparison build, no AOT
+#   --kit DIR         also write the compile kit to DIR: the files this build read, its compile command and the training
+#                     profile, for `pi-bolt compile` to build the same executable with extensions (scripts/make-kit.mjs).
+#                     Not with --plugins
 # Environment: PIBOLT_BUN (the Pi-Bolt runtime; default $PIBOLT_WORK/runtime/bun); PIBOLT_BUILD_LOG (a file for everything the
 #              compiler prints, e.g. with BUN_JSC_verboseAOTCompilation=1)
 source "$(dirname "$0")/lib/common.sh"
 
 PI_DIR="$PIBOLT_PI"; OUT=""; JIT=off; CPU=""; PROFILE=""; PLUGINS=""; PLUGIN_WORKERS=(); KEEP_BYTECODE=""; STABLE=""
-FROM_INSTALLED=""; PLUGINS_ONLY=""; PLUGINS_EXCLUDE=""; PLUGINS_AGENT_DIR=""; PLUGINS_NO_PACKAGES=""
+FROM_INSTALLED=""; PLUGINS_ONLY=""; PLUGINS_EXCLUDE=""; PLUGINS_AGENT_DIR=""; PLUGINS_NO_PACKAGES=""; KIT=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--pi) PI_DIR="$2"; shift ;;
@@ -54,7 +57,8 @@ while [ $# -gt 0 ]; do
 	--plugin-worker) PLUGIN_WORKERS+=("$2"); shift ;;
 	--keep-bytecode) KEEP_BYTECODE=1 ;;
 	--stable) STABLE=1 ;;
-	-h | --help) sed -n '2,35p' "$0"; exit 0 ;;
+	--kit) KIT="$2"; shift ;;
+	-h | --help) sed -n '2,38p' "$0"; exit 0 ;;
 	*) die "unknown option $1" ;;
 	esac
 	shift
@@ -65,6 +69,7 @@ done
 # (On macOS there is one build: every Apple silicon CPU has what the compiler uses, and the executable checks it at launch.)
 [ "$CPU" = native ] || [ "$PIBOLT_OS" = linux ] || die "--cpu baseline is for Linux only"
 [ -z "$FROM_INSTALLED" ] || [ -z "$PLUGINS" ] || die "--plugins-from-installed and --plugins are two ways to say the same thing: use one"
+[ -z "$KIT" ] || { [ -z "$PLUGINS" ] && [ -z "$FROM_INSTALLED" ] && [ -z "$STABLE" ]; } || die "--kit is for a build of Pi alone (no plugins, not --stable)"
 if [ -z "$FROM_INSTALLED" ]; then
 	[ -z "$PLUGINS_ONLY" ] || die "--plugins-only needs --plugins-from-installed"
 	[ -z "$PLUGINS_EXCLUDE" ] || die "--plugins-exclude needs --plugins-from-installed"
@@ -158,34 +163,34 @@ fi
 TEMP_DIR="${TMPDIR:-/tmp}"
 BUILD_LOG="${PIBOLT_BUILD_LOG:-$(mktemp "${TEMP_DIR%/}/pibolt-build.XXXXXX")}"
 log "Pi $VERSION, ahead of time: JIT $JIT, CPU $CPU, $([ -n "$KEEP_BYTECODE" ] && echo "bytecode kept" || echo "bytecode left out")$([ -n "$PLUGINS" ] && echo ", plugins from $PLUGINS") -> $OUT"
+BUILD_ENV=(BUN_JSC_useJIT=0 BUN_STATIC_HEAP=1 BUN_AOT=1)
+[ "$JIT" = off ] && BUILD_ENV+=(BUN_AOT_JIT=0)
+[ "$CPU" = baseline ] && BUILD_ENV+=(BUN_AOT_CPU=baseline)
+[ -z "$KEEP_BYTECODE" ] && BUILD_ENV+=(BUN_JSC_omitBytecodeFromStaticHeap=1)
+# Loops get a fast copy, without slow paths, that exits to a generic copy when a check fails: hot loops (string scanning,
+# number crunching, in Pi and in plugins) run several times faster. Policy 5 also splits loops whose calls the fast copy
+# does away with or that index arrays (pi-tui's text measuring: 2x), for about 6 MB of code. BUN_JSC_useAOTLoopSplitting=0
+# turns it off; BUN_JSC_aotLoopSplittingPolicy=3 limits it to loops that make no calls.
+BUILD_ENV+=("BUN_JSC_useAOTLoopSplitting=${BUN_JSC_useAOTLoopSplitting:-1}")
+BUILD_ENV+=("BUN_JSC_aotLoopSplittingPolicy=${BUN_JSC_aotLoopSplittingPolicy:-5}")
+# The standard objects' own methods (Array.prototype.map, Math.floor, ...) are what they were when the realm was made: the
+# compiler then inlines them, callbacks and all (forEach, map, filter, reduce: 5-10x in loops). Code that overwrites one of
+# them gets a TypeError; adding methods is fine. BUN_JSC_useImmutableIntrinsics=0 turns it off (docs/PLUGINS.md).
+BUILD_ENV+=("BUN_JSC_useImmutableIntrinsics=${BUN_JSC_useImmutableIntrinsics:-1}")
+[ -n "$REGEXPS" ] && BUILD_ENV+=("BUN_JSC_aotRegExpsPath=$REGEXPS")
+# The functions whose executables Pi's runs touch (scripts/train-heap.ps1, on Windows): made side by side in the prebuilt heap.
+[ -f "$PROFILE/heap-functions.txt" ] && BUILD_ENV+=("BUN_STATIC_HEAP_FUNCTIONS_FIRST=$PROFILE/heap-functions.txt")
+# No .env from the working directory (in both builds): Pi on Node never loads one into its environment, and looking for it
+# in a large directory cost a millisecond or more at every start.
+# Extensions resolve their own packages as on Node, which needs their package.json files (the "exports" and "main" of
+# sharp, for one). Pi's own code still resolves nothing in the working directory (the runtime: tests/runtime, workdir).
+BUILD_ARGS=(build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --compile-autoload-package-json
+	--target="bun-$PIBOLT_PLATFORM" --bytecode --format=esm "${ORDER_ARGS[@]}" --compile-exec-argv=--smol)
 if ! (
 	cd "$AGENT" || exit 1
-	export BUN_JSC_useJIT=0 BUN_STATIC_HEAP=1 BUN_AOT=1
-	[ "$JIT" = off ] && export BUN_AOT_JIT=0
-	[ "$CPU" = baseline ] && export BUN_AOT_CPU=baseline
-	[ -z "$KEEP_BYTECODE" ] && export BUN_JSC_omitBytecodeFromStaticHeap=1
-	# Loops get a fast copy, without slow paths, that exits to a generic copy when a check fails: hot loops (string scanning,
-	# number crunching, in Pi and in plugins) run several times faster. Policy 5 also splits loops whose calls the fast copy
-	# does away with or that index arrays (pi-tui's text measuring: 2x), for about 6 MB of code. BUN_JSC_useAOTLoopSplitting=0
-	# turns it off; BUN_JSC_aotLoopSplittingPolicy=3 limits it to loops that make no calls.
-	export BUN_JSC_useAOTLoopSplitting="${BUN_JSC_useAOTLoopSplitting:-1}"
-	export BUN_JSC_aotLoopSplittingPolicy="${BUN_JSC_aotLoopSplittingPolicy:-5}"
-	# The standard objects' own methods (Array.prototype.map, Math.floor, ...) are what they were when the realm was made: the
-	# compiler then inlines them, callbacks and all (forEach, map, filter, reduce: 5-10x in loops). Code that overwrites one of
-	# them gets a TypeError; adding methods is fine. BUN_JSC_useImmutableIntrinsics=0 turns it off (docs/PLUGINS.md).
-	export BUN_JSC_useImmutableIntrinsics="${BUN_JSC_useImmutableIntrinsics:-1}"
-	[ -n "$REGEXPS" ] && export BUN_JSC_aotRegExpsPath="$REGEXPS"
-	# The functions whose executables Pi's runs touch (scripts/train-heap.ps1, on Windows): made side by side in the prebuilt heap.
-	[ -f "$PROFILE/heap-functions.txt" ] && export BUN_STATIC_HEAP_FUNCTIONS_FIRST="$PROFILE/heap-functions.txt"
-	# No .env from the working directory (in both builds): Pi on Node never loads one into its environment, and looking for it
-	# in a large directory cost a millisecond or more at every start.
 	# What `pi --version` and `pi update` know themselves by (packages/coding-agent/src/pi-bolt.ts).
-	# Extensions resolve their own packages as on Node, which needs their package.json files (the "exports" and "main" of
-	# sharp, for one). Pi's own code still resolves nothing in the working directory (the runtime: tests/runtime, workdir).
-	"$BUN" build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --compile-autoload-package-json \
-		--target="bun-$PIBOLT_PLATFORM" --bytecode --format=esm "${ORDER_ARGS[@]}" \
-		--define "PIBOLT_BUILD=\"$PIBOLT_VERSION $CPU_VARIANT jit-$JIT\"" \
-		--compile-exec-argv=--smol "${ENTRIES[@]}" --outfile "$OUT/pi" 2>&1 | tee "$BUILD_LOG" | grep -v "^AOT: " | tail -3
+	env "${BUILD_ENV[@]}" "$BUN" "${BUILD_ARGS[@]}" --define "PIBOLT_BUILD=\"$PIBOLT_VERSION $CPU_VARIANT jit-$JIT\"" \
+		"${ENTRIES[@]}" --outfile "$OUT/pi" 2>&1 | tee "$BUILD_LOG" | grep -v "^AOT: " | tail -3
 ); then
 	tail -n 12 "$BUILD_LOG" >&2
 	die "the build stopped (above: the end of what the compiler printed; all of it: $BUILD_LOG)"
@@ -212,3 +217,17 @@ if [ "$PIBOLT_OS" = darwin ]; then
 	python3 "$PIBOLT_ROOT/scripts/lib/darwin_hot_pages.py" "$OUT" || { rm -f "$OUT/pi-bin.hot"; log "no pi-bin.hot (see above)"; }
 fi
 log "done: $OUT/pi ($(du -h "$executable" | cut -f1), Pi $(tail -1 <<<"$check"))"
+
+# The compile kit: what this build read and how it was compiled, for `pi-bolt compile` (packages/coding-agent/src/pi-bolt-compile.ts).
+if [ -n "$KIT" ]; then
+	record="$(mktemp "${TEMP_DIR%/}/pibolt-kit.XXXXXX")"
+	python3 -c 'import json, sys
+argv = sys.argv[2:]
+n = int(argv[0]); env = argv[1:1 + n]; argv = argv[1 + n:]
+n = int(argv[0]); args = argv[1:1 + n]; entries = argv[1 + n:]
+json.dump({"env": dict(e.split("=", 1) for e in env), "args": args, "entries": entries}, open(sys.argv[1], "w"), indent=1)' \
+		"$record" "${#BUILD_ENV[@]}" "${BUILD_ENV[@]}" "${#BUILD_ARGS[@]}" "${BUILD_ARGS[@]}" "${ENTRIES[@]}"
+	"$BUN" "$PIBOLT_ROOT/scripts/make-kit.mjs" --bun "$BUN" --pi "$(realpath "$PI_DIR")" --agent "$AGENT" --record "$record" \
+		--profile "$PROFILE" --platform "$PIBOLT_PLATFORM" --version "$PIBOLT_VERSION" --out "$(abspath "$KIT")"
+	rm -f "$record"
+fi
