@@ -39,6 +39,17 @@ const SCRIPTS: Record<string, Step[]> = {
 		{ text: "All done." },
 	],
 	hello: [{ text: "Hello from the fake model." }],
+	live: [{ tool: { name: "bash", args: { command: "echo first; sleep 1; echo second" } } }, { text: "Ran it." }],
+	terminal: [
+		{
+			tool: {
+				name: "bash",
+				args: { command: "echo first; sleep 1; printf '\\033[31msecond\\033[0m\\nno newline'; exit 3" },
+			},
+		},
+		{ text: "Ran it." },
+	],
+	timeout: [{ tool: { name: "bash", args: { command: "echo started; sleep 5", timeout: 1 } } }, { text: "Ran it." }],
 	slow: [{ hang: true }],
 };
 
@@ -237,12 +248,12 @@ describe("ACP mode", () => {
 	let projectDir: string;
 	const clients: AcpTestClient[] = [];
 
-	const startClient = async (args: string[] = []) => {
+	const startClient = async (args: string[] = [], clientCapabilities: object = CLIENT_CAPABILITIES) => {
 		const client = new AcpTestClient(projectDir, agentDir, args);
 		clients.push(client);
 		const init = await client.request<InitializeResponse>("initialize", {
 			protocolVersion: 1,
-			clientCapabilities: CLIENT_CAPABILITIES,
+			clientCapabilities,
 			clientInfo: { name: "test-client", version: "1.0.0" },
 		});
 		return { client, init };
@@ -333,7 +344,7 @@ describe("ACP mode", () => {
 		expect(calls[0].locations).toEqual([{ path: notesPath }]);
 		expect(calls[2].title).toBe("echo from-bash");
 
-		const done = client.updatesOf("tool_call_update").filter((u) => u.status);
+		const done = client.updatesOf("tool_call_update").filter((u) => u.status !== "in_progress");
 		expect(done.map((u) => u.status)).toEqual(["completed", "completed", "completed"]);
 		expect(done[0].content).toEqual([{ type: "diff", path: notesPath, oldText: null, newText: "alpha\nbeta\n" }]);
 		expect(done[1].content).toEqual([
@@ -346,6 +357,73 @@ describe("ACP mode", () => {
 
 		const listed = await client.request<{ sessions: SessionInfo[] }>("session/list", { cwd: projectDir });
 		expect(listed.sessions.map((s) => s.sessionId)).toContain(sessionId);
+	});
+
+	it("shows a command's output while it runs", async () => {
+		const { client } = await startClient();
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
+		await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "[live] run it" }] });
+		const updates = client.updatesOf("tool_call_update");
+		const live = updates.filter(
+			(u) => toolText(u.content).includes("first") && !toolText(u.content).includes("second"),
+		);
+		expect(live.length).toBeGreaterThan(0);
+		// A status on every update: some clients take an update without one for a finished call.
+		expect(live.every((u) => u.status === "in_progress")).toBe(true);
+		expect(updates.at(-1)?.status).toBe("completed");
+		expect(toolText(updates.at(-1)?.content)).toContain("second");
+	});
+
+	it("shows a command in a terminal for clients that take terminal output", async () => {
+		const runCommand = async (capabilities: object, script: string) => {
+			const { client } = await startClient([], capabilities);
+			const { sessionId } = await client.request<SessionResponse>("session/new", {
+				cwd: projectDir,
+				mcpServers: [],
+			});
+			await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: `[${script}] run it` }] });
+			const [call] = client.updatesOf("tool_call");
+			return { call, updates: client.updatesOf("tool_call_update").filter((u) => u.toolCallId === call.toolCallId) };
+		};
+		const zed = { ...CLIENT_CAPABILITIES, terminal: true, _meta: { terminal_output: true } };
+
+		const { call, updates } = await runCommand(zed, "terminal");
+		const id = call.toolCallId;
+		expect(call.content).toEqual([{ type: "terminal", terminalId: id }]);
+		expect(call._meta).toEqual({ terminal_info: { terminal_id: id, cwd: projectDir } });
+		// Updates append only the new output, and carry no content (which would replace the terminal).
+		expect(updates.every((u) => u.content === undefined)).toBe(true);
+		const output = updates.slice(0, -1);
+		expect(output.every((u) => u.status === "in_progress")).toBe(true);
+		const data = output.map((u) => (u._meta?.terminal_output as { terminal_id: string; data: string }).data);
+		expect(output.every((u) => (u._meta?.terminal_output as { terminal_id: string }).terminal_id === id)).toBe(true);
+		expect(data[0]).toBe("first\n");
+		expect(data.join("")).toBe("first\n\x1b[31msecond\x1b[0m\nno newline");
+		expect(updates.at(-1)).toEqual({
+			sessionUpdate: "tool_call_update",
+			toolCallId: id,
+			status: "failed",
+			_meta: { terminal_exit: { terminal_id: id, exit_code: 3 } },
+		});
+
+		// A command that does not finish has no exit code; the terminal says why it stopped.
+		const timedOut = await runCommand(zed, "timeout");
+		const timedOutData = timedOut.updates
+			.slice(0, -1)
+			.map((u) => (u._meta?.terminal_output as { data: string }).data)
+			.join("");
+		expect(timedOutData).toBe("started\nCommand timed out after 1 seconds\n");
+		expect(timedOut.updates.at(-1)?._meta).toEqual({
+			terminal_exit: { terminal_id: timedOut.call.toolCallId, exit_code: null },
+		});
+
+		// Other clients get the output as text.
+		const plain = await runCommand(CLIENT_CAPABILITIES, "terminal");
+		expect(plain.call.content).toBeUndefined();
+		expect(plain.call._meta).toBeUndefined();
+		expect(plain.updates.every((u) => u._meta === undefined)).toBe(true);
+		expect(plain.updates.at(-1)?.status).toBe("failed");
+		expect(toolText(plain.updates.at(-1)?.content)).toContain("Command exited with code 3");
 	});
 
 	it("cancels a running prompt", async () => {
@@ -428,8 +506,43 @@ describe("ACP mode", () => {
 			stopReason: "end_turn",
 		});
 		expect(client.clientRequests.map((m) => m.method)).toEqual(["session/request_permission", "elicitation/create"]);
-		expect((client.clientRequests[0].params as RequestPermissionRequest).toolCall.title).toBe("Proceed?");
+		const dialog = (client.clientRequests[0].params as RequestPermissionRequest).toolCall;
+		expect(dialog.title).toBe("Proceed?");
+		// The dialog's own entry ends once answered.
+		expect(client.updatesOf("tool_call_update").filter((u) => u.toolCallId === dialog.toolCallId)).toEqual([
+			{ sessionUpdate: "tool_call_update", toolCallId: dialog.toolCallId, status: "completed" },
+		]);
 		expect(client.updatesOf("notice").map((u) => u.title)).toContain("answer: true Ada");
+	});
+
+	it("asks about a running tool on its own entry and gives the entry back", async () => {
+		const extensionPath = join(root, "gate-extension.ts");
+		writeFileSync(
+			extensionPath,
+			`export default function (pi) {
+	pi.on("tool_call", async (event, ctx) => {
+		if (!(await ctx.ui.confirm("Allow bash?", "It runs a command"))) return { block: true, reason: "denied" };
+	});
+}
+`,
+		);
+		const { client } = await startClient(["-e", extensionPath]);
+		client.onRequest = (message) => ({
+			outcome: { outcome: "selected", optionId: (message.params as RequestPermissionRequest).options[0].optionId },
+		});
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
+		await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "[live] run it" }] });
+		const [call] = client.updatesOf("tool_call");
+		const asked = (client.clientRequests[0].params as RequestPermissionRequest).toolCall;
+		expect(asked).toMatchObject({ toolCallId: call.toolCallId, title: "Allow bash?" });
+		const updates = client.updatesOf("tool_call_update").filter((u) => u.toolCallId === call.toolCallId);
+		expect(updates[0]).toEqual({
+			sessionUpdate: "tool_call_update",
+			toolCallId: call.toolCallId,
+			title: call.title,
+			content: [],
+		});
+		expect(updates.at(-1)?.status).toBe("completed");
 	});
 
 	it("connects the MCP servers the editor passes, with their environment as given", async () => {

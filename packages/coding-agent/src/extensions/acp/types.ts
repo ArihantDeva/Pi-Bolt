@@ -31,6 +31,8 @@ export interface ClientCapabilities {
 		compaction?: object | null;
 		configOptions?: { boolean?: object | null } | null;
 	} | null;
+	/** Extensions: Zed's `terminal_output: true` takes command output as a terminal (see `ToolCallUpdateFields._meta`). */
+	_meta?: Record<string, unknown> | null;
 }
 
 export interface InitializeRequest {
@@ -164,6 +166,12 @@ export interface ToolCallUpdateFields {
 	locations?: ToolCallLocation[];
 	rawInput?: unknown;
 	rawOutput?: unknown;
+	/**
+	 * Extensions. For clients with `terminal_output`: `terminal_info` (`terminal_id`, `cwd`) on a tool call shows a
+	 * terminal, `terminal_output` (`terminal_id`, `data`) on updates appends to it, and `terminal_exit` (`terminal_id`,
+	 * `exit_code`, `signal`) ends it.
+	 */
+	_meta?: Record<string, unknown>;
 }
 
 export interface AvailableCommand {

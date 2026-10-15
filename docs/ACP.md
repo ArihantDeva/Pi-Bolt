@@ -45,7 +45,8 @@ Other flags work as on the command line, for example `["--acp", "--model", "anth
   sign-in in the editor; when no model is set up, a prompt says how to set one up.
 - **Streaming replies and thinking**, as the model writes them.
 - **Tool calls** with a title, a kind (read, edit, run, search) and the files they touch, so the editor can follow along. Edits and
-  writes show as diffs, and commands show their output while they run.
+  writes show as diffs, and commands show their output while they run (in a terminal view, with colours, in editors that
+  offer one, such as Zed).
 - **Model and thinking level** as session settings the editor shows next to the prompt. Changing them affects that session only.
 - **Slash commands**: extension commands, prompt templates, skills (`/skill:name`), and `/compact` and `/name`.
 - **Context usage and cost** after each prompt.

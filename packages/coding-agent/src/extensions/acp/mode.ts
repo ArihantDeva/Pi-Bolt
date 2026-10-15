@@ -7,23 +7,23 @@
  * settings, extensions, skills, prompt templates, MCP servers, and project trust apply as usual) in the directory the
  * editor names. Sessions are Pi's session files: `session/list` and `session/load` find the sessions of the terminal too,
  * and a session started in the editor resumes with `pi --session`. Pi runs its own tools; the editor sees each call with
- * its file locations, edits as diffs, and command output. Extension dialogs reach the user as permission requests
- * (confirm, select) and forms (input, editor), when the editor offers them.
+ * its file locations, edits as diffs, and command output (in a terminal view, for editors that take one). Extension
+ * dialogs reach the user as permission requests (confirm, select) and forms (input, editor), when the editor offers them.
  */
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { Readable } from "node:stream";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { COMMAND_NAME, PRODUCT_NAME, VERSION } from "../../config.ts";
+import { COMMAND_NAME, getDocsPath, PRODUCT_NAME, VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import {
 	type AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionRuntime,
 } from "../../core/agent-session-runtime.ts";
-import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
+import { formatNoApiKeyFoundMessage } from "../../core/auth-guidance.ts";
 import type { ExtensionUIContext, ExtensionUIDialogOptions } from "../../core/extensions/index.ts";
 import {
 	flushRawStdout,
@@ -39,12 +39,19 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { AcpConnection, AcpError, errorText, isRecord } from "./connection.ts";
 import { setSessionMcpServers } from "./extension.ts";
 import {
+	bashExitCode,
+	bashOutputTail,
 	bashResultContent,
 	fenced,
+	type OutputTail,
 	promptToPi,
 	replayMessages,
+	resultText,
 	runError,
 	stopReasonOf,
+	TERMINAL_START,
+	type TerminalSent,
+	terminalOutputDelta,
 	toolCallInfo,
 	toolPath,
 	toolResultContent,
@@ -336,7 +343,13 @@ class AcpSession {
 	/** File contents before an edit or write, for its diff. */
 	private readonly before = new Map<string, { path: string; text: string | null }>();
 	private readonly runningTools = new Map<string, { name: string; args: unknown }>();
-	private readonly liveOutput = new Map<string, { timer?: ReturnType<typeof setTimeout>; text?: string }>();
+	/** Output of running commands: the end of it for a text view, or the latest report for a terminal. */
+	private readonly liveOutput = new Map<
+		string,
+		{ timer?: ReturnType<typeof setTimeout>; text?: string; tail?: OutputTail }
+	>();
+	/** Commands shown in a terminal view, with what each terminal has been sent. */
+	private readonly terminals = new Map<string, TerminalSent>();
 	private disposed = false;
 
 	constructor(agent: AcpAgent, id: string, runtime: AgentSessionRuntime) {
@@ -447,7 +460,7 @@ class AcpSession {
 		}
 		const session = this.session;
 		if (!session.model) {
-			throw new AcpError(AcpErrorCode.AuthRequired, formatNoModelsAvailableMessage());
+			throw new AcpError(AcpErrorCode.InternalError, `No models available. ${setupHelp()}`);
 		}
 		const start = session.messages.length;
 		try {
@@ -455,6 +468,14 @@ class AcpSession {
 			await session.waitForIdle();
 		} catch (error) {
 			if (this.cancelled) return { stopReason: "cancelled" };
+			// Pi's own message points to /login, which the editor does not have. (Not AuthRequired: Zed shows its own
+			// message for that, and ACP mode has no authentication methods to offer.)
+			const provider = session.model?.provider;
+			if (provider && errorText(error) === formatNoApiKeyFoundMessage(provider)) {
+				// (A provider of "unknown" is the placeholder model of a Pi with nothing set up.)
+				const problem = provider === "unknown" ? "No model is set up." : `No API key found for ${provider}.`;
+				throw new AcpError(AcpErrorCode.InternalError, `${problem} ${setupHelp()}`);
+			}
 			throw error;
 		} finally {
 			this.sendUsage();
@@ -502,13 +523,15 @@ class AcpSession {
 
 	private availableCommands(): AvailableCommand[] {
 		const commands = new Map<string, AvailableCommand>();
-		const add = (name: string, description: string | undefined) => {
-			if (!commands.has(name)) commands.set(name, { name, description: description || name, input: null });
+		const add = (name: string, description: string | undefined, hint?: string) => {
+			if (!commands.has(name))
+				commands.set(name, { name, description: description || name, input: hint ? { hint } : null });
 		};
 		for (const command of this.session.extensionRunner.getRegisteredCommands()) {
 			add(command.invocationName, command.description);
 		}
-		for (const template of this.session.promptTemplates) add(template.name, template.description);
+		for (const template of this.session.promptTemplates)
+			add(template.name, template.description, template.argumentHint);
 		for (const skill of this.session.resourceLoader.getSkills().skills) add(`skill:${skill.name}`, skill.description);
 		for (const command of ACP_COMMANDS) if (!commands.has(command.name)) commands.set(command.name, command);
 		return [...commands.values()];
@@ -611,6 +634,9 @@ class AcpSession {
 				this.runningTools.set(event.toolCallId, { name: event.toolName, args: event.args });
 				if (event.toolName === "edit" || event.toolName === "write") this.snapshot(event.toolCallId, event.args);
 				const info = toolCallInfo(event.toolName, event.args, this.cwd);
+				// Zed's extension: the command's output in a terminal view, which updates append to.
+				const terminal = event.toolName === "bash" && this.agent.capabilities._meta?.terminal_output === true;
+				if (terminal) this.terminals.set(event.toolCallId, TERMINAL_START);
 				this.send({
 					sessionUpdate: "tool_call",
 					toolCallId: event.toolCallId,
@@ -620,6 +646,12 @@ class AcpSession {
 					status: "in_progress",
 					locations: info.locations,
 					rawInput: event.args,
+					...(terminal
+						? {
+								content: [terminalContent(event.toolCallId)],
+								_meta: { terminal_info: { terminal_id: event.toolCallId, cwd: this.cwd } },
+							}
+						: {}),
 				});
 				break;
 			}
@@ -631,10 +663,12 @@ class AcpSession {
 				if (event.parentToolCallId) break;
 				this.runningTools.delete(event.toolCallId);
 				const live = this.liveOutput.get(event.toolCallId);
-				if (live) {
-					clearTimeout(live.timer);
-					this.liveOutput.delete(event.toolCallId);
+				if (live) clearTimeout(live.timer);
+				if (this.terminals.has(event.toolCallId)) {
+					this.endTerminal(event.toolCallId, event.result, event.isError);
+					break;
 				}
+				this.liveOutput.delete(event.toolCallId);
 				this.send({
 					sessionUpdate: "tool_call_update",
 					toolCallId: event.toolCallId,
@@ -700,26 +734,80 @@ class AcpSession {
 	}
 
 	private liveBashOutput(toolCallId: string, partialResult: unknown): void {
-		const text = toolResultContent(partialResult)
-			.map((block) => (block.type === "content" && block.content.type === "text" ? block.content.text : ""))
-			.join("");
 		let live = this.liveOutput.get(toolCallId);
 		if (!live) {
 			live = {};
 			this.liveOutput.set(toolCallId, live);
 		}
-		live.text = text.length > MAX_LIVE_OUTPUT_CHARS ? `…${text.slice(-MAX_LIVE_OUTPUT_CHARS)}` : text;
+		if (this.terminals.has(toolCallId)) {
+			live.tail = bashOutputTail(partialResult);
+		} else {
+			const text = resultText(partialResult);
+			live.text = text.length > MAX_LIVE_OUTPUT_CHARS ? `…${text.slice(-MAX_LIVE_OUTPUT_CHARS)}` : text;
+		}
 		if (live.timer) return;
 		live.timer = setTimeout(() => {
 			const current = this.liveOutput.get(toolCallId);
 			if (!current) return;
 			current.timer = undefined;
+			if (this.terminals.has(toolCallId)) {
+				this.sendTerminalOutput(toolCallId);
+				return;
+			}
 			this.send({
 				sessionUpdate: "tool_call_update",
 				toolCallId,
-				content: current.text ? [{ type: "content", content: { type: "text", text: fenced(current.text) } }] : [],
+				// (Some clients take an update without a status for a finished call.)
+				status: "in_progress",
+				content: current.text ? [textContent(fenced(current.text))] : [],
 			});
 		}, LIVE_OUTPUT_INTERVAL_MS);
+	}
+
+	/**
+	 * Sends a terminal the output it has not been sent yet, and a last line. Without content, which would replace the
+	 * terminal.
+	 */
+	private sendTerminalOutput(toolCallId: string, lastLine?: string): void {
+		let sent = this.terminals.get(toolCallId);
+		if (!sent) return;
+		let data = "";
+		const tail = this.liveOutput.get(toolCallId)?.tail;
+		if (tail) {
+			const delta = terminalOutputDelta(sent, tail);
+			sent = delta.sent;
+			this.terminals.set(toolCallId, sent);
+			data = delta.data;
+		}
+		if (lastLine) data += `${sent.end > 0 && !sent.text.endsWith("\n") ? "\n" : ""}${lastLine}\n`;
+		if (data === "") return;
+		this.send({
+			sessionUpdate: "tool_call_update",
+			toolCallId,
+			status: "in_progress",
+			_meta: { terminal_output: { terminal_id: toolCallId, data } },
+		});
+	}
+
+	/** Ends a command's terminal: the rest of its output, why it stopped when it did not finish, and its exit code. */
+	private endTerminal(toolCallId: string, result: unknown, isError: boolean): void {
+		const exitCode = bashExitCode(result, isError);
+		let reason: string | undefined;
+		if (exitCode === null) {
+			// Timed out, aborted, or blocked: the result's text says why, after the output if there was any.
+			const text = resultText(result).trim();
+			const hadOutput = (this.liveOutput.get(toolCallId)?.tail?.totalBytes ?? 0) > 0;
+			reason = hadOutput ? text.slice(text.lastIndexOf("\n\n") + 1).trim() : text;
+		}
+		this.sendTerminalOutput(toolCallId, reason);
+		this.liveOutput.delete(toolCallId);
+		this.terminals.delete(toolCallId);
+		this.send({
+			sessionUpdate: "tool_call_update",
+			toolCallId,
+			status: isError ? "failed" : "completed",
+			_meta: { terminal_exit: { terminal_id: toolCallId, exit_code: exitCode } },
+		});
 	}
 
 	// =========================================================================
@@ -735,17 +823,42 @@ class AcpSession {
 	): Promise<string | undefined> {
 		if (opts?.signal?.aborted) return undefined;
 		const running = [...this.runningTools.keys()].at(-1);
-		const content: ToolCallContent[] = message ? [{ type: "content", content: { type: "text", text: message } }] : [];
+		const toolCallId = running ?? `dialog_${randomUUID()}`;
+		const content = message ? { content: [textContent(message)] } : {};
 		const toolCall = running
-			? { toolCallId: running, title, content }
-			: { toolCallId: `dialog_${randomUUID()}`, title, kind: "other" as const, status: "pending" as const, content };
+			? { toolCallId, title, ...content }
+			: { toolCallId, title, kind: "other" as const, status: "pending" as const, ...content };
 		const request = this.agent.connection.request<RequestPermissionResponse>("session/request_permission", {
 			sessionId: this.id,
 			toolCall,
 			options,
 		});
 		const response = await settleWithin(request, opts);
-		return response && response.outcome.outcome === "selected" ? response.outcome.optionId : undefined;
+		const selected = response && response.outcome.outcome === "selected" ? response.outcome.optionId : undefined;
+		// Clients keep what a permission request changes on the tool call: give a running tool its own title and output
+		// back, and end a dialog's own entry.
+		const tool = running ? this.runningTools.get(running) : undefined;
+		if (tool) {
+			const live = this.liveOutput.get(toolCallId)?.text;
+			const output = this.terminals.has(toolCallId)
+				? [terminalContent(toolCallId)]
+				: live
+					? [textContent(fenced(live))]
+					: [];
+			this.send({
+				sessionUpdate: "tool_call_update",
+				toolCallId,
+				title: toolCallInfo(tool.name, tool.args, this.cwd).title,
+				...(message ? { content: output } : {}),
+			});
+		} else if (!running) {
+			this.send({
+				sessionUpdate: "tool_call_update",
+				toolCallId,
+				status: selected === undefined ? "failed" : "completed",
+			});
+		}
+		return selected;
 	}
 
 	private async askText(
@@ -844,6 +957,23 @@ async function settleWithin<T>(
 		if (opts.timeout) timer = setTimeout(() => finish(undefined), opts.timeout);
 		void guarded.then(finish);
 	});
+}
+
+function textContent(text: string): ToolCallContent {
+	return { type: "content", content: { type: "text", text } };
+}
+
+/** A command's terminal, which has the tool call's id. */
+function terminalContent(toolCallId: string): ToolCallContent {
+	return { type: "terminal", terminalId: toolCallId };
+}
+
+/** How to set up a model, which ACP mode cannot do itself. */
+function setupHelp(): string {
+	return [
+		`Run \`${COMMAND_NAME}\` in a terminal and use /login, or give the agent a provider's API key in its environment`,
+		`(\`env\` in the editor's agent settings). See:\n  ${join(getDocsPath(), "providers.md")}`,
+	].join(" ");
 }
 
 function modelKey(model: Pick<Model<Api>, "provider" | "id">): string {

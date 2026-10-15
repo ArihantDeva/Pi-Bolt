@@ -1,14 +1,22 @@
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
+import { OutputAccumulator } from "../src/core/tools/output-accumulator.ts";
+import { truncationDetails } from "../src/core/tools/truncate.ts";
 import { AcpConnection } from "../src/extensions/acp/connection.ts";
 import { literalConfigValue, mcpServerName, toMcpServerConfig } from "../src/extensions/acp/extension.ts";
 import {
+	bashExitCode,
+	bashOutputTail,
 	fenced,
 	promptToPi,
 	replayMessages,
 	stopReasonOf,
+	TERMINAL_START,
+	type TerminalSent,
+	terminalOutputDelta,
 	toolCallInfo,
 	toolResultContent,
 } from "../src/extensions/acp/translate.ts";
@@ -165,5 +173,98 @@ describe("AcpConnection", () => {
 		const failed = connection.request("x", {});
 		connection.close();
 		await expect(failed).rejects.toThrow("closed");
+	});
+});
+
+describe("terminalOutputDelta", () => {
+	/** Command output as the bash tool reports it while the command runs: the end of it, with small limits. */
+	const command = () => {
+		const output = new OutputAccumulator({ maxLines: 4, maxBytes: 40, tempFilePrefix: "pi-acp-test" });
+		let full = "";
+		let sent: TerminalSent = TERMINAL_START;
+		let shown = "";
+		return {
+			write(text: string) {
+				output.append(Buffer.from(text, "utf8"));
+				full += text;
+			},
+			/** What the terminal is sent for the bash tool's next report. */
+			report(): string {
+				const snapshot = output.snapshot();
+				const tail = bashOutputTail({
+					content: [{ type: "text", text: snapshot.content }],
+					details: {
+						truncation: snapshot.truncation.truncated ? truncationDetails(snapshot.truncation) : undefined,
+					},
+				});
+				const delta = terminalOutputDelta(sent, tail);
+				sent = delta.sent;
+				shown += delta.data;
+				return delta.data;
+			},
+			get full() {
+				return full;
+			},
+			get shown() {
+				return shown;
+			},
+			close() {
+				output.closeTempFile();
+				const path = output.snapshot().fullOutputPath;
+				if (path) rmSync(path, { force: true });
+			},
+		};
+	};
+
+	it("sends only new output, through the bash tool's truncated tail", () => {
+		const run = command();
+		const chunks = [
+			"one\n",
+			"two\nthr",
+			"ee\n",
+			"y\ny\n",
+			"y\ny\n",
+			"y\ny\n",
+			"été\n",
+			"\x1b[32mok\x1b[0m\n",
+			"x".repeat(30),
+			"x".repeat(30),
+			"\nlast",
+			" line",
+		];
+		for (const chunk of chunks) {
+			run.write(chunk);
+			run.report();
+		}
+		expect(run.report()).toBe("");
+		expect(run.shown).toBe(run.full);
+		run.close();
+	});
+
+	it("marks output that went by between two reports, and goes on from there", () => {
+		const run = command();
+		run.write("start\n");
+		expect(run.report()).toBe("start\n");
+		run.write(Array.from({ length: 20 }, (_, i) => `line ${i}\n`).join(""));
+		// The tail leaves out the trailing newline, so where the terminal stands is known only to a byte.
+		expect(run.report()).toBe("[… output skipped …]\nline 16\nline 17\nline 18\nline 19");
+		run.write("more");
+		expect(run.report()).toBe("\nmore");
+		run.write(" and more\n");
+		expect(run.report()).toBe(" and more");
+		run.close();
+	});
+
+	it("starts over when the output changes instead of growing", () => {
+		const sent = { text: "progress 50%", end: 12, exact: true };
+		const delta = terminalOutputDelta(sent, { text: "done", totalBytes: 4, truncated: false });
+		expect(delta.data).toBe("\x1b[H\x1b[2J\x1b[3Jdone");
+		expect(delta.sent).toEqual({ text: "done", end: 4, exact: true });
+	});
+
+	it("takes the exit code of a command that finished", () => {
+		expect(bashExitCode({ content: [], structuredContent: { exit_code: 3 } }, true)).toBe(3);
+		expect(bashExitCode({ content: [{ type: "text", text: "Command aborted" }] }, true)).toBeNull();
+		expect(bashExitCode({ content: [] }, false)).toBe(0);
 	});
 });

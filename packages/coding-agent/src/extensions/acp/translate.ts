@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { resolveToCwd } from "../../core/tools/path-utils.ts";
+import { isRecord } from "./connection.ts";
 import type {
 	ContentBlock,
 	SessionUpdate,
@@ -188,6 +189,85 @@ export function bashResultContent(result: unknown): ToolCallContent[] {
 			? { type: "content", content: { type: "text", text: fenced(block.content.text) } }
 			: block,
 	);
+}
+
+/** The text of a tool result, its text blocks joined. */
+export function resultText(result: unknown): string {
+	return toolResultContent(result)
+		.map((block) => (block.type === "content" && block.content.type === "text" ? block.content.text : ""))
+		.join("");
+}
+
+/** Command output as the bash tool reports it while the command runs. */
+export interface OutputTail {
+	/** The output so far, or its end when `truncated` (which may leave out a trailing newline). */
+	text: string;
+	/** UTF-8 bytes of all the output so far. */
+	totalBytes: number;
+	truncated: boolean;
+}
+
+/** The output in a partial result of the bash tool. */
+export function bashOutputTail(partialResult: unknown): OutputTail {
+	const text = resultText(partialResult);
+	const details = isRecord(partialResult) ? partialResult.details : undefined;
+	const truncation = isRecord(details) ? details.truncation : undefined;
+	if (isRecord(truncation) && truncation.truncated === true && typeof truncation.totalBytes === "number") {
+		// Whole lines, which a newline comes before: with it, a tail that has only new lines still shows where they start.
+		const lines = truncation.lastLinePartial !== true;
+		return { text: lines ? `\n${text}` : text, totalBytes: truncation.totalBytes, truncated: true };
+	}
+	return { text, totalBytes: Buffer.byteLength(text, "utf8"), truncated: false };
+}
+
+/** What a terminal has been sent: the output up to byte `end`, which `text` is the end of. */
+export interface TerminalSent {
+	text: string;
+	end: number;
+	/** False when `text` may end a byte before `end` (a truncated tail without its trailing newline). */
+	exact: boolean;
+}
+
+export const TERMINAL_START: TerminalSent = { text: "", end: 0, exact: true };
+
+/** Clears a terminal's screen and scrollback. */
+const CLEAR_TERMINAL = "\x1b[H\x1b[2J\x1b[3J";
+
+/**
+ * The part of the output a terminal has not been sent yet, for a terminal that appends what it is sent. The bash tool
+ * reports only the end of long output, so the new part is found by byte counts, and checked against what was sent:
+ * the rest of the new tail must be the end of the old one. A truncated tail leaves out a trailing newline, so where a
+ * tail ends is known only to a byte; the counts that could be right are tried in turn. Output that went by between two
+ * reports is marked as skipped; output that changed instead of growing (another tool's partial results) clears the
+ * terminal and starts over.
+ */
+export function terminalOutputDelta(sent: TerminalSent, next: OutputTail): { data: string; sent: TerminalSent } {
+	const bytes = Buffer.from(next.text, "utf8");
+	const added = next.totalBytes - sent.end;
+	const lengths = [added, ...(next.truncated ? [added - 1] : []), ...(sent.exact ? [] : [added + 1])];
+	for (const length of lengths) {
+		if (length < 0 || length > bytes.length) continue;
+		const at = bytes.length - length;
+		if (!sent.text.endsWith(bytes.subarray(0, at).toString("utf8"))) continue;
+		return {
+			data: bytes.subarray(at).toString("utf8"),
+			sent: { text: next.text, end: sent.end + length, exact: true },
+		};
+	}
+	const restart = { text: next.text, end: next.totalBytes, exact: !next.truncated };
+	if (lengths.every((length) => length > bytes.length)) {
+		const before = sent.text !== "" && !sent.text.endsWith("\n") ? "\n" : "";
+		const after = next.text.startsWith("\n") ? "" : "\n";
+		return { data: `${before}[… output skipped …]${after}${next.text}`, sent: restart };
+	}
+	return { data: `${CLEAR_TERMINAL}${next.text}`, sent: restart };
+}
+
+/** The exit code of a finished bash call, when the command ran to its end. */
+export function bashExitCode(result: unknown, isError: boolean): number | null {
+	const structured = isRecord(result) ? result.structuredContent : undefined;
+	if (isRecord(structured) && typeof structured.exit_code === "number") return structured.exit_code;
+	return isError ? null : 0;
 }
 
 /** The prompt's stop reason, from the last assistant message of the run. */
