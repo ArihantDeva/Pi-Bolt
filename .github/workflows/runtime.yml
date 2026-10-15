@@ -251,7 +251,8 @@ jobs:
             [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true ] ||
               { echo "::error::$TAG is published: its runtimes are not replaced"; exit 1; }
           else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "Pi-Bolt ${TAG#bolt-v}" --notes ""
+            # (Its tag, when pushed later, names the commit that was built.)
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "Pi-Bolt ${TAG#bolt-v}" --notes "" --target "${REF:-$GITHUB_SHA}"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber runtimes/*
           { echo "### Runtimes attached to the draft of $TAG (built from ${REF:-$GITHUB_SHA})"; echo; (cd runtimes && sha256sum -- *) | sed 's/^/    /'; } >>"$GITHUB_STEP_SUMMARY"
