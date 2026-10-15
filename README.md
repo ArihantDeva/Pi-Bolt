@@ -215,7 +215,8 @@ See [docs/PLUGINS.md](docs/PLUGINS.md).
 ### Pi and Pi-Bolt side by side
 
 Pi-Bolt uses Pi's agent directory (`~/.pi/agent`) and shared `packages` list. Ordinary `pi-bolt install` and `pi-bolt remove`
-update that shared list, just as Pi does. Add `--pi-bolt` to change only Pi-Bolt's overrides. Using fictional package names:
+update that shared list, just as Pi does, and drop Pi-Bolt's own entry for that package, so both load what the shared list
+declares. Add `--pi-bolt` to change only Pi-Bolt's overrides. Using fictional package names:
 
 ```bash
 pi-bolt install --pi-bolt npm:@example/bolt-tools
@@ -231,8 +232,9 @@ pi-bolt remove --pi-bolt npm:@example/shared-tools
 }
 ```
 
-Other shared packages remain inherited. Existing `piBolt.packages` lists are now additive, not independent lists; add explicit
-exclusions for shared packages you do not want Pi-Bolt to load. See [Configuration](https://pi-bolt.opensec.in/docs/configuration.html).
+Other shared packages remain inherited. A `piBolt.packages` list copied from `packages` by Pi-Bolt before 0.9.1 is converted
+once into exclusions and differing entries, so Pi-Bolt keeps loading what it did. See
+[Configuration](https://pi-bolt.opensec.in/docs/configuration.html).
 
 ## Herdr
 

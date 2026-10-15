@@ -895,11 +895,12 @@ export class DefaultPackageManager implements PackageManager {
 			else this.settingsManager.setPackages(nextPackages, options);
 			return true;
 		}
+		const clearedOverride = this.clearPiBoltOverride(source, currentSettings, scope);
 		const matchIndex = currentPackages.findIndex((existing) => this.packageSourcesMatch(existing, source, scope));
 		if (matchIndex !== -1) {
 			const existing = currentPackages[matchIndex];
 			if (this.getPackageSourceString(existing) === normalizedSource) {
-				return false;
+				return clearedOverride;
 			}
 			const nextPackages = [...currentPackages];
 			nextPackages[matchIndex] =
@@ -952,15 +953,43 @@ export class DefaultPackageManager implements PackageManager {
 			);
 			if (shared) nextPackages.push(`-${this.getPackageSourceString(shared)}`);
 		}
+		const clearedOverride = !options?.piBolt && this.clearPiBoltOverride(source, currentSettings, scope);
 		const changed = JSON.stringify(nextPackages) !== JSON.stringify(currentPackages);
 		if (!changed) {
-			return false;
+			return clearedOverride;
 		}
 		if (scope === "project") {
 			this.settingsManager.setProjectPackages(nextPackages, options);
 		} else {
 			this.settingsManager.setPackages(nextPackages, options);
 		}
+		return true;
+	}
+
+	/**
+	 * Plain install and remove (without --pi-bolt) in Pi-Bolt change the shared list and drop Pi-Bolt's entries for the same
+	 * package in that settings file: a replacement, an addition or an exclusion. Pi-Bolt then loads exactly what the shared
+	 * list declares, so `remove X` cannot leave Pi-Bolt loading X and `install X@2` cannot leave it on X@1 or without X.
+	 * Returns whether Pi-Bolt's list changed.
+	 */
+	private clearPiBoltOverride(
+		source: string,
+		currentSettings: Pick<Settings, "packages" | "piBolt">,
+		scope: SourceScope,
+	): boolean {
+		const own = currentSettings.piBolt?.packages;
+		if (PIBOLT === undefined || !Array.isArray(own)) return false;
+		const next = own.filter(
+			(entry) =>
+				!this.packageSourcesMatch(
+					typeof entry === "string" && entry.startsWith("-") ? entry.slice(1) : entry,
+					source,
+					scope,
+				),
+		);
+		if (next.length === own.length) return false;
+		if (scope === "project") this.settingsManager.setProjectPackages(next, { piBolt: true });
+		else this.settingsManager.setPackages(next, { piBolt: true });
 		return true;
 	}
 
@@ -1153,24 +1182,20 @@ export class DefaultPackageManager implements PackageManager {
 		const scope: SourceScope = options?.local ? "project" : "user";
 		this.assertProjectTrustedForScope(scope);
 		await this.withProgress("remove", source, `Removing ${source}...`, async () => {
-			// Both runtimes share installed files. Keep anything the other raw list still declares.
-			const settings =
-				PIBOLT !== undefined
-					? await this.settingsManager.getCurrentPackageSettings(scope === "project" ? "project" : "global")
-					: scope === "project"
-						? this.settingsManager.getProjectSettings()
-						: this.settingsManager.getGlobalSettings();
-			this.assertProjectTrustedForScope(scope);
-			const ownPackages = Array.isArray(settings.piBolt?.packages) ? settings.piBolt.packages : [];
-			const retained = options?.piBolt ? settings.packages : PIBOLT !== undefined ? ownPackages : [];
-			if (
-				retained?.some(
-					(existing) =>
-						!(typeof existing === "string" && existing.startsWith("-")) &&
-						this.packageSourcesMatch(existing, source, scope),
-				)
-			) {
-				return;
+			// Both runtimes share installed files: --pi-bolt keeps the files the shared list still declares. A plain remove
+			// drops the package from both lists of this settings file (clearPiBoltOverride), so no declaration keeps them.
+			// Settings that cannot be read abort before anything is deleted.
+			if (PIBOLT !== undefined) {
+				const settings = await this.settingsManager.getCurrentPackageSettings(
+					scope === "project" ? "project" : "global",
+				);
+				this.assertProjectTrustedForScope(scope);
+				if (
+					options?.piBolt &&
+					settings.packages?.some((existing) => this.packageSourcesMatch(existing, source, scope))
+				) {
+					return;
+				}
 			}
 			if (parsed.type === "npm") {
 				await this.uninstallNpm(parsed, scope);

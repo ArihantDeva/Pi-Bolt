@@ -326,27 +326,104 @@ function isPiBoltOnlyPackage(entry: unknown): boolean {
 	return source !== undefined && PIBOLT_ONLY_PACKAGE.test(source);
 }
 
+function piBoltSettingsOf(settings: Record<string, unknown>): Record<string, unknown> {
+	return (typeof settings.piBolt === "object" && settings.piBolt !== null ? settings.piBolt : {}) as Record<
+		string,
+		unknown
+	>;
+}
+
+function packageIdentityOf(entry: unknown, baseDir: string): string | undefined {
+	const source = sourceOfPackage(entry);
+	return source === undefined
+		? undefined
+		: getPackageIdentity(source.startsWith("-") ? source.slice(1) : source, baseDir);
+}
+
 /** `settings` with Pi-Bolt's only packages moved out of Pi's list, or undefined when Pi's list has none. */
-function withPiBoltOnlyPackagesMoved(settings: Record<string, unknown>): Record<string, unknown> | undefined {
+function withPiBoltOnlyPackagesMoved(
+	settings: Record<string, unknown>,
+	baseDir: string,
+): Record<string, unknown> | undefined {
 	const packages = settings.packages;
 	if (!Array.isArray(packages) || !packages.some(isPiBoltOnlyPackage)) return undefined;
-	const piBolt = (typeof settings.piBolt === "object" && settings.piBolt !== null ? settings.piBolt : {}) as {
-		packages?: unknown;
-	};
-	const own: unknown[] = Array.isArray(piBolt.packages) ? piBolt.packages : [];
-	const identity = (entry: unknown) => {
-		const source = sourceOfPackage(entry);
-		return source === undefined
-			? undefined
-			: getPackageIdentity(source.startsWith("-") ? source.slice(1) : source, process.cwd());
-	};
-	const ownSources = new Set(own.map(identity));
-	const moved = packages.filter((entry) => isPiBoltOnlyPackage(entry) && !ownSources.has(identity(entry)));
+	const piBolt = piBoltSettingsOf(settings);
+	const hasList = Array.isArray(piBolt.packages);
+	const own: unknown[] = hasList ? (piBolt.packages as unknown[]) : [];
+	const ownSources = new Set(own.map((entry) => packageIdentityOf(entry, baseDir)));
+	const moved = packages.filter(
+		(entry) => isPiBoltOnlyPackage(entry) && !ownSources.has(packageIdentityOf(entry, baseDir)),
+	);
 	return {
 		...settings,
 		packages: packages.filter((entry) => !isPiBoltOnlyPackage(entry)),
-		piBolt: { ...piBolt, packages: [...own, ...moved] },
+		// A list made here is an overlay; an existing unmarked one is a legacy copy, converted next.
+		piBolt: { ...piBolt, packages: [...own, ...moved], ...(hasList ? {} : { packagesOverlay: true }) },
 	};
+}
+
+/** Same package, version or ref and resource filters. Local paths compare by resolved path. */
+function isSamePackageDeclaration(left: unknown, right: unknown, baseDir: string): boolean {
+	const normalize = (entry: unknown) => {
+		const { source, ...filters } = (typeof entry === "string" ? { source: entry } : entry) as Record<string, unknown>;
+		const identity = packageIdentityOf(entry, baseDir);
+		const spec = identity?.startsWith("local:") ? identity : String(source).trim();
+		return JSON.stringify([spec, Object.entries(filters).sort(([a], [b]) => a.localeCompare(b))]);
+	};
+	return normalize(left) === normalize(right);
+}
+
+/**
+ * Pi-Bolt before 0.9.1 kept `piBolt.packages` as an independent list: its first install or removal copied `packages` into it
+ * and edited the copy. The list is now an overlay on `packages`, so a shared package missing from a copy would be loaded again.
+ * Convert a copy once: exclude each shared package it lacks, drop entries identical to their shared entry, and keep the rest
+ * (replacements and Pi-Bolt-only additions). `packagesOverlay` marks a list as an overlay; every writer of the list sets it.
+ * Returns undefined when there is nothing to change.
+ */
+function withLegacyPiBoltPackagesConverted(
+	settings: Record<string, unknown>,
+	baseDir: string,
+): Record<string, unknown> | undefined {
+	const piBolt = piBoltSettingsOf(settings);
+	if (!Array.isArray(piBolt.packages) || piBolt.packagesOverlay === true) return undefined;
+	const own: unknown[] = piBolt.packages;
+	// Exclusions exist only in overlays: such a list was written for the overlay format and is only marked.
+	if (own.some((entry) => typeof entry === "string" && entry.startsWith("-"))) {
+		return { ...settings, piBolt: { ...piBolt, packagesOverlay: true } };
+	}
+	const shared: unknown[] = Array.isArray(settings.packages) ? settings.packages : [];
+	const identity = (entry: unknown) => packageIdentityOf(entry, baseDir);
+	const ownIdentities = new Set(own.map(identity));
+	const exclusions = new Map<string, string>();
+	for (const entry of shared) {
+		const key = identity(entry);
+		if (key !== undefined && !ownIdentities.has(key) && !exclusions.has(key)) {
+			exclusions.set(key, `-${sourceOfPackage(entry)}`);
+		}
+	}
+	const kept = own.filter((entry) => {
+		const key = identity(entry);
+		const same = key === undefined ? [] : shared.filter((sharedEntry) => identity(sharedEntry) === key);
+		return same.length === 0 || !same.every((sharedEntry) => isSamePackageDeclaration(sharedEntry, entry, baseDir));
+	});
+	return { ...settings, piBolt: { ...piBolt, packages: [...exclusions.values(), ...kept], packagesOverlay: true } };
+}
+
+/** Pi-Bolt's package migrations for one settings file, or undefined when it needs none. */
+function withPiBoltPackagesMigrated(
+	settings: Record<string, unknown>,
+	scope: SettingsScope,
+	baseDir: string,
+): Record<string, unknown> | undefined {
+	const moved = scope === "global" ? withPiBoltOnlyPackagesMoved(settings, baseDir) : undefined;
+	return withLegacyPiBoltPackagesConverted(moved ?? settings, baseDir) ?? moved;
+}
+
+/** Directory relative package sources in a settings file resolve against. */
+function getPackageBaseDir(scope: SettingsScope, settingsPaths: SettingsPaths): string {
+	const path = settingsPaths[scope];
+	if (path) return dirname(path);
+	return scope === "global" ? getAgentDir() : join(process.cwd(), CONFIG_DIR_NAME);
 }
 
 export class SettingsManager {
@@ -414,8 +491,8 @@ export class SettingsManager {
 		settingsPaths: SettingsPaths = {},
 	): SettingsManager {
 		const projectTrusted = options.projectTrusted ?? true;
-		const globalLoad = SettingsManager.tryLoadFromStorage(storage, "global");
-		const projectLoad = SettingsManager.tryLoadFromStorage(storage, "project", projectTrusted);
+		const globalLoad = SettingsManager.tryLoadFromStorage(storage, "global", settingsPaths);
+		const projectLoad = SettingsManager.tryLoadFromStorage(storage, "project", settingsPaths, projectTrusted);
 		const initialErrors: SettingsError[] = [];
 		if (globalLoad.error) {
 			initialErrors.push(toSettingsError("global", globalLoad.error, settingsPaths.global));
@@ -444,7 +521,12 @@ export class SettingsManager {
 		return SettingsManager.fromStorage(storage, options);
 	}
 
-	private static loadFromStorage(storage: SettingsStorage, scope: SettingsScope, projectTrusted = true): Settings {
+	private static loadFromStorage(
+		storage: SettingsStorage,
+		scope: SettingsScope,
+		settingsPaths: SettingsPaths,
+		projectTrusted = true,
+	): Settings {
 		if (scope === "project" && !projectTrusted) {
 			return {};
 		}
@@ -463,17 +545,20 @@ export class SettingsManager {
 			return {};
 		}
 		let settings = JSON.parse(stripBom(content));
-		if (PIBOLT !== undefined && scope === "global") {
-			const separated = withPiBoltOnlyPackagesMoved(settings);
-			if (separated) {
-				settings = separated;
+		if (PIBOLT !== undefined) {
+			const baseDir = getPackageBaseDir(scope, settingsPaths);
+			const migrated = withPiBoltPackagesMigrated(settings, scope, baseDir);
+			if (migrated) {
+				settings = migrated;
 				try {
-					storage.withLock("global", (current) => {
-						const moved = current ? withPiBoltOnlyPackagesMoved(JSON.parse(stripBom(current))) : undefined;
-						return moved ? JSON.stringify(moved, null, 2) : undefined;
+					storage.withLock(scope, (current) => {
+						const next = current
+							? withPiBoltPackagesMigrated(JSON.parse(stripBom(current)), scope, baseDir)
+							: undefined;
+						return next ? JSON.stringify(next, null, 2) : undefined;
 					});
 				} catch {
-					// (Not written: Pi-Bolt still loads them from its list in memory, and moves them at a later start.)
+					// (Not written: Pi-Bolt uses the migrated lists in memory, and migrates the file at a later start.)
 				}
 			}
 		}
@@ -483,10 +568,14 @@ export class SettingsManager {
 	private static tryLoadFromStorage(
 		storage: SettingsStorage,
 		scope: SettingsScope,
+		settingsPaths: SettingsPaths,
 		projectTrusted = true,
 	): { settings: Settings; error: Error | null } {
 		try {
-			return { settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted), error: null };
+			return {
+				settings: SettingsManager.loadFromStorage(storage, scope, settingsPaths, projectTrusted),
+				error: null,
+			};
 		} catch (error) {
 			return { settings: {}, error: error as Error };
 		}
@@ -589,7 +678,7 @@ export class SettingsManager {
 			return;
 		}
 
-		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", trusted);
+		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", this.settingsPaths, trusted);
 		this.projectSettings = projectLoad.settings;
 		this.projectSettingsLoadError = projectLoad.error;
 		if (projectLoad.error) {
@@ -600,7 +689,7 @@ export class SettingsManager {
 
 	async reload(): Promise<void> {
 		await this.writeQueue;
-		const globalLoad = SettingsManager.tryLoadFromStorage(this.storage, "global");
+		const globalLoad = SettingsManager.tryLoadFromStorage(this.storage, "global", this.settingsPaths);
 		if (!globalLoad.error) {
 			this.globalSettings = globalLoad.settings;
 			this.globalSettingsLoadError = null;
@@ -614,7 +703,12 @@ export class SettingsManager {
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 
-		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", this.projectTrusted);
+		const projectLoad = SettingsManager.tryLoadFromStorage(
+			this.storage,
+			"project",
+			this.settingsPaths,
+			this.projectTrusted,
+		);
 		if (!projectLoad.error) {
 			this.projectSettings = projectLoad.settings;
 			this.projectSettingsLoadError = null;
@@ -1177,11 +1271,9 @@ export class SettingsManager {
 		return this.globalSettings.deviceId;
 	}
 
+	/** As in Pi, a project `packages` list replaces the global one. A project Pi-Bolt list alone does not. */
 	private getPackageSettingsScope(): SettingsScope {
-		return this.projectSettings.packages !== undefined ||
-			(PIBOLT !== undefined && Array.isArray(this.projectSettings.piBolt?.packages))
-			? "project"
-			: "global";
+		return this.projectSettings.packages !== undefined ? "project" : "global";
 	}
 
 	private mergeSettings(): Settings {
@@ -1191,7 +1283,21 @@ export class SettingsManager {
 
 	/** Resolved runtime packages with project-list-over-global SDK precedence and non-persistent applyOverrides. */
 	getPackages(): PackageSource[] {
-		return this.resolvePackages(this.packageSettings, this.getPackageSettingsScope());
+		const scope = this.getPackageSettingsScope();
+		const packages = this.resolvePackages(this.packageSettings, scope);
+		if (scope === "project" || PIBOLT === undefined || !Array.isArray(this.projectSettings.piBolt?.packages)) {
+			return packages;
+		}
+		// Project Pi-Bolt entries without project `packages` add to the global packages or replace one of the same
+		// identity, as the package manager loads them; their exclusions apply only to the project's own (empty) list.
+		const project = this.resolvePackages(this.projectSettings, "project");
+		const identity = (entry: PackageSource, entryScope: SettingsScope) =>
+			getPackageIdentity(
+				typeof entry === "string" ? entry : entry.source,
+				getPackageBaseDir(entryScope, this.settingsPaths),
+			);
+		const projectIdentities = new Set(project.map((entry) => identity(entry, "project")));
+		return [...packages.filter((entry) => !projectIdentities.has(identity(entry, "global"))), ...project];
 	}
 
 	/** Resolve only this file's overlay. Custom storage uses agent dir / cwd/.pi unless baseDir is supplied. */
@@ -1212,7 +1318,15 @@ export class SettingsManager {
 				return undefined;
 			});
 		// An unreadable declaration file must abort removal, not authorise deletion of shared files.
-		const persisted: Settings = content ? JSON.parse(stripBom(content)) : {};
+		let persisted: Settings = content ? JSON.parse(stripBom(content)) : {};
+		if (PIBOLT !== undefined) {
+			// A file written by an older Pi-Bolt since this manager loaded it still holds a legacy copy.
+			persisted =
+				(withLegacyPiBoltPackagesConverted(
+					persisted as Record<string, unknown>,
+					getPackageBaseDir(scope, this.settingsPaths),
+				) as Settings | undefined) ?? persisted;
+		}
 		const current = scope === "project" ? this.projectSettings : this.globalSettings;
 		const modified = scope === "project" ? this.modifiedProjectFields : this.modifiedFields;
 		const nested = scope === "project" ? this.modifiedProjectNestedFields : this.modifiedNestedFields;
@@ -1226,21 +1340,25 @@ export class SettingsManager {
 
 	private resolvePackages(settings: Settings, scope: SettingsScope, baseDir?: string): PackageSource[] {
 		const shared = settings.packages ?? [];
-		baseDir ??= this.settingsPaths[scope]
-			? dirname(this.settingsPaths[scope]!)
-			: scope === "global"
-				? getAgentDir()
-				: join(process.cwd(), CONFIG_DIR_NAME);
+		baseDir ??= getPackageBaseDir(scope, this.settingsPaths);
 		const own = Array.isArray(settings.piBolt?.packages) ? settings.piBolt.packages : [];
 		return structuredClone(PIBOLT === undefined ? shared : resolvePackageOverlay(shared, own, baseDir));
 	}
 
-	/** Write raw shared declarations. The piBolt option explicitly selects the additive Pi-Bolt list. */
+	/**
+	 * Write raw shared declarations. The piBolt option explicitly selects the additive Pi-Bolt list, marked as an overlay so
+	 * it is never taken for a legacy copy (withLegacyPiBoltPackagesConverted).
+	 */
 	setPackages(packages: PackageSource[], options?: { piBolt?: boolean }): void {
 		if (options?.piBolt) {
 			if (PIBOLT === undefined) throw new Error("Pi-Bolt packages require a Pi-Bolt build");
-			this.globalSettings.piBolt = { ...this.globalSettings.piBolt, packages: structuredClone(packages) };
+			this.globalSettings.piBolt = {
+				...this.globalSettings.piBolt,
+				packages: structuredClone(packages),
+				packagesOverlay: true,
+			};
 			this.markModified("piBolt", "packages");
+			this.markModified("piBolt", "packagesOverlay");
 		} else {
 			this.globalSettings.packages = structuredClone(packages);
 			this.markModified("packages");
@@ -1254,8 +1372,9 @@ export class SettingsManager {
 			if (PIBOLT === undefined) throw new Error("Pi-Bolt packages require a Pi-Bolt build");
 			this.assertProjectTrustedForWrite();
 			const settings = this.getProjectSettings();
-			settings.piBolt = { ...settings.piBolt, packages: structuredClone(packages) };
+			settings.piBolt = { ...settings.piBolt, packages: structuredClone(packages), packagesOverlay: true };
 			this.markProjectModified("piBolt", "packages");
+			this.markProjectModified("piBolt", "packagesOverlay");
 			this.saveProjectSettings(settings);
 		} else {
 			this.updateProjectSettings("packages", (settings) => {

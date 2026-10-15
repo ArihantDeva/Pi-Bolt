@@ -22,8 +22,11 @@
   network operations at startup.</p>
 <h2>Shared packages and Pi-Bolt overrides</h2>
 <p><code>pi-bolt install</code> and <code>pi-bolt remove</code> update the shared <code>packages</code> list, just as Pi does.
-  They do not create a separate copy. Use <code>--pi-bolt</code> to change only <code>piBolt.packages</code>, which Pi ignores.
-  These examples use fictional package names:</p>
+  They do not create a separate copy. They also drop Pi-Bolt's own entry for that package in the same settings file (a
+  replacement, an addition or an exclusion), so Pi-Bolt then loads what the shared list declares: <code>remove</code> stops both
+  from loading the package, and <code>install npm:tools@2</code> is not hidden by a Pi-Bolt entry for <code>npm:tools@1</code>.
+  Use <code>--pi-bolt</code> to change only <code>piBolt.packages</code>, which Pi ignores. These examples use fictional
+  package names:</p>
 <pre data-label="Terminal"><span class="p">$ </span>pi-bolt install --pi-bolt npm:@example/bolt-tools
 <span class="p">$ </span>pi-bolt remove --pi-bolt npm:@example/shared-tools</pre>
 <p><code>piBolt.packages</code> extends <code>packages</code> in the same settings file. Entries are applied in order: a package
@@ -44,11 +47,13 @@
   project/global precedence is unchanged. A project exclusion does not exclude a global package.</p>
 <p>These are configuration overrides, not separate installations. Pi and Pi-Bolt share installed package files, so selecting
   different versions or Git refs of the same package can replace the files used by both.</p>
-<p><strong>Existing configurations:</strong> <code>piBolt.packages</code> is now additive, including existing lists and empty
-  arrays. Packages copied into both lists load once, with the Pi-Bolt entry taking precedence. Shared packages previously absent
-  from that list are inherited again. Add <code>-source</code> entries for packages
-  you want excluded; remove copied entries to let future shared changes apply to them. No automatic conversion preserves the
-  old independent-list behaviour.</p>
+<p><strong>Existing configurations:</strong> before 0.9.1, <code>piBolt.packages</code> was an independent list, copied from
+  <code>packages</code> on the first <code>pi-bolt</code> install or removal. Pi-Bolt converts such a copy once, at its next
+  start: each shared package missing from the copy gets a <code>-source</code> exclusion, entries identical to their shared
+  entry are dropped (so future shared changes apply to them), and entries that differ or exist only for Pi-Bolt are kept. Pi-Bolt
+  then loads what it loaded before, and packages added to <code>packages</code> later are inherited. Pi-Bolt marks the list with
+  <code>"packagesOverlay": true</code> whenever it writes it; an unmarked list without <code>-source</code> entries is taken for
+  an old copy, so add the mark to a list you write by hand.</p>
 <p>The installer uses <code>--pi-bolt</code> for OpenSec's optional Bun-only extensions. The existing startup repair for older
   installations still moves those extensions out of the shared list, but does not copy other shared packages.</p>
 

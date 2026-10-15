@@ -1081,6 +1081,9 @@ export async function handlePackageCommand(
 		switch (options.command) {
 			case "install":
 				await packageManager.installAndPersist(source!, { local: options.local, piBolt: options.piBolt });
+				// main() exits right after a package command; queued settings writes (one per list) must land first.
+				await settingsManager.flush();
+				reportSettingsErrors(settingsManager, "package command");
 				console.log(chalk.green(`Installed ${source}`));
 				return true;
 
@@ -1089,6 +1092,8 @@ export async function handlePackageCommand(
 					local: options.local,
 					piBolt: options.piBolt,
 				});
+				await settingsManager.flush();
+				reportSettingsErrors(settingsManager, "package command");
 				if (!removed) {
 					console.error(chalk.red(`No matching package found for ${source}`));
 					process.exitCode = 1;
