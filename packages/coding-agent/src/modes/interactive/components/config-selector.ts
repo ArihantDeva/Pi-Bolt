@@ -17,8 +17,10 @@ import {
 } from "@earendil-works/pi-tui";
 import { CONFIG_DIR_NAME } from "../../../config.ts";
 import type { PathMetadata, ResolvedPaths, ResolvedResource } from "../../../core/package-manager.ts";
+import { getPackageIdentity } from "../../../core/package-source.ts";
 import type { PackageSource, SettingsManager } from "../../../core/settings-manager.ts";
 import { BUILTIN_PATH_PREFIX } from "../../../core/source-info.ts";
+import { PIBOLT } from "../../../pi-bolt.ts";
 import { canonicalizePath, isLocalPath, resolvePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -585,14 +587,12 @@ class ResourceList implements Component, Focusable {
 
 	private togglePackageResource(item: ResourceItem, enabled: boolean): void {
 		const scope = item.metadata.scope as "user" | "project";
-		const settings =
-			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
-
-		const packages = [...(settings.packages ?? [])] as PackageSource[];
-		const pkgIndex = packages.findIndex((pkg) => {
+		const { packages, piBolt } = this.getPackageDeclarationList(item, scope);
+		const matches = (pkg: PackageSource) => {
 			const source = typeof pkg === "string" ? pkg : pkg.source;
 			return source === item.metadata.source;
-		});
+		};
+		const pkgIndex = piBolt ? packages.findLastIndex(matches) : packages.findIndex(matches);
 
 		if (pkgIndex === -1) return;
 
@@ -636,9 +636,9 @@ class ResourceList implements Component, Focusable {
 		}
 
 		if (scope === "project") {
-			this.settingsManager.setProjectPackages(packages);
+			this.settingsManager.setProjectPackages(packages, { piBolt });
 		} else {
-			this.settingsManager.setPackages(packages);
+			this.settingsManager.setPackages(packages, { piBolt });
 		}
 	}
 
@@ -702,15 +702,18 @@ class ResourceList implements Component, Focusable {
 	}
 
 	private setProjectPackageOverride(item: ResourceItem, state: ProjectOverrideState): boolean {
-		const packages = [...(this.settingsManager.getProjectSettings().packages ?? [])] as PackageSource[];
-		let pkgIndex = packages.findIndex((pkg) =>
+		const { packages, piBolt } = this.getPackageDeclarationList(item, "project");
+		const matches = (pkg: PackageSource) =>
 			this.packageSourceStringMatches(
 				item.metadata.source,
 				this.getItemScope(item),
-				typeof pkg === "string" ? pkg : pkg.source,
+				typeof pkg === "string" ? (piBolt && pkg.startsWith("-") ? pkg.slice(1) : pkg) : pkg.source,
 				"project",
-			),
-		);
+			);
+		let pkgIndex = PIBOLT !== undefined ? packages.findLastIndex(matches) : packages.findIndex(matches);
+		const existing = packages[pkgIndex];
+		// Keep the exclusion beneath a new delta, so returning to inherit restores the global fallback.
+		if (piBolt && typeof existing === "string" && existing.startsWith("-")) pkgIndex = -1;
 		if (pkgIndex === -1) {
 			if (state === "inherit") return false;
 			packages.push(this.createPackageOverrideSource(item));
@@ -732,7 +735,7 @@ class ResourceList implements Component, Focusable {
 			if (pkg.autoload === false) packages.splice(pkgIndex, 1);
 			else packages[pkgIndex] = pkg.source;
 		}
-		this.settingsManager.setProjectPackages(packages);
+		this.settingsManager.setProjectPackages(packages, { piBolt });
 		return true;
 	}
 
@@ -821,26 +824,60 @@ class ResourceList implements Component, Focusable {
 		rightSource: string,
 		rightScope: SettingsScope,
 	): boolean {
-		if (leftSource === rightSource) return true;
-		if (!isLocalPath(leftSource) || !isLocalPath(rightSource)) return false;
-		const left = resolvePath(leftSource, this.getTopLevelBaseDir(leftScope), { trim: true });
-		const right = resolvePath(rightSource, this.getTopLevelBaseDir(rightScope), { trim: true });
-		return left === right;
+		if (PIBOLT === undefined) {
+			if (leftSource === rightSource) return true;
+			if (!isLocalPath(leftSource) || !isLocalPath(rightSource)) return false;
+			return (
+				resolvePath(leftSource, this.getTopLevelBaseDir(leftScope), { trim: true }) ===
+				resolvePath(rightSource, this.getTopLevelBaseDir(rightScope), { trim: true })
+			);
+		}
+		return (
+			getPackageIdentity(leftSource, this.getTopLevelBaseDir(leftScope)) ===
+			getPackageIdentity(rightSource, this.getTopLevelBaseDir(rightScope))
+		);
+	}
+
+	/** Edit only the declaration's owning list, never the resolved overlay. */
+	private getPackageDeclarationList(
+		item: ResourceItem,
+		scope: SettingsScope,
+	): { packages: PackageSource[]; piBolt: boolean } {
+		const settings =
+			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
+		const own = Array.isArray(settings.piBolt?.packages) ? settings.piBolt.packages : [];
+		const matches = (pkg: PackageSource, pkgScope: SettingsScope, ownEntry = false) =>
+			this.packageSourceStringMatches(
+				item.metadata.source,
+				this.getItemScope(item),
+				typeof pkg === "string" ? (ownEntry && pkg.startsWith("-") ? pkg.slice(1) : pkg) : pkg.source,
+				pkgScope,
+			);
+		const hasDeclaration =
+			(settings.packages ?? []).some((pkg) => matches(pkg, scope)) || own.some((pkg) => matches(pkg, scope, true));
+		const globalOwn = this.settingsManager.getGlobalSettings().piBolt?.packages;
+		const inheritedOwn =
+			scope === "project" &&
+			!hasDeclaration &&
+			Array.isArray(globalOwn) &&
+			globalOwn.some((pkg) => matches(pkg, "user", true));
+		const piBolt = PIBOLT !== undefined && (own.some((pkg) => matches(pkg, scope, true)) || inheritedOwn);
+		return { packages: [...((piBolt ? own : settings.packages) ?? [])], piBolt };
 	}
 
 	private findMatchingPackageSource(item: ResourceItem, targetScope: SettingsScope): PackageSource | undefined {
-		const settings =
-			targetScope === "project"
-				? this.settingsManager.getProjectSettings()
-				: this.settingsManager.getGlobalSettings();
-		return (settings.packages ?? []).find((pkg) =>
+		const packages = this.settingsManager.getResolvedPackages(
+			targetScope === "project" ? "project" : "global",
+			this.getTopLevelBaseDir(targetScope),
+		);
+		const matches = (pkg: PackageSource) =>
 			this.packageSourceStringMatches(
 				item.metadata.source,
 				this.getItemScope(item),
 				typeof pkg === "string" ? pkg : pkg.source,
 				targetScope,
-			),
-		);
+			);
+		return PIBOLT !== undefined && targetScope === "project" ? packages.findLast(matches) : packages.find(matches);
 	}
 
 	private getPatternEntryTarget(entry: string): string {

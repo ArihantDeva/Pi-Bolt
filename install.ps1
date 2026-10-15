@@ -726,7 +726,7 @@ function Install-PiBoltExtensions($state) {
 		Write-Host "`n${bold}Optional extensions by OpenSec$reset $dim(open source, built for Pi-Bolt)$reset`n"
 		foreach ($e in $wanted) { Write-Host ("  $cyan{0,-22}$reset {1}" -f $e.Package, $e.What) }
 		Write-Host -NoNewline "`nInstall them? [Y/n] "
-		if ((Read-Host) -match '^(n|no)$') { Write-Host "${dim}You can install them later with: pi-bolt install npm:<name>$reset"; return }
+		if ((Read-Host) -match '^(n|no)$') { Write-Host "${dim}You can install them later with: pi-bolt install --pi-bolt npm:<name>$reset"; return }
 	}
 	$registry = if ($env:PIBOLT_NPM_REGISTRY) { $env:PIBOLT_NPM_REGISTRY.TrimEnd('/') } else { 'https://registry.npmjs.org' }
 	foreach ($e in $wanted) {
@@ -744,7 +744,7 @@ function Install-PiBoltExtensions($state) {
 		# to settle it, and with them the one just downloaded, before its pin is compared.)
 		Push-Location -LiteralPath (Split-Path $exe)
 		try {
-			$out = & $exe install "npm:$spec" 2>&1
+			$out = & $exe install --pi-bolt "npm:$spec" 2>&1
 			$installed = $LASTEXITCODE -eq 0
 		} finally {
 			Pop-Location
@@ -757,18 +757,18 @@ function Install-PiBoltExtensions($state) {
 			if ($check -ne 'same') {
 				# (Not known is not the pin either: what was installed is a download the installer has not seen.)
 				Push-Location -LiteralPath (Split-Path $exe)
-				try { & $exe remove "npm:$spec" *> $null; $removed = $LASTEXITCODE -eq 0 } finally { Pop-Location }
+				try { & $exe remove --pi-bolt "npm:$spec" *> $null; $removed = $LASTEXITCODE -eq 0 } finally { Pop-Location }
 				$why = if ($check -eq 'different') { 'is not the one this release pins' } else { 'cannot be checked against the pin (no lockfile says what it is)' }
 				if ($removed) { Write-Host "  ${red}removed $spec again: what the package manager installed $why$reset" }
-				else { Write-Host "  ${red}$spec $why, and removing it failed: remove it yourself (pi-bolt remove npm:$spec)$reset" }
-				Write-Host "  ${dim}Install it yourself if you want it: pi-bolt install npm:$spec$reset"
+				else { Write-Host "  ${red}$spec $why, and removing it failed: remove it yourself (pi-bolt remove --pi-bolt npm:$spec)$reset" }
+				Write-Host "  ${dim}Install it yourself if you want it: pi-bolt install --pi-bolt npm:$spec$reset"
 				continue
 			}
 		}
 		if ($installed) { Write-Host "  ${green}ok$reset $spec installed" }
 		else {
 			Write-Host "  ${red}could not install $($e.Package) (Pi-Bolt itself is installed): $(($out | Select-Object -Last 1))$reset"
-			Write-Host "  ${dim}Install it later with: pi-bolt install npm:$($e.Package)$reset"
+			Write-Host "  ${dim}Install it later with: pi-bolt install --pi-bolt npm:$($e.Package)$reset"
 		}
 	}
 }
