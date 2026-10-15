@@ -73,7 +73,12 @@ export function swapFolderContents(current: string, previous: string): void {
 	rmSync(previous, { recursive: true, force: true });
 	renameSync(keep, previous);
 	for (const file of filesIn(current)) {
-		if (ASIDE.test(file)) rmSync(join(current, file), { force: true }); // (Fails quietly for a file still running.)
+		if (!ASIDE.test(file)) continue;
+		try {
+			rmSync(join(current, file), { force: true });
+		} catch {
+			// A file still running (this executable, or another Pi-Bolt's) cannot be deleted: the next install deletes it.
+		}
 	}
 }
 
