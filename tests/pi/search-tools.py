@@ -70,9 +70,9 @@ try:
     repo = work / "repo"
     for rel, text in {"b.ts": "needle b\n", "a/c.ts": "needle c\n", "build/out.ts": "needle built\n", "notes.md": "no\n"}.items():
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
-        (repo / rel).write_text(text)
+        (repo / rel).write_bytes(text.encode())  # (Not write_text: on Windows it would write CRLF.)
     (repo / ".git").mkdir()
-    (repo / ".gitignore").write_text("build/\n")
+    (repo / ".gitignore").write_bytes(b"build/\n")
     # (Not FFF itself: a stand-in at the path FFF's package is loaded from.)
     fff = tmp / "npm" / "node_modules" / "opensec-pi-fff"
     fff.mkdir(parents=True)
@@ -82,8 +82,15 @@ try:
         (agent / "settings.json").write_text(json.dumps({"lastChangelogVersion": "9999.0.0", **settings}))
         env = {"HOME": str(tmp), "PATH": "/usr/bin:/bin", "PI_CODING_AGENT_DIR": str(agent), "PI_OFFLINE": "1",
                "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "TERM": "dumb"}
+        if os.name == "nt":
+            # (What a Windows program needs to start, as tests/pi/run.ps1 gives it; still no ripgrep or fd on PATH.)
+            root = os.environ.get("SystemRoot", r"C:\Windows")
+            env.update({"SystemRoot": root, "windir": root, "PATH": rf"{root}\System32;{root}", "USERPROFILE": str(tmp),
+                        "TEMP": os.environ.get("TEMP", ""), "TMP": os.environ.get("TMP", ""),
+                        "ComSpec": os.environ.get("ComSpec", ""), "PATHEXT": os.environ.get("PATHEXT", "")})
         r = subprocess.run([pi, "-p", "--no-session", "--model", "fake/fake-model", *args, "go"], cwd=work, env=env,
-                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+                           timeout=120)
         return r, list(seen["tools"]), list(seen["results"])
 
     r, tools, results = session({})
