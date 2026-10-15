@@ -16,6 +16,7 @@ each table.
 - [0.7.3 against 0.7.2](#073-against-072)
 - [Results](#results)
 - [macOS on Apple silicon](#macos-on-apple-silicon)
+- [Linux on ARM64](#linux-on-arm64)
 - [Windows x64](#windows-x64)
 - [Against PiG and oh-my-pi](#against-pig-and-oh-my-pi)
 - [Against OpenCode 2.0](#against-opencode-20)
@@ -155,6 +156,39 @@ release builds, launcher included. The helper adds 0.3 ms to `pi -p` (1%; nothin
 each program Pi starts takes 1.4 ms more to start and be waited for (`spawnSync` of `/usr/bin/true`: 2.1 ms against 0.7). None of
 the scenarios above starts a program. The programs' CPU time is not counted in Pi's on macOS (`wait4` counts a process's
 children; the programs are the helper's).
+
+## Linux on ARM64
+
+Pi-Bolt's linux-arm64 build (Pi 1.2.0, the code for ARMv8.0 that is released) against Pi 1.2.0 on stock Bun 1.4.2 and on Node 24,
+in Docker Desktop's Linux VM on an Apple M5 (arm64, 4 KB pages), pinned to four of its cores. Medians of 15 runs of each scenario
+(after 3 warm-up runs) and of 4 tmux rounds; raw data in
+[`bench/results/2026-10-15-linux-arm64-0.8.8`](../bench/results/2026-10-15-linux-arm64-0.8.8).
+
+#### Time
+
+|  | Pi-Bolt | Pi on Bun 1.4.2 | Pi on Node 24 |
+|---|---:|---:|---:|
+| Launch to interactive (TUI) | 29 ms | 45 ms | 114 ms |
+| pi --version | 5 ms | 10 ms | 83 ms |
+| pi -p: one prompt, 4 tool calls | 27 ms | 52 ms | 142 ms |
+| Launch to interactive (TUI), default theme | 23 ms | 46 ms | 115 ms |
+
+#### CPU
+
+|  | Pi-Bolt | Pi on Bun 1.4.2 | Pi on Node 24 |
+|---|---:|---:|---:|
+| Interactive session: 5 prompts | 115 ms | 316 ms | 401 ms |
+| pi -p: one prompt | 27 ms | 86 ms | 210 ms |
+| pi --version | 5 ms | 11 ms | 95 ms |
+
+#### Memory and streaming
+
+|  | Pi-Bolt | Pi on Bun 1.4.2 | Pi on Node 24 |
+|---|---:|---:|---:|
+| Peak memory, interactive session | 129 MB | 157 MB | 179 MB |
+| Own memory, tmux session | 37 MB | 75 MB | 79 MB |
+| Streaming replies (tmux), CPU | 627 ms | 800 ms | 849 ms |
+| Launch to interactive in tmux | 64 ms | 72 ms | 141 ms |
 
 ## Windows x64
 
