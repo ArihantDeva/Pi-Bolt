@@ -7,6 +7,17 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import type {
+	ConfigOption,
+	ContentBlock,
+	InitializeResponse,
+	RequestPermissionRequest,
+	SessionInfo,
+	SessionNotification,
+	SessionUpdate,
+	StopReason,
+	ToolCallContent,
+} from "../src/extensions/acp/types.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 // --import takes a module specifier, not a filesystem path.
@@ -96,11 +107,35 @@ function startFakeModel(): Promise<Server> {
 // A minimal ACP client over the child's stdio
 // ============================================================================
 
-type Message = { jsonrpc: "2.0"; id?: number; method?: string; params?: any; result?: any; error?: any };
+type Message = {
+	jsonrpc: "2.0";
+	id?: number;
+	method?: string;
+	params?: unknown;
+	result?: unknown;
+	error?: { code: number; message: string };
+};
+
+type UpdateOf<K extends SessionUpdate["sessionUpdate"]> = Extract<SessionUpdate, { sessionUpdate: K }>;
+type SessionResponse = { sessionId: string; configOptions: ConfigOption[] };
+type PromptResponse = { stopReason: StopReason };
+
+function blockText(block: ContentBlock): string {
+	return block.type === "text" ? block.text : "";
+}
+
+function toolText(content: ToolCallContent[] | undefined): string {
+	const first = content?.[0];
+	return first?.type === "content" ? blockText(first.content) : "";
+}
+
+function commandNames(client: AcpTestClient): string[] {
+	return client.updatesOf("available_commands_update")[0].availableCommands.map((command) => command.name);
+}
 
 class AcpTestClient {
 	readonly child: ChildProcessWithoutNullStreams;
-	readonly updates: Array<{ sessionId: string; update: any }> = [];
+	readonly updates: SessionNotification[] = [];
 	readonly clientRequests: Message[] = [];
 	stderr = "";
 	private buffer = "";
@@ -138,7 +173,7 @@ class AcpTestClient {
 			const result = this.onRequest(message);
 			this.write({ jsonrpc: "2.0", id: message.id, result });
 		} else if (message.method === "session/update") {
-			this.updates.push(message.params);
+			this.updates.push(message.params as SessionNotification);
 		} else if (message.id !== undefined) {
 			this.pending.get(message.id)?.resolve(message);
 			this.pending.delete(message.id);
@@ -157,10 +192,10 @@ class AcpTestClient {
 		});
 	}
 
-	async request(method: string, params: unknown): Promise<any> {
+	async request<T>(method: string, params: unknown): Promise<T> {
 		const response = await this.call(method, params);
 		if (response.error) throw new Error(`${method}: ${JSON.stringify(response.error)}\n${this.stderr}`);
-		return response.result;
+		return response.result as T;
 	}
 
 	notify(method: string, params: unknown): void {
@@ -175,8 +210,10 @@ class AcpTestClient {
 		}
 	}
 
-	updatesOf(kind: string): any[] {
-		return this.updates.filter((u) => u.update.sessionUpdate === kind).map((u) => u.update);
+	updatesOf<K extends SessionUpdate["sessionUpdate"]>(kind: K): UpdateOf<K>[] {
+		return this.updates
+			.map((notification) => notification.update)
+			.filter((update): update is UpdateOf<K> => update.sessionUpdate === kind);
 	}
 
 	async stop(): Promise<number | null> {
@@ -203,7 +240,7 @@ describe("ACP mode", () => {
 	const startClient = async (args: string[] = []) => {
 		const client = new AcpTestClient(projectDir, agentDir, args);
 		clients.push(client);
-		const init = await client.request("initialize", {
+		const init = await client.request<InitializeResponse>("initialize", {
 			protocolVersion: 1,
 			clientCapabilities: CLIENT_CAPABILITIES,
 			clientInfo: { name: "test-client", version: "1.0.0" },
@@ -219,7 +256,10 @@ describe("ACP mode", () => {
 		projectDir = join(root, "project");
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(projectDir, { recursive: true });
-		const models = [{ id: "fake-model", contextWindow: 200000, maxTokens: 8192 }];
+		const models = [
+			{ id: "fake-model", contextWindow: 200000, maxTokens: 8192 },
+			{ id: "other-model", contextWindow: 200000, maxTokens: 8192 },
+		];
 		writeFileSync(
 			join(agentDir, "models.json"),
 			JSON.stringify({
@@ -258,17 +298,19 @@ describe("ACP mode", () => {
 
 	it("runs a prompt: text, tool calls with diffs and output, and the stop reason", async () => {
 		const { client } = await startClient();
-		const { sessionId, configOptions } = await client.request("session/new", { cwd: projectDir, mcpServers: [] });
+		const { sessionId, configOptions } = await client.request<SessionResponse>("session/new", {
+			cwd: projectDir,
+			mcpServers: [],
+		});
 		expect(typeof sessionId).toBe("string");
-		expect(configOptions.find((option: any) => option.id === "model")).toMatchObject({
+		expect(configOptions.find((option) => option.id === "model")).toMatchObject({
 			category: "model",
 			currentValue: "fake/fake-model",
 		});
 		await client.waitFor(() => client.updatesOf("available_commands_update").length > 0);
-		const commands = client.updatesOf("available_commands_update")[0].availableCommands.map((c: any) => c.name);
-		expect(commands).toContain("compact");
+		expect(commandNames(client)).toContain("compact");
 
-		const result = await client.request("session/prompt", {
+		const result = await client.request<PromptResponse>("session/prompt", {
 			sessionId,
 			prompt: [{ type: "text", text: "[tools] please work" }],
 		});
@@ -276,7 +318,7 @@ describe("ACP mode", () => {
 
 		const text = client
 			.updatesOf("agent_message_chunk")
-			.map((u) => u.content.text)
+			.map((u) => blockText(u.content))
 			.join("");
 		expect(text).toContain("Writing.");
 		expect(text).toContain("All done.");
@@ -297,19 +339,22 @@ describe("ACP mode", () => {
 		expect(done[1].content).toEqual([
 			{ type: "diff", path: notesPath, oldText: "alpha\nbeta\n", newText: "alpha\ngamma\n" },
 		]);
-		expect(done[2].content[0].content.text).toContain("from-bash");
-		expect(done[2].content[0].content.text.startsWith("```")).toBe(true);
+		expect(toolText(done[2].content)).toContain("from-bash");
+		expect(toolText(done[2].content).startsWith("```")).toBe(true);
 		expect(readFileSync(notesPath, "utf8")).toBe("alpha\ngamma\n");
 		expect(client.updatesOf("usage_update").length).toBeGreaterThan(0);
 
-		const listed = await client.request("session/list", { cwd: projectDir });
-		expect(listed.sessions.map((s: any) => s.sessionId)).toContain(sessionId);
+		const listed = await client.request<{ sessions: SessionInfo[] }>("session/list", { cwd: projectDir });
+		expect(listed.sessions.map((s) => s.sessionId)).toContain(sessionId);
 	});
 
 	it("cancels a running prompt", async () => {
 		const { client } = await startClient();
-		const { sessionId } = await client.request("session/new", { cwd: projectDir, mcpServers: [] });
-		const prompt = client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "[slow] wait" }] });
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
+		const prompt = client.request<PromptResponse>("session/prompt", {
+			sessionId,
+			prompt: [{ type: "text", text: "[slow] wait" }],
+		});
 		await new Promise((r) => setTimeout(r, 500));
 		client.notify("session/cancel", { sessionId });
 		expect(await prompt).toEqual({ stopReason: "cancelled" });
@@ -317,15 +362,22 @@ describe("ACP mode", () => {
 
 	it("loads a session from an earlier process and replays it", async () => {
 		const first = await startClient();
-		const { sessionId } = await first.client.request("session/new", { cwd: projectDir, mcpServers: [] });
+		const { sessionId } = await first.client.request<SessionResponse>("session/new", {
+			cwd: projectDir,
+			mcpServers: [],
+		});
 		await first.client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "[hello] hi there" }] });
 		expect(await first.client.stop()).toBe(0);
 
 		const { client } = await startClient();
-		const loaded = await client.request("session/load", { sessionId, cwd: projectDir, mcpServers: [] });
+		const loaded = await client.request<{ configOptions: ConfigOption[] }>("session/load", {
+			sessionId,
+			cwd: projectDir,
+			mcpServers: [],
+		});
 		expect(loaded.configOptions.length).toBeGreaterThan(0);
-		expect(client.updatesOf("user_message_chunk").map((u) => u.content.text)).toEqual(["[hello] hi there"]);
-		expect(client.updatesOf("agent_message_chunk").map((u) => u.content.text)).toEqual([
+		expect(client.updatesOf("user_message_chunk").map((u) => blockText(u.content))).toEqual(["[hello] hi there"]);
+		expect(client.updatesOf("agent_message_chunk").map((u) => blockText(u.content))).toEqual([
 			"Hello from the fake model.",
 		]);
 
@@ -357,18 +409,26 @@ describe("ACP mode", () => {
 		const { client } = await startClient(["-e", extensionPath]);
 		client.onRequest = (message) =>
 			message.method === "session/request_permission"
-				? { outcome: { outcome: "selected", optionId: message.params.options[0].optionId } }
+				? {
+						outcome: {
+							outcome: "selected",
+							optionId: (message.params as RequestPermissionRequest).options[0].optionId,
+						},
+					}
 				: { action: "accept", content: { value: "Ada" } };
-		const { sessionId } = await client.request("session/new", { cwd: projectDir, mcpServers: [] });
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
 		await client.waitFor(() => client.updatesOf("available_commands_update").length > 0);
-		expect(client.updatesOf("available_commands_update")[0].availableCommands.map((c: any) => c.name)).toContain(
-			"ask",
-		);
-		expect(await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "/ask" }] })).toEqual({
+		expect(commandNames(client)).toContain("ask");
+		expect(
+			await client.request<PromptResponse>("session/prompt", {
+				sessionId,
+				prompt: [{ type: "text", text: "/ask" }],
+			}),
+		).toEqual({
 			stopReason: "end_turn",
 		});
 		expect(client.clientRequests.map((m) => m.method)).toEqual(["session/request_permission", "elicitation/create"]);
-		expect(client.clientRequests[0].params.toolCall.title).toBe("Proceed?");
+		expect((client.clientRequests[0].params as RequestPermissionRequest).toolCall.title).toBe("Proceed?");
 		expect(client.updatesOf("notice").map((u) => u.title)).toContain("answer: true Ada");
 	});
 
@@ -400,7 +460,7 @@ process.stdin.on("data", (chunk) => {
 `,
 		);
 		const { client } = await startClient();
-		await client.request("session/new", {
+		await client.request<SessionResponse>("session/new", {
 			cwd: projectDir,
 			mcpServers: [
 				{
@@ -425,14 +485,49 @@ process.stdin.on("data", (chunk) => {
 
 	it("changes the thinking level and model through config options", async () => {
 		const { client } = await startClient();
-		const { sessionId } = await client.request("session/new", { cwd: projectDir, mcpServers: [] });
-		const result = await client.request("session/set_config_option", {
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
+		const result = await client.request<{ configOptions: ConfigOption[] }>("session/set_config_option", {
 			sessionId,
 			configId: "model",
 			value: "fake/fake-model",
 		});
-		expect(result.configOptions.find((option: any) => option.id === "model").currentValue).toBe("fake/fake-model");
+		expect(result.configOptions.find((option) => option.id === "model")?.currentValue).toBe("fake/fake-model");
 		const bad = await client.call("session/set_config_option", { sessionId, configId: "model", value: "x/y" });
 		expect(bad.error?.code).toBe(-32602);
+	});
+
+	it("offers only the models of --models", async () => {
+		const { client } = await startClient(["--models", "fake/fake-model"]);
+		const { sessionId, configOptions } = await client.request<SessionResponse>("session/new", {
+			cwd: projectDir,
+			mcpServers: [],
+		});
+		const model = configOptions.find((option) => option.id === "model");
+		expect(model?.options.map((choice) => choice.value)).toEqual(["fake/fake-model"]);
+		const outside = await client.call("session/set_config_option", {
+			sessionId,
+			configId: "model",
+			value: "fake/other-model",
+		});
+		expect(outside.error?.code).toBe(-32602);
+	});
+
+	it("fails a session whose runtime reports an error", async () => {
+		const { client } = await startClient(["--provider", "no-such-provider", "--model", "fake-model"]);
+		const response = await client.call("session/new", { cwd: projectDir, mcpServers: [] });
+		expect(response.error?.code).toBe(-32603);
+		expect(response.error?.message).toContain("no-such-provider");
+	});
+
+	it("lists the sessions of --session-dir without a directory filter", async () => {
+		const sessionDir = join(root, "custom-sessions");
+		const { client } = await startClient(["--session-dir", sessionDir]);
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
+		await client.request<PromptResponse>("session/prompt", {
+			sessionId,
+			prompt: [{ type: "text", text: "[hello] stored elsewhere" }],
+		});
+		const listed = await client.request<{ sessions: SessionInfo[] }>("session/list", {});
+		expect(listed.sessions.map((session) => session.sessionId)).toContain(sessionId);
 	});
 });

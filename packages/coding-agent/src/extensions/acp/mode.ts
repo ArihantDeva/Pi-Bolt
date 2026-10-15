@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { COMMAND_NAME, PRODUCT_NAME, VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import {
@@ -255,7 +255,7 @@ export class AcpAgent {
 			return { configOptions: open.configOptions() };
 		}
 		const sessionDir = this.sessionDirFor(cwd);
-		const path = SessionManager.findById(cwd, id, sessionDir) ?? (await findSessionFile(id));
+		const path = SessionManager.findById(cwd, id, sessionDir) ?? (await findSessionFile(id, this.options.sessionDir));
 		if (!path) throw new AcpError(AcpErrorCode.ResourceNotFound, `Session not found: ${id}`);
 		const session = await this.open(SessionManager.open(path, sessionDir, cwd), mcpServersOf(params), true);
 		if (replay) session.replay();
@@ -266,7 +266,9 @@ export class AcpAgent {
 		const cwd = typeof params.cwd === "string" && params.cwd !== "" ? params.cwd : undefined;
 		// (Sessions of old Pi versions have no directory, which ACP requires.)
 		const all = (
-			cwd ? await SessionManager.list(cwd, this.sessionDirFor(cwd)) : await SessionManager.listAll()
+			cwd
+				? await SessionManager.list(cwd, this.sessionDirFor(cwd))
+				: await SessionManager.listAll(this.options.sessionDir)
 		).filter((info) => info.cwd !== "");
 		let start = 0;
 		if (typeof params.cursor === "string" && params.cursor !== "") {
@@ -294,6 +296,14 @@ export class AcpAgent {
 			});
 			for (const diagnostic of runtime.diagnostics) {
 				console.error(`${diagnostic.type === "error" ? "Error" : "Warning"}: ${diagnostic.message}`);
+			}
+			// As the other modes exit on them: a session whose extension failed to load, or whose `--provider` is unknown
+			// (it would run on another model), is not the session asked for.
+			const errors = runtime.diagnostics.filter((diagnostic) => diagnostic.type === "error");
+			if (errors.length > 0) {
+				setSessionMcpServers(id, undefined);
+				await runtime.dispose();
+				throw new AcpError(AcpErrorCode.InternalError, errors.map((error) => error.message).join("\n"));
 			}
 			const session = new AcpSession(this, id, runtime);
 			this.sessions.set(id, session);
@@ -504,10 +514,16 @@ class AcpSession {
 		return [...commands.values()];
 	}
 
+	/** The models to choose from: those of `--models` or the `enabledModels` setting, as in the terminal, else all. */
+	private selectableModels(): readonly Model<Api>[] {
+		const scoped = this.session.scopedModels;
+		return scoped.length > 0 ? scoped.map((entry) => entry.model) : this.session.modelRuntime.getAvailableSnapshot();
+	}
+
 	configOptions(): ConfigOption[] {
 		const options: ConfigOption[] = [];
 		const session = this.session;
-		const models = session.modelRuntime.getAvailableSnapshot();
+		const models = this.selectableModels();
 		const current = session.model;
 		if (models.length > 0 && current) {
 			const choices = models.map((model) => ({
@@ -549,7 +565,7 @@ class AcpSession {
 		if (typeof value !== "string") throw new AcpError(AcpErrorCode.InvalidParams, "value must be a string");
 		const session = this.session;
 		if (configId === "model") {
-			const model = session.modelRuntime.getAvailableSnapshot().find((candidate) => modelKey(candidate) === value);
+			const model = this.selectableModels().find((candidate) => modelKey(candidate) === value);
 			if (!model) throw new AcpError(AcpErrorCode.InvalidParams, `Unknown model: ${value}`);
 			await session.setModel(model);
 		} else if (configId === "thinking") {
@@ -830,7 +846,7 @@ async function settleWithin<T>(
 	});
 }
 
-function modelKey(model: Pick<Model<any>, "provider" | "id">): string {
+function modelKey(model: Pick<Model<Api>, "provider" | "id">): string {
 	return `${model.provider}/${model.id}`;
 }
 
@@ -871,6 +887,6 @@ function sessionInfo(info: PiSessionInfo): SessionInfo {
 }
 
 /** A session of any directory, for `session/load` of a session listed without a directory filter. */
-async function findSessionFile(id: string): Promise<string | undefined> {
-	return (await SessionManager.listAll()).find((info) => info.id === id)?.path;
+async function findSessionFile(id: string, sessionDir: string | undefined): Promise<string | undefined> {
+	return (await SessionManager.listAll(sessionDir)).find((info) => info.id === id)?.path;
 }

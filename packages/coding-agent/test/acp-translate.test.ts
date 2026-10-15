@@ -130,7 +130,7 @@ describe("editor MCP servers", () => {
 
 describe("AcpConnection", () => {
 	const connect = () => {
-		const sent: any[] = [];
+		const sent: Array<{ id: number | null }> = [];
 		const connection = new AcpConnection({
 			write: (line) => sent.push(JSON.parse(line)),
 			onRequest: async (method) => {
