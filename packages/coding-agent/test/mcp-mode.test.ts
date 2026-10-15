@@ -376,6 +376,87 @@ describe("MCP mode", () => {
 		expect(missing.content[0].text).toContain("Session not found");
 	});
 
+	it("opens a session once when two calls name it at the same time", async () => {
+		const first = await startClient();
+		const { sessionId } = (await first.client.call({ prompt: "[hello] start" })).structuredContent;
+		await first.client.stop();
+
+		const { client } = await startClient();
+		const before = requests.length;
+		await Promise.all([
+			client.call({ prompt: "[hello] one", sessionId }),
+			client.call({ prompt: "[hello] two", sessionId }),
+		]);
+		// One session: the prompt that runs second sees the first one.
+		const [shorter, longer] = requests
+			.slice(before)
+			.map((request) => request.users)
+			.sort((a, b) => a.length - b.length);
+		expect(shorter).toHaveLength(2);
+		expect(longer).toEqual([...shorter, longer[2]]);
+		expect(new Set([shorter[1], longer[2]])).toEqual(new Set(["[hello] one", "[hello] two"]));
+	});
+
+	it("continues the old session by its id after an extension moved the open one to a new session", async () => {
+		const extensionPath = join(root, "fresh-extension.ts");
+		writeFileSync(
+			extensionPath,
+			`export default function (pi) {
+	pi.registerCommand("fresh", {
+		description: "Start a new session",
+		handler: async (_args, ctx) => {
+			await ctx.newSession();
+		},
+	});
+}
+`,
+		);
+		const { client } = await startClient(["-e", extensionPath]);
+		const old = (await client.call({ prompt: "[hello] old one" })).structuredContent.sessionId;
+		const moved = (await client.call({ prompt: "/fresh", sessionId: old })).structuredContent.sessionId;
+		expect(moved).not.toBe(old);
+
+		const back = await client.call({ prompt: "[hello] back again", sessionId: old });
+		expect(back.structuredContent.sessionId).toBe(old);
+		expect(requests.at(-1)?.users).toEqual(["[hello] old one", "[hello] back again"]);
+		const fresh = await client.call({ prompt: "[hello] in the new one", sessionId: moved });
+		expect(fresh.structuredContent.sessionId).toBe(moved);
+		expect(requests.at(-1)?.users).toEqual(["[hello] in the new one"]);
+	});
+
+	it("finds a session of another directory by its id alone when the settings name a session directory", async () => {
+		const settingsAgentDir = join(root, "agent-session-dir");
+		const otherDir = join(root, "other-project");
+		mkdirSync(settingsAgentDir, { recursive: true });
+		mkdirSync(otherDir, { recursive: true });
+		for (const file of ["models.json", "auth.json"]) {
+			writeFileSync(join(settingsAgentDir, file), readFileSync(join(agentDir, file)));
+		}
+		const settings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
+		writeFileSync(
+			join(settingsAgentDir, "settings.json"),
+			JSON.stringify({ ...settings, sessionDir: join(root, "settings-sessions") }),
+		);
+		const start = async () => {
+			const client = new McpTestClient(projectDir, settingsAgentDir);
+			clients.push(client);
+			await client.request("initialize", {
+				protocolVersion: "2025-11-25",
+				capabilities: {},
+				clientInfo: { name: "t", version: "1" },
+			});
+			return client;
+		};
+		const first = await start();
+		const { sessionId } = (await first.call({ prompt: "[hello] elsewhere", cwd: otherDir })).structuredContent;
+		await first.stop();
+
+		const second = await start();
+		const again = await second.call({ prompt: "[hello] by id", sessionId });
+		expect(again.isError).toBeUndefined();
+		expect(requests.at(-1)?.users).toEqual(["[hello] elsewhere", "[hello] by id"]);
+	});
+
 	it("uses the model and thinking level a call names", async () => {
 		const { client } = await startClient();
 		const result = await client.call({ prompt: "[hello] which model", model: "fake/other-model" });

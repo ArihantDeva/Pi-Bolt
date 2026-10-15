@@ -100,8 +100,10 @@ export async function runMcpMode(options: McpModeOptions): Promise<never> {
 export class McpServer {
 	readonly connection: JsonRpcConnection;
 	private readonly options: McpModeOptions;
-	/** Open sessions, the one used most recently last. */
-	private readonly sessions = new Map<string, PiSession>();
+	/** Open sessions, the one used most recently last. (Not by id: an extension can change a session's id.) */
+	private readonly sessions = new Set<PiSession>();
+	/** Sessions being opened from their files, by id. */
+	private readonly opening = new Map<string, Promise<PiSession>>();
 	/** Running `tools/call` requests, which `notifications/cancelled` stops. */
 	private readonly calls = new Map<JsonRpcId, AbortController>();
 	private clientCapabilities: Record<string, unknown> = {};
@@ -231,26 +233,45 @@ export class McpServer {
 			return this.open(SessionManager.create(directory, this.sessionDirFor(directory)));
 		}
 		const id = args.sessionId;
-		// (An extension can move an open session to another one, with another id.)
-		const key = this.sessions.has(id) ? id : [...this.sessions].find(([, session]) => session.id === id)?.[0];
-		const open = key === undefined ? undefined : this.sessions.get(key);
-		if (key !== undefined && open) {
-			if (cwd !== undefined && !sameDirectory(cwd, open.cwd))
-				throw new Error(`Session ${id} works in ${open.cwd}, not ${cwd}`);
-			// Most recently used last.
-			this.sessions.delete(key);
-			this.sessions.set(key, open);
-			return open;
+		// A call that names a session another call is still opening waits for that one: one runtime per session file.
+		const session = this.takeOpen(id) ?? (await (this.opening.get(id) ?? this.openById(id, cwd)));
+		if (cwd !== undefined && !sameDirectory(cwd, session.cwd))
+			throw new Error(`Session ${id} works in ${session.cwd}, not ${cwd}`);
+		return session;
+	}
+
+	/**
+	 * The open session whose id is `id`, now the most recently used. Matched by the session's current id: an extension can
+	 * move an open session to another one, and then the old id names the old session's file again.
+	 */
+	private takeOpen(id: string): PiSession | undefined {
+		for (const session of this.sessions) {
+			if (session.id !== id) continue;
+			this.sessions.delete(session);
+			this.sessions.add(session);
+			return session;
 		}
-		const directory = cwd ?? this.options.cwd;
-		const path =
-			SessionManager.findById(directory, id, this.sessionDirFor(directory)) ??
-			(await SessionManager.listAll(this.options.sessionDir)).find((info) => info.id === id)?.path;
-		if (!path) throw new Error(`Session not found: ${id}`);
-		return this.open(
-			cwd === undefined ? SessionManager.open(path) : SessionManager.open(path, this.sessionDirFor(cwd), cwd),
-			true,
-		);
+		return undefined;
+	}
+
+	/** Opens a session from its file, found in `cwd`'s session directory, else among all sessions. */
+	private openById(id: string, cwd: string | undefined): Promise<PiSession> {
+		const opening = (async () => {
+			const directory = cwd ?? this.options.cwd;
+			const sessionDir = this.sessionDirFor(directory);
+			let path = SessionManager.findById(directory, id, sessionDir);
+			// The session directory of the settings holds the sessions of every directory, and the default one too.
+			for (const dir of new Set([sessionDir, this.options.sessionDir])) {
+				path ??= (await SessionManager.listAll(dir)).find((info) => info.id === id)?.path;
+			}
+			if (!path) throw new Error(`Session not found: ${id}`);
+			return this.open(
+				cwd === undefined ? SessionManager.open(path) : SessionManager.open(path, this.sessionDirFor(cwd), cwd),
+				true,
+			);
+		})().finally(() => this.opening.delete(id));
+		this.opening.set(id, opening);
+		return opening;
 	}
 
 	private async open(sessionManager: SessionManager, resumed = false): Promise<PiSession> {
@@ -274,7 +295,7 @@ export class McpServer {
 			}
 			const session = new PiSession(this, runtime);
 			await session.bind();
-			this.sessions.set(session.id, session);
+			this.sessions.add(session);
 			if (!this.refreshedModels && !this.options.offline) {
 				this.refreshedModels = true;
 				void runtime.services.modelRuntime.refresh({ signal: AbortSignal.timeout(15_000) }).catch(() => {});
@@ -285,12 +306,18 @@ export class McpServer {
 		return create;
 	}
 
+	/** Closes the sessions over the limit once they are idle (they were all working when the last one opened). */
+	closeExcessSessions(): void {
+		const close = this.creating.then(() => this.closeIdleSessions(MAX_OPEN_SESSIONS));
+		this.creating = close.catch(() => {});
+	}
+
 	/** Closes the sessions used longest ago that are not working, until at most `keep` are open. */
 	private async closeIdleSessions(keep: number): Promise<void> {
-		for (const [id, session] of this.sessions) {
+		for (const session of this.sessions) {
 			if (this.sessions.size <= keep) return;
 			if (session.busy) continue;
-			this.sessions.delete(id);
+			this.sessions.delete(session);
 			await session.dispose();
 		}
 	}
@@ -475,6 +502,7 @@ class PiSession {
 		this.queue = run.catch(() => {});
 		return run.finally(() => {
 			this.pending--;
+			if (this.pending === 0) this.server.closeExcessSessions();
 		});
 	}
 
