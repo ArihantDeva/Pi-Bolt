@@ -249,6 +249,15 @@ sessions. In Zed's `settings.json`:
 
 Other editors, and what the editor gets: [docs/ACP.md](docs/ACP.md).
 
+`pi-bolt --mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server, so other agents give Pi-Bolt a task with
+its `prompt` tool and continue the session in later calls. In Claude Code:
+
+```bash
+claude mcp add pi-bolt -- /full/path/to/pi-bolt --mcp
+```
+
+Other clients, and what the tools do: [docs/MCP.md](docs/MCP.md).
+
 ## How it works
 
 <picture>
@@ -276,6 +285,7 @@ in [`sources.json`](sources.json) with Pi-Bolt's changes on top; the engine chan
 | [Benchmarks](docs/BENCHMARKS.md) | Method, results and raw data |
 | [Plugins](docs/PLUGINS.md) | Porting Pi extensions and writing them for AOT |
 | [Editors](docs/ACP.md) | Pi-Bolt in Zed, JetBrains IDEs, VS Code and other ACP editors |
+| [Other agents](docs/MCP.md) | Pi-Bolt as a tool of other agents and MCP clients |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Diagnostics, environment variables, known limitations |
 | [Releasing](docs/RELEASING.md) | CI, releases, signing |
 
