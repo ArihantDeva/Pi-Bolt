@@ -47,7 +47,7 @@ describe("toolCallInfo", () => {
 		expect(toolCallInfo("read", { path: "src/main.ts", offset: 10 }, cwd)).toEqual({
 			title: "Read src/main.ts",
 			kind: "read",
-			locations: [{ path: file, line: 10 }],
+			locations: [{ path: file, line: 9 }],
 		});
 		expect(toolCallInfo("edit", { path: file, edits: [] }, cwd).kind).toBe("edit");
 		expect(toolCallInfo("bash", { command: "npm   test\n--watch" }, cwd)).toEqual({

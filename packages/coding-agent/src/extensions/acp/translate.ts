@@ -121,8 +121,9 @@ export function toolCallInfo(toolName: string, args: unknown, cwd: string): Tool
 			return {
 				title: `Read ${stringArg(args, "path") ?? "file"}`,
 				kind: "read",
+				// The read tool's offset counts from 1; a location's line counts from 0, as Zed takes it.
 				locations: path
-					? [{ path, line: offset !== undefined && offset >= 1 ? Math.floor(offset) : undefined }]
+					? [{ path, line: offset !== undefined && offset >= 1 ? Math.floor(offset) - 1 : undefined }]
 					: [],
 			};
 		}
