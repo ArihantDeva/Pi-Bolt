@@ -4,15 +4,17 @@
 #   curl -fsSL https://pi-bolt.opensec.in/install.sh | sh
 #
 # Downloads a release, verifies its SHA-256 checksum, installs it to ~/.pi-bolt and links `pi-bolt` into ~/.local/bin. Run
-# it again to reinstall, update or uninstall. The executable comes from the npm registry (a CDN, fast in most places) and
+# it again to reinstall, update or uninstall. In Termux (Android) it also installs Termux's glibc, which runs Pi-Bolt, and links
+# `pi-bolt` into $PREFIX/bin. The executable comes from the npm registry (a CDN, fast in most places) and
 # falls back to GitHub; the checksums always come from the GitHub release, so a download from npm is checked against them.
 #
 # Environment:
 #   PIBOLT_VERSION   a release tag such as bolt-v0.2.0 (default: the latest release)
-#   PIBOLT_VARIANT   on Linux x64, x64-baseline or x64-jit (default: x64 on CPUs with AVX2, x64-baseline otherwise); on macOS
-#                    arm64 or arm64-jit (Apple silicon; default arm64)
+#   PIBOLT_VARIANT   on Linux x86-64, x64, x64-baseline or x64-jit (default: x64 on CPUs with AVX2, x64-baseline otherwise);
+#                    on Linux ARM64 and in Termux, arm64 or arm64-jit (default arm64); on macOS arm64 or arm64-jit (Apple
+#                    silicon; default arm64)
 #   PIBOLT_INSTALL   where to install (default: ~/.pi-bolt)
-#   PIBOLT_BIN_DIR   where to link the `pi-bolt` command (default: ~/.local/bin)
+#   PIBOLT_BIN_DIR   where to link the `pi-bolt` command (default: ~/.local/bin; in Termux $PREFIX/bin)
 #   PIBOLT_YES=1     do not ask: take the default action and do not offer to start Pi-Bolt
 #   PIBOLT_LAUNCHER=1  used by the npm package's first run: download only, no menu, link or prompts
 #   PIBOLT_CONNECTIONS  connections to download over at once (default: 4; 1 for a single connection)
@@ -40,7 +42,9 @@ main() {
 	if [ "$(uname -s)" = Darwin ]; then PLATFORM=darwin; else PLATFORM=linux; fi
 	VERSION="${PIBOLT_VERSION:-latest}"
 	INSTALL="${PIBOLT_INSTALL:-$HOME/.pi-bolt}"
-	BIN_DIR="${PIBOLT_BIN_DIR:-$HOME/.local/bin}"
+	TERMUX=""
+	if is_termux; then TERMUX=1; fi
+	if [ -n "$TERMUX" ]; then BIN_DIR="${PIBOLT_BIN_DIR:-$PREFIX/bin}"; else BIN_DIR="${PIBOLT_BIN_DIR:-$HOME/.local/bin}"; fi
 	LAUNCHER="${PIBOLT_LAUNCHER:-0}"
 	setup_style
 
@@ -68,14 +72,17 @@ main() {
 
 	VARIANT="${PIBOLT_VARIANT:-}"
 	if [ -z "$VARIANT" ]; then
-		if [ "$PLATFORM" = darwin ]; then VARIANT=arm64
+		if [ "$PLATFORM" = darwin ] || is_arm64; then VARIANT=arm64
 		elif grep -qw avx2 /proc/cpuinfo 2>/dev/null; then VARIANT=x64; else VARIANT=x64-baseline; fi
 	fi
 	case "$PLATFORM-$VARIANT" in
-	linux-x64 | linux-x64-baseline | linux-x64-jit | darwin-arm64 | darwin-arm64-jit) ;;
+	darwin-arm64 | darwin-arm64-jit) ;;
 	darwin-*) fail "PIBOLT_VARIANT must be arm64 or arm64-jit on macOS" ;;
-	*) fail "PIBOLT_VARIANT must be x64, x64-baseline or x64-jit" ;;
+	linux-arm64 | linux-arm64-jit) is_arm64 || fail "PIBOLT_VARIANT must be x64, x64-baseline or x64-jit on x86-64" ;;
+	linux-x64 | linux-x64-baseline | linux-x64-jit) ! is_arm64 || fail "PIBOLT_VARIANT must be arm64 or arm64-jit on ARM64" ;;
+	*) if is_arm64; then fail "PIBOLT_VARIANT must be arm64 or arm64-jit on ARM64"; else fail "PIBOLT_VARIANT must be x64, x64-baseline or x64-jit"; fi ;;
 	esac
+	[ -z "$TERMUX" ] || setup_termux
 	case "${PIBOLT_SOURCE:-auto}" in
 	auto | npm | github) ;;
 	*) fail "PIBOLT_SOURCE must be auto, npm or github" ;;
@@ -103,7 +110,7 @@ main() {
 
 	install_release
 	mkdir -p "$BIN_DIR"
-	ln -sfn "$INSTALL/$NAME/pi" "$BIN_DIR/pi-bolt"
+	ln -sfn "$INSTALL/$NAME/$(command_of_build)" "$BIN_DIR/pi-bolt"
 	# Pi-Bolt keeps the packages only it runs (OpenSec's extensions) out of Pi's list, which it does as it starts: once now, so
 	# that Pi, if it is started before Pi-Bolt, does not find them (an earlier installer put them there).
 	(cd "$INSTALL" && "$INSTALL/$NAME/pi" list >/dev/null 2>&1) || true
@@ -289,7 +296,7 @@ preflight() {
 	case "$(uname -s)" in
 	Linux) preflight_linux ;;
 	Darwin) preflight_macos ;;
-	*) printf 'error: Pi-Bolt runs on Linux (x86-64) and macOS (Apple silicon) only (this is %s).\n' "$(uname -s)"; status=1 ;;
+	*) printf 'error: Pi-Bolt runs on Linux (x86-64, ARM64), Android (Termux) and macOS (Apple silicon) only (this is %s).\n' "$(uname -s)"; status=1 ;;
 	esac
 	command -v tar >/dev/null 2>&1 || { printf 'error: tar is required.\n'; status=1; }
 	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -318,7 +325,17 @@ preflight_macos() {
 }
 
 preflight_linux() {
-	[ "$(uname -m)" = x86_64 ] || { printf 'error: Pi-Bolt runs on x86-64 only (this is %s).\n' "$(uname -m)"; status=1; }
+	case "$(uname -m)" in
+	x86_64 | aarch64 | arm64) ;;
+	*) printf 'error: Pi-Bolt runs on x86-64 and ARM64 only (this is %s).\n' "$(uname -m)"; status=1 ;;
+	esac
+	# (Termux: Android's libc is not glibc. setup_termux() installs Termux's glibc, which runs Pi-Bolt.)
+	if [ -n "$TERMUX" ]; then
+		is_arm64 || { printf 'error: in Termux, Pi-Bolt runs on 64-bit ARM only (this is %s).\n' "$(uname -m)"; status=1; }
+		command -v pkg >/dev/null 2>&1 || [ -e "$PREFIX/glibc/lib/ld-linux-aarch64.so.1" ] ||
+			{ printf "error: Termux's glibc is needed, and there is no pkg to install it with.\n"; status=1; }
+		return 0
+	fi
 	if ldd --version 2>&1 | grep -qi musl; then
 		printf 'error: Pi-Bolt needs glibc; musl-based systems such as Alpine are not supported.\n'
 		status=1
@@ -328,7 +345,7 @@ preflight_linux() {
 		printf 'error: Pi-Bolt needs glibc 2.17 or later (this system has %s).\n' "$(echo "$glibc" | tr ' ' .)"
 		status=1
 	fi
-	# Every build needs SSE4.2 (the runtime itself does): without it the executable stops with "Illegal instruction".
+	# Every x86-64 build needs SSE4.2 (the runtime itself does): without it the executable stops with "Illegal instruction".
 	if [ -r /proc/cpuinfo ] && grep -q '^flags' /proc/cpuinfo && ! grep -qw sse4_2 /proc/cpuinfo; then
 		printf 'error: Pi-Bolt needs a CPU with SSE4.2: Intel Nehalem (2008) or later, AMD Bulldozer (2011) or later.\n'
 		status=1
@@ -689,6 +706,10 @@ install_release() {
 	done
 	all_succeeded || fail "could not extract $NAME.$ext"
 	draw_progress "$((step + 2))" 10000 "${dim}checking the executable$reset"
+	if [ -n "$TERMUX" ]; then
+		set_interpreter "$TMP/$NAME/pi" "$LOADER" || fail "could not set the executable's loader to $LOADER"
+		write_termux_launcher "$TMP/$NAME/pi-termux" "$INSTALL/$NAME"
+	fi
 	"$TMP/$NAME/pi" --version >/dev/null 2>&1 || fail "the downloaded executable does not run on this system"
 	mkdir -p "$INSTALL"
 	rm -rf "$INSTALL/$NAME.old"
@@ -739,7 +760,7 @@ choose_action() {
 	case "$VARIANT" in
 	x64) cpu="for CPUs with AVX2" ;;
 	x64-baseline) cpu="for any x86-64 CPU" ;;
-	arm64) cpu="for Apple silicon" ;;
+	arm64) if [ "$PLATFORM" = darwin ]; then cpu="for Apple silicon"; else cpu="for any ARM64 CPU"; fi ;;
 	*) cpu="with the JIT on" ;;
 	esac
 	printf '%sInstallation:%s\n\n' "$bold" "$reset"
@@ -945,7 +966,92 @@ offer_start() {
 	terminal=/dev/tty
 	name=$(ps -o tty= -p $$ 2>/dev/null | tr -d ' ')
 	case "$name" in "" | "?" | "??") ;; *) [ -c "/dev/$name" ] && terminal="/dev/$name" ;; esac
-	exec "$INSTALL/$NAME/pi" <"$terminal"
+	exec "$INSTALL/$NAME/$(command_of_build)" <"$terminal"
+}
+
+# --- Linux on ARM64, and Termux ---------------------------------------------------------------------------------------
+
+is_arm64() { case "$(uname -m)" in aarch64 | arm64) return 0 ;; *) return 1 ;; esac; }
+
+# Termux, the Linux environment of Android: TERMUX_VERSION is set in its shells, and its prefix is where it always is.
+is_termux() {
+	[ "$(uname -s)" = Linux ] && [ -n "${PREFIX:-}" ] || return 1
+	[ -n "${TERMUX_VERSION:-}" ] && return 0
+	case "${PREFIX:-}" in */com.termux/files/usr) return 0 ;; esac
+	return 1
+}
+
+# What `pi-bolt` runs: in Termux the launcher beside pi (write_termux_launcher), elsewhere pi itself.
+command_of_build() { if [ -n "$TERMUX" ]; then printf pi-termux; else printf pi; fi; }
+
+# Pi-Bolt is a glibc program. Android's libc is another (bionic), so in Termux it runs with Termux's glibc (the packages of
+# glibc-repo): its loader is set as the executable's (set_interpreter), and what Termux's glibc reads from $PREFIX/glibc/etc
+# that no package puts there is copied from Termux's own (the name servers and hosts). Termux's LD_PRELOAD is a library of
+# Android's libc, which glibc's loader cannot load: the Pi-Bolt this installs is started without it (and so is every check of
+# it below), and gives it back to the programs it starts.
+setup_termux() {
+	LOADER="$PREFIX/glibc/lib/ld-linux-aarch64.so.1"
+	if [ ! -e "$LOADER" ]; then
+		printf "%sTermux's glibc is needed.%s Pi-Bolt is a glibc program, and Termux runs it with its glibc packages:\n\n" "$bold" "$reset"
+		printf '  pkg install glibc-repo && pkg install glibc\n\n'
+		if has_tty; then
+			printf 'Install them now? [Y/n] '
+			answer=$(head -n 1 </dev/tty || true)
+			case "$answer" in n | N | no | NO) fail "Pi-Bolt needs Termux's glibc: install it with the command above, then run this again" ;; esac
+		fi
+		{ pkg install -y glibc-repo && pkg install -y glibc; } || fail "could not install Termux's glibc"
+		[ -e "$LOADER" ] || fail "Termux's glibc is installed, but $LOADER is not there"
+		printf '\n'
+	fi
+	for file in resolv.conf hosts; do
+		if [ ! -e "$PREFIX/glibc/etc/$file" ] && [ -e "$PREFIX/etc/$file" ]; then
+			{ mkdir -p "$PREFIX/glibc/etc" && cp "$PREFIX/etc/$file" "$PREFIX/glibc/etc/$file"; } ||
+				fail "could not copy $PREFIX/etc/$file to $PREFIX/glibc/etc"
+		fi
+	done
+	if [ -n "${LD_PRELOAD+x}" ]; then
+		export PIBOLT_TERMUX_LD_PRELOAD="$LD_PRELOAD"
+		unset LD_PRELOAD
+	fi
+}
+
+# set_interpreter FILE LOADER: writes LOADER over the path of FILE's loader (its ELF PT_INTERP), which the Linux ARM64 build has
+# room for: nothing else in the file changes or moves.
+set_interpreter() {
+	# (A 64-bit little-endian ELF file: e_phnum (byte 56) program headers of e_phentsize (54) bytes each at e_phoff (32). PT_INTERP
+	# is type 3, with its p_offset at byte 8 of its header and its p_filesz at 32.)
+	where=$(od -An -v -tu1 -N 4096 "$1" | awk '
+		function le(at, size,   value, i) { value = 0; for (i = size - 1; i >= 0; i--) value = value * 256 + b[at + i]; return value }
+		{ for (i = 1; i <= NF; i++) b[n++] = $i }
+		END {
+			if (b[0] != 127 || b[1] != 69 || b[2] != 76 || b[3] != 70 || b[4] != 2 || b[5] != 1) exit 1
+			phoff = le(32, 8); size = le(54, 2); count = le(56, 2)
+			for (k = 0; k < count; k++) {
+				at = phoff + k * size
+				if (at + 40 > n) exit 1
+				if (le(at, 4) == 3) { print le(at + 8, 8), le(at + 32, 8); exit 0 }
+			}
+			exit 1
+		}') || return 1
+	offset=${where% *} room=${where#* }
+	length=$(printf '%s' "$2" | wc -c | tr -d ' ')
+	[ "$length" -lt "$room" ] || return 1
+	{ printf '%s' "$2"; head -c "$((room - length))" /dev/zero; } | dd of="$1" bs=1 seek="$offset" conv=notrunc 2>/dev/null
+}
+
+# write_termux_launcher FILE DIR: the command that starts DIR/pi in Termux: without Termux's LD_PRELOAD (kept for the programs Pi
+# starts, in PIBOLT_TERMUX_LD_PRELOAD), and in Android's time zone, which glibc does not find by itself.
+write_termux_launcher() {
+	# (The folder in single quotes, each of its own as '\'': it is the user's choice, and may have any character.)
+	dir=$(printf '%s' "$2" | sed "s/'/'\\\\''/g")
+	cat >"$1" <<EOF
+#!$PREFIX/bin/sh
+# Pi-Bolt in Termux, written by its installer (install.sh).
+if [ -n "\${LD_PRELOAD+x}" ]; then export PIBOLT_TERMUX_LD_PRELOAD="\$LD_PRELOAD"; unset LD_PRELOAD; fi
+if [ -z "\${TZ:-}" ]; then TZ=\$(getprop persist.sys.timezone 2>/dev/null) || TZ=""; if [ -n "\$TZ" ]; then export TZ; else unset TZ; fi; fi
+exec '$dir/pi' "\$@"
+EOF
+	chmod 755 "$1"
 }
 
 main "$@"

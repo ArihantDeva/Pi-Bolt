@@ -43,6 +43,8 @@ lower is better. See [Benchmarks](#benchmarks).</sub>
 curl -fsSL https://pi-bolt.opensec.in/install.sh | sh
 ```
 
+The same command installs Pi-Bolt on Linux x86-64 and ARM64, on macOS, and on Android in Termux.
+
 On Windows, in PowerShell:
 
 ```powershell
@@ -74,8 +76,8 @@ extensions don't notice. For extensions that do heavy work (search, parsing) or 
 build. Pi itself stays compiled, so it is within about 5% of the default.
 
 ```bash
-curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=arm64-jit sh   # macOS
-curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=x64-jit sh     # Linux
+curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=arm64-jit sh   # macOS, Linux ARM64, Termux
+curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=x64-jit sh     # Linux x86-64
 ```
 
 On Windows, run `$env:PIBOLT_VARIANT = "x64-jit"` before the PowerShell command. With npm, keep `PIBOLT_VARIANT` set in your
@@ -91,19 +93,31 @@ Download a build from the [latest release](https://github.com/opensec-git/Pi-Bol
 |---|---|
 | `pi-bolt-linux-x64.tar.xz` | **Linux**, CPUs with AVX2 (Intel Haswell, AMD Zen and later) |
 | `pi-bolt-linux-x64-baseline.tar.xz` | Linux, any x86-64 CPU |
+| `pi-bolt-linux-arm64.tar.xz` | **Linux** ARM64, any 64-bit ARM CPU (Raspberry Pi 3 and later, AWS Graviton, Ampere) |
 | `pi-bolt-darwin-arm64.tar.xz` | **macOS**, Apple silicon |
 | `pi-bolt-win32-x64.zip` | **Windows** x64; compiled code on CPUs with AVX2, bytecode on others |
 
 `-jit` builds are for heavy use of plugins loaded at run time; the runtime archive is for [compiling plugins in](docs/PLUGINS.md).
+In Termux, use the installer: it sets the executable's loader to Termux's glibc ([below](#android-termux)).
 
 </details>
 
+### Android (Termux)
+
+In [Termux](https://termux.dev), run the same `curl ... | sh` command. Pi-Bolt is a glibc program and Android's libc is not
+glibc, so the installer first installs Termux's glibc (`pkg install glibc-repo && pkg install glibc`, after asking), sets it as
+the executable's loader, and links `pi-bolt` into `$PREFIX/bin`. `pi-bolt` is a small launcher that starts Pi-Bolt in Android's
+time zone and without Termux's `LD_PRELOAD` (a library of Android's libc, which glibc cannot load); the programs Pi-Bolt starts
+get it back. The installer copies Termux's `resolv.conf` and `hosts` to `$PREFIX/glibc/etc`, where Termux's glibc reads them.
+
 ### Requirements
 
-- **Linux** x86-64 with glibc 2.17 or later (Ubuntu 20.04+, Debian 11+, RHEL/Rocky 8+, Amazon Linux 2). musl is not supported.
+- **Linux** x86-64 or ARM64 with glibc 2.17 or later (Ubuntu 20.04+, Debian 11+, RHEL/Rocky 8+, Amazon Linux 2, Raspberry Pi
+  OS 64-bit). musl is not supported.
+- **Android** 7 or later on 64-bit ARM, in Termux.
 - **macOS** 13 or later on Apple silicon. Install with the installer or npm ([Troubleshooting](docs/TROUBLESHOOTING.md#macos)).
 - **Windows** 10 (1809) or later, or Windows 11, on x64. Install with the installer or npm; for problems, see [Troubleshooting: Windows](docs/TROUBLESHOOTING.md#windows).
-- Linux and Windows on ARM64 are not available yet.
+- Windows on ARM64 runs the x64 build, in Windows 11's x64 emulation.
 
 Pi-Bolt installs next to Pi as `pi-bolt`, so both can stay installed. Running the installer again updates, reinstalls or
 uninstalls it.
@@ -229,6 +243,29 @@ off. Restoring a session needs Herdr 0.9.2 or later.
 To start other agents in Herdr panes from Pi-Bolt, install [pi-herdr](https://www.npmjs.com/package/@andrewjacop/pi-herdr):
 `pi-bolt install npm:@andrewjacop/pi-herdr`.
 
+## Editors
+
+`pi-bolt --acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com), so Pi-Bolt runs in the agent panel of Zed,
+JetBrains IDEs, VS Code (through an ACP extension), Neovim and other ACP editors, with your Pi settings, extensions, skills and
+sessions. In Zed's `settings.json`:
+
+```json
+"agent_servers": {
+  "Pi-Bolt": { "type": "custom", "command": "/full/path/to/pi-bolt", "args": ["--acp"], "env": {} }
+}
+```
+
+Other editors, and what the editor gets: [docs/ACP.md](docs/ACP.md).
+
+`pi-bolt --mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server, so other agents give Pi-Bolt a task with
+its `prompt` tool and continue the session in later calls. In Claude Code:
+
+```bash
+claude mcp add pi-bolt -- /full/path/to/pi-bolt --mcp
+```
+
+Other clients, and what the tools do: [docs/MCP.md](docs/MCP.md).
+
 ## How it works
 
 <picture>
@@ -255,6 +292,8 @@ in [`sources.json`](sources.json) with Pi-Bolt's changes on top; the engine chan
 | [Building](docs/BUILDING.md) | Building the runtime and Pi from source, training profiles, tests |
 | [Benchmarks](docs/BENCHMARKS.md) | Method, results and raw data |
 | [Plugins](docs/PLUGINS.md) | Porting Pi extensions and writing them for AOT |
+| [Editors](docs/ACP.md) | Pi-Bolt in Zed, JetBrains IDEs, VS Code and other ACP editors |
+| [Other agents](docs/MCP.md) | Pi-Bolt as a tool of other agents and MCP clients |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Diagnostics, environment variables, known limitations |
 | [Releasing](docs/RELEASING.md) | CI, releases, signing |
 

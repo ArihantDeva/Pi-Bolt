@@ -1,7 +1,7 @@
 {
 	"name": "pi-bolt",
-	"version": "0.8.6",
-	"description": "Pi, the coding agent, compiled ahead of time to native code: one executable for Linux x86-64, macOS on Apple silicon and Windows x64, starts 2-3x sooner than Pi on Bun and uses about a third of its CPU over a session",
+	"version": "0.9.0",
+	"description": "Pi, the coding agent, compiled ahead of time to native code: one executable for Linux x86-64 and ARM64 (Android too, in Termux), macOS on Apple silicon and Windows x64, starts 2-3x sooner than Pi on Bun and uses about a third of its CPU over a session",
 	"keywords": [
 		"pi",
 		"coding-agent",
@@ -31,6 +31,7 @@
 	],
 	"os": [
 		"linux",
+		"android",
 		"darwin",
 		"win32"
 	],

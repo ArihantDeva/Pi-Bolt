@@ -153,7 +153,7 @@ function makeRelease({ signer, sumsVersion = VERSION, zips = { x64: buildZip() }
 
 const GITHUB = `https://github.com/opensec-git/Pi-Bolt/releases/download/bolt-v${VERSION}`;
 const REGISTRY = "https://registry.npmjs.org";
-const npmUrl = (variant = "x64") => `${REGISTRY}/pi-bolt-win32-${variant}/-/pi-bolt-win32-${variant}-${VERSION}.tgz`;
+const npmUrl = (variant = "x64") => `${REGISTRY}/@kushalkhemka/pi-bolt-win32-${variant}/-/pi-bolt-win32-${variant}-${VERSION}.tgz`;
 
 /** A fetch that serves `routes` (URL -> bytes) and records what was asked for. */
 function fakeFetch(routes) {
@@ -172,7 +172,7 @@ function githubRoutes(release, base = GITHUB) {
 
 function npmPackage(zip, variant = "x64") {
 	return makeTgz([
-		{ name: "package/package.json", data: Buffer.from(`{"name":"pi-bolt-win32-${variant}","version":"${VERSION}"}`) },
+		{ name: "package/package.json", data: Buffer.from(`{"name":"@kushalkhemka/pi-bolt-win32-${variant}","version":"${VERSION}"}`) },
 		{ name: `package/pi-bolt-win32-${variant}.zip`, data: zip },
 	]);
 }

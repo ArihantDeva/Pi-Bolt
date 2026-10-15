@@ -39,7 +39,7 @@ jobs:
         run: |
           shellcheck -s sh -S warning install.sh npm/bin/pi-bolt
           shellcheck -x -S warning scripts/*.sh scripts/lib/common.sh scripts/toolchain/*.sh \
-            tests/aot/run.sh tests/pi/run.sh tests/installer/run.sh tests/runtime/run.sh bench/run-suite.sh
+            tests/aot/run.sh tests/pi/run.sh tests/installer/run.sh tests/runtime/run.sh tests/termux/run.sh bench/run-suite.sh
       - name: Python
         run: python3 -m py_compile bench/*.py scripts/lib/*.py
       - name: Versions agree
@@ -95,6 +95,8 @@ jobs:
         include:
           - name: Linux x86-64
             runner: ubuntu-24.04
+          - name: Linux ARM64
+            runner: ubuntu-24.04-arm
           - name: macOS Apple silicon
             runner: macos-15
     runs-on: ${{ matrix.runner }}
@@ -116,21 +118,41 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install bash tmux xz
       - name: Runtime of the latest release
-        run: scripts/fetch-runtime.sh
+        id: runtime
+        run: |
+          # (A platform the latest release has no runtime for, Linux ARM64 before its first release, is skipped.)
+          if [ "$(uname -s)-$(uname -m)" = Linux-aarch64 ] &&
+            ! curl -fsIL -o /dev/null https://github.com/opensec-git/Pi-Bolt/releases/latest/download/pi-bolt-runtime-linux-arm64.tar.gz; then
+            echo "::notice title=No runtime::The latest release has no Linux ARM64 runtime: Pi-Bolt's checks are skipped on Linux ARM64."
+            echo "available=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          scripts/fetch-runtime.sh
+          echo "available=true" >>"$GITHUB_OUTPUT"
       - name: Pi
+        if: steps.runtime.outputs.available == 'true'
         run: scripts/prepare-pi.sh
       - name: Build
+        if: steps.runtime.outputs.available == 'true'
         run: |
           scripts/build-pi.sh --out out/pi-bolt
           scripts/build-pi.sh --jit on --out out/pi-bolt-jit
           out/pi-bolt/pi --version | tee /dev/stderr | grep -q "Pi-Bolt $(cat VERSION)"
       - name: Pi-Bolt's tests
+        if: steps.runtime.outputs.available == 'true'
         run: |
           tests/pi/run.sh "$PWD/out/pi-bolt/pi"
           tests/pi/run.sh "$PWD/out/pi-bolt-jit/pi"
+          # Linux ARM64: also as Termux installs it, in an imitation of Android (the runner is thrown away after: it writes /data).
+          if [ "$(uname -s)-$(uname -m)" = Linux-aarch64 ]; then
+            sudo apt-get install -y -qq busybox-static >/dev/null
+            sudo env PATH="$PATH" PIBOLT_TERMUX_TEST=1 tests/termux/run.sh --build "$PWD/out/pi-bolt"
+          fi
       - name: Engine tests
+        if: steps.runtime.outputs.available == 'true'
         run: tests/aot/run.sh
       - name: Runtime tests
+        if: steps.runtime.outputs.available == 'true'
         # A test of what the engine in this commit does is skipped while the released runtime is an older engine; the
         # release workflow runs it on the runtime built from this engine (docs/RELEASING.md).
         run: |
@@ -138,6 +160,7 @@ jobs:
           [ "$(scripts/runtime-stamp.sh)" = "$released" ] || export PIBOLT_RUNTIME_OLDER=1
           tests/runtime/run.sh
       - name: The same as stock Pi
+        if: steps.runtime.outputs.available == 'true'
         run: |
           scripts/build-pi.sh --stable --out out/pi-stable
           python3 bench/e2e_tools.py --reference bun=out/pi-stable/pi --build pi-bolt=out/pi-bolt/pi --build jit=out/pi-bolt-jit/pi

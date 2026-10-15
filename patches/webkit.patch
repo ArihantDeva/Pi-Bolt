@@ -57,8 +57,8 @@ function, which compares many characters at a time.
  Source/JavaScriptCore/aot/AOTFunction.h       |   10 +-
  Source/JavaScriptCore/aot/AOTGraph.cpp        |  226 +-
  Source/JavaScriptCore/aot/AOTGraph.h          |   34 +-
- Source/JavaScriptCore/aot/AOTImage.cpp        |  143 +-
- Source/JavaScriptCore/aot/AOTImage.h          |   15 +
+ Source/JavaScriptCore/aot/AOTImage.cpp        |  147 +-
+ Source/JavaScriptCore/aot/AOTImage.h          |   20 +
  Source/JavaScriptCore/aot/AOTInlining.cpp     |  291 +-
  .../aot/AOTLoopOptimization.cpp               |   79 +-
  Source/JavaScriptCore/aot/AOTLowerAccess.cpp  |  135 +-
@@ -80,6 +80,8 @@ function, which compares many characters at a time.
  Source/JavaScriptCore/aot/AOTThunks.cpp       |  326 +-
  Source/JavaScriptCore/aot/AOTThunks.h         |   15 +-
  .../JavaScriptCore/aot/AOTTypeInference.cpp   |   77 +-
+ .../assembler/MacroAssemblerARM64.cpp         |    9 +
+ .../assembler/MacroAssemblerARM64.h           |    6 +
  .../JavaScriptCore/assembler/ProbeContext.cpp |    4 +-
  .../b3/B3AbstractHeapRepository.h             |    2 +
  .../JavaScriptCore/bytecode/CallLinkInfo.cpp  |    5 +-
@@ -91,9 +93,9 @@ function, which compares many characters at a time.
  Source/JavaScriptCore/dfg/DFGOperations.cpp   |   45 +-
  Source/JavaScriptCore/ffi/FFICallHost.cpp     |    4 +-
  Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp |   38 +
- Source/JavaScriptCore/heap/StaticHeap.cpp     |  423 +-
- Source/JavaScriptCore/heap/StaticHeap.h       |   56 +-
- .../heap/StructureAlignedMemoryAllocator.cpp  |    5 +-
+ Source/JavaScriptCore/heap/StaticHeap.cpp     |  428 +-
+ Source/JavaScriptCore/heap/StaticHeap.h       |   62 +-
+ .../heap/StructureAlignedMemoryAllocator.cpp  |    6 +-
  .../remote/socket/RemoteInspectorSocket.cpp   |    4 +-
  .../JavaScriptCore/interpreter/CallFrame.cpp  |    7 +
  .../interpreter/StackVisitor.cpp              |    8 +-
@@ -155,14 +157,14 @@ function, which compares many characters at a time.
  Source/bmalloc/bmalloc/BPlatform.h            |    7 +
  Source/bmalloc/bmalloc/CryptoRandom.cpp       |   60 +-
  Source/bmalloc/bmalloc/StaticRegion.cpp       |  426 +-
- Source/bmalloc/bmalloc/StaticRegion.h         |   94 +-
+ Source/bmalloc/bmalloc/StaticRegion.h         |  102 +-
  Source/bmalloc/bmalloc/bmalloc.cpp            |   17 +
  Source/bmalloc/bmalloc/bmalloc.h              |    5 +
  Source/cmake/WebKitCompilerFlags.cmake        |    4 +-
  Source/cmake/WebKitMacros.cmake               |   28 +-
  .../TestWebKitAPI/Tests/WTF/StringCommon.cpp  |   19 +-
  build-icu.ps1                                 |   49 +-
- 124 files changed, 9082 insertions(+), 577 deletions(-)
+ 126 files changed, 9123 insertions(+), 580 deletions(-)
  create mode 100644 JSTests/microbenchmarks/array-length-increment-large.js
  create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-long.js
  create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-short.js
@@ -1526,7 +1528,7 @@ index 10cfe2379d..43a9411057 100644
  void promoteEnvironments(Graph&); // Sets Node::isPromoted.
  void scalarReplaceReadOnlyObjects(Graph&); // Runs before type inference.
 diff --git a/Source/JavaScriptCore/aot/AOTImage.cpp b/Source/JavaScriptCore/aot/AOTImage.cpp
-index bea4646b3a..8afea6df29 100644
+index bea4646b3a..6597b2d34e 100644
 --- a/Source/JavaScriptCore/aot/AOTImage.cpp
 +++ b/Source/JavaScriptCore/aot/AOTImage.cpp
 @@ -34,6 +34,8 @@
@@ -1538,7 +1540,19 @@ index bea4646b3a..8afea6df29 100644
  #endif
  
  namespace JSC { namespace AOT {
-@@ -411,12 +413,28 @@ void noteThatLinkTimeConstantIsUsed(unsigned which)
+@@ -64,8 +66,10 @@ uint64_t imageStamp()
+     mix(CodeBlock::offsetOfJITData());
+     mix(JSGlobalObject::offsetOfGlobalLexicalBindingEpoch());
+     mix(Options::useImmutableIntrinsics()); // What code takes for granted.
++    // (The architecture. Which of its extensions the code uses is not part of the stamp: the image's trailer says, and a CPU
++    // that lacks one runs without the image.)
+ #if CPU(ARM64)
+-    mix(1 | MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics() << 8);
++    mix(1);
+ #elif CPU(X86_64)
+     mix(2);
+ #endif
+@@ -411,12 +415,28 @@ void noteThatLinkTimeConstantIsUsed(unsigned which)
  void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
  {
      // Where they pointed depends on where the code was when it was compiled, which is nothing to do with the code.
@@ -1568,7 +1582,7 @@ index bea4646b3a..8afea6df29 100644
  bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flags> flags)
  {
      Locker locker { m_lock };
-@@ -429,14 +447,25 @@ bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flag
+@@ -429,14 +449,25 @@ bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flag
          // As RegExp::compile() goes about it.
          Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
          Yarr::YarrPattern yarrPattern(pattern, flags, error);
@@ -1596,7 +1610,7 @@ index bea4646b3a..8afea6df29 100644
          result.code[charSize == Yarr::CharSize::Char16] = WTF::move(*code);
      }
      m_regExps.append(WTF::move(result));
-@@ -786,11 +815,16 @@ Vector<uint8_t> ImageBuilder::finish()
+@@ -786,11 +817,16 @@ Vector<uint8_t> ImageBuilder::finish()
              auto& code = m_functions[index].code;
              ++functions;
              bytes += code.bytes.size();
@@ -1613,7 +1627,7 @@ index bea4646b3a..8afea6df29 100644
              code.info.sitesOfSpreads.clear();
              code.info.inlineFrames.clear();
              code.info.catchEntrypoints.clear();
-@@ -889,7 +923,7 @@ Vector<uint8_t> ImageBuilder::finish()
+@@ -889,7 +925,7 @@ Vector<uint8_t> ImageBuilder::finish()
          Vector<std::pair<uint32_t, uint32_t>> all;
          for (auto& call : function.code.info.stubCalls) {
              if (call.callSite != StubCall::noCallSite && !call.isTailCall)
@@ -1622,7 +1636,7 @@ index bea4646b3a..8afea6df29 100644
          }
          if (all.isEmpty()) {
              callSitesOfFunction.append(0);
-@@ -914,7 +948,7 @@ Vector<uint8_t> ImageBuilder::finish()
+@@ -914,7 +950,7 @@ Vector<uint8_t> ImageBuilder::finish()
          uint32_t previousOffset = 0;
          int64_t previousSite = 0;
          for (auto& [offset, site] : all) {
@@ -1631,7 +1645,7 @@ index bea4646b3a..8afea6df29 100644
              int64_t step = static_cast<int64_t>(site) - previousSite;
              appendVarint(callSites, static_cast<uint64_t>(step << 1) ^ static_cast<uint64_t>(step >> 63));
              previousOffset = offset;
-@@ -966,7 +1000,7 @@ Vector<uint8_t> ImageBuilder::finish()
+@@ -966,7 +1002,7 @@ Vector<uint8_t> ImageBuilder::finish()
              record.text = safeCast<uint32_t>(textOfRegExps.size());
              record.length = regExp.pattern.length();
              record.is8Bit = regExp.pattern.is8Bit();
@@ -1640,7 +1654,7 @@ index bea4646b3a..8afea6df29 100644
              record.codeFor8Bit = safeCast<uint32_t>(at[0]);
              record.codeFor16Bit = safeCast<uint32_t>(at[1]);
              imageRegExps.append(record);
-@@ -1269,6 +1303,10 @@ Vector<uint8_t> ImageBuilder::finish()
+@@ -1269,6 +1305,10 @@ Vector<uint8_t> ImageBuilder::finish()
              for (auto& reference : regExpCode.tables) {
                  size_t instructionAt = codeAt + reference.offset;
                  size_t tableAt = tablesOfRegExps.get(reference.table.data());
@@ -1651,7 +1665,7 @@ index bea4646b3a..8afea6df29 100644
                  int64_t pages = static_cast<int64_t>(tableAt >> 12) - static_cast<int64_t>(instructionAt >> 12);
                  RELEASE_ASSERT(pages >= -(1 << 20) && pages < (1 << 20));
                  uint32_t adrp = 0x90000000u | (static_cast<uint32_t>(pages) & 3u) << 29 | (static_cast<uint32_t>(pages >> 2) & 0x7ffffu) << 5 | reference.reg;
-@@ -1284,10 +1322,47 @@ Vector<uint8_t> ImageBuilder::finish()
+@@ -1284,10 +1324,47 @@ Vector<uint8_t> ImageBuilder::finish()
      Vector<uint32_t> functionInBucket;
      functionInBucket.fill(0, capacity);
      size_t recordAt = 0;
@@ -1699,7 +1713,7 @@ index bea4646b3a..8afea6df29 100644
  
          ImageFunction record { };
          RELEASE_ASSERT(startsOfFunctions[index] == codeAt);
-@@ -1359,9 +1434,16 @@ Vector<uint8_t> ImageBuilder::finish()
+@@ -1359,9 +1436,16 @@ Vector<uint8_t> ImageBuilder::finish()
          memcpy(code + codeAt, function.code.bytes.span().data(), function.code.bytes.size());
          for (auto& reference : info.indexReferences)
              IndexReferences::fill(code + codeAt, reference, safeCast<uint32_t>(index));
@@ -1716,7 +1730,7 @@ index bea4646b3a..8afea6df29 100644
  
      // With every function in its place: the calls from one to another.
      for (size_t index = 0; index < m_functions.size(); ++index) {
-@@ -1630,7 +1712,7 @@ std::optional<uint32_t> tryCallSiteAt(const ImageFunction& function, uint32_t of
+@@ -1630,7 +1714,7 @@ std::optional<uint32_t> tryCallSiteAt(const ImageFunction& function, uint32_t of
      uint64_t first = readVarint(at);
      skipInlineFrames(at, first);
      for (uint64_t count = first >> 2; count--;) {
@@ -1725,7 +1739,7 @@ index bea4646b3a..8afea6df29 100644
          uint64_t step = readVarint(at);
          site += static_cast<int64_t>(step >> 1) ^ -static_cast<int64_t>(step & 1);
          if (offset >= offsetOfReturnAddress) {
-@@ -1708,6 +1790,21 @@ static void* copyToExecutableMemory(std::span<const uint8_t> code)
+@@ -1708,6 +1792,21 @@ static void* copyToExecutableMemory(std::span<const uint8_t> code)
  #endif
      MacroAssembler::cacheFlush(result, code.size());
      return result;
@@ -1747,7 +1761,7 @@ index bea4646b3a..8afea6df29 100644
  #else
      UNUSED_PARAM(code);
      return nullptr;
-@@ -1764,11 +1861,11 @@ auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -
+@@ -1764,11 +1863,11 @@ auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -
          std::span regExps { image->at<ImageRegExp>(header.regExpsOffset), header.numberOfRegExps };
          auto* text = image->at<uint8_t>(header.textOfRegExpsOffset);
          for (auto it = std::ranges::lower_bound(regExps, hash, { }, &ImageRegExp::hash); it != regExps.end() && it->hash == hash; ++it) {
@@ -1761,7 +1775,7 @@ index bea4646b3a..8afea6df29 100644
              }
          }
      }
-@@ -1944,6 +2041,10 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
+@@ -1944,6 +2043,10 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
      });
      if (!Image::hasAny())
          return { };
@@ -1772,7 +1786,7 @@ index bea4646b3a..8afea6df29 100644
  
      Image* image = nullptr;
      const ImageFunction* function = nullptr;
-@@ -2092,7 +2193,8 @@ public:
+@@ -2092,7 +2195,8 @@ public:
      void add(AOT::ImageKey key, UnlinkedCodeBlock* codeBlock)
      {
          // An inner function of a function with both call and construct code blocks is reached twice.
@@ -1782,7 +1796,7 @@ index bea4646b3a..8afea6df29 100644
              return;
          AOT::CompiledCode code;
          if (AOT::compileForImage(m_vm, codeBlock, code))
-@@ -2179,6 +2281,27 @@ std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8
+@@ -2179,6 +2283,27 @@ std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8
      return std::pair { static_cast<size_t>(header.codeOffset), static_cast<size_t>(header.size - header.codeOffset) };
  }
  
@@ -1811,10 +1825,23 @@ index bea4646b3a..8afea6df29 100644
  
  #endif // ENABLE(FTL_JIT)
 diff --git a/Source/JavaScriptCore/aot/AOTImage.h b/Source/JavaScriptCore/aot/AOTImage.h
-index cce882109e..4e942585eb 100644
+index cce882109e..451019f649 100644
 --- a/Source/JavaScriptCore/aot/AOTImage.h
 +++ b/Source/JavaScriptCore/aot/AOTImage.h
-@@ -116,6 +116,10 @@ struct ImageRegExp {
+@@ -33,7 +33,12 @@ namespace AOT {
+ // The image starts on a page boundary of its file, so the code can be mapped executable directly from the file.
+ 
+ static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL; // "BUNAOT01"
++// (Linux on ARM64: the largest of the page sizes its kernels use, 4, 16 or 64 KB. As WTF's CeilingOnPageSize.)
++#if OS(LINUX) && CPU(ARM64)
++static constexpr size_t imagePageSize = 64 * KB;
++#else
+ static constexpr size_t imagePageSize = 16 * KB;
++#endif
+ static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
+ static constexpr size_t imageStubsAlignment = 16; // Also the alignment of everything else that is not a function.
+ static constexpr unsigned mostCopiesOfStubsInImage = 8;
+@@ -116,6 +121,10 @@ struct ImageRegExp {
      // The other flags do not affect what the pattern matches at a given position, which is all the code computes.
      static OptionSet<Yarr::Flags> significantFlags(OptionSet<Yarr::Flags> flags) { return flags - OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::HasIndices }; }
  
@@ -1825,7 +1852,7 @@ index cce882109e..4e942585eb 100644
      uint32_t hash;
      uint32_t text; // Byte offset of the pattern in the RegExp text.
      uint32_t length : 31; // In characters.
-@@ -176,6 +180,15 @@ public:
+@@ -176,6 +185,15 @@ public:
      void add(ImageKey, uint64_t rank, CompiledCode&&);
      size_t numberOfFunctions() const { return m_functions.size(); }
      void clear() { m_functions.clear(); } // Removes all functions.
@@ -1841,7 +1868,7 @@ index cce882109e..4e942585eb 100644
      void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
      // `numbers` must stay valid until finish() returns. `number` is the highest identifier number plus one.
      void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers* numbers, uint32_t number)
-@@ -206,6 +219,7 @@ private:
+@@ -206,6 +224,7 @@ private:
          String pattern;
          OptionSet<Yarr::Flags> flags;
          Yarr::YarrCodeForImage code[2]; // 8-bit, 16-bit.
@@ -1849,7 +1876,7 @@ index cce882109e..4e942585eb 100644
      };
      uint32_t m_numberOfIdentifiersOfProgram { 0 };
      const NumbersOfIdentifiers* m_numbersOfIdentifiersOfProgram { nullptr };
-@@ -242,6 +256,7 @@ public:
+@@ -242,6 +261,7 @@ public:
      struct CodeForRegExp {
          const void* for8Bit;
          const void* for16Bit;
@@ -8498,6 +8525,43 @@ index 8db0635296..98879bfe5e 100644
      Type m_returnType { TNone };
      UncheckedKeyHashMap<Node*, Type> m_elementTypes; // Of the arrays that the function makes: everything it puts in them.
      bool m_elementTypesChanged { false };
+diff --git a/Source/JavaScriptCore/assembler/MacroAssemblerARM64.cpp b/Source/JavaScriptCore/assembler/MacroAssemblerARM64.cpp
+index 72b3cf9baf..0f35f743c6 100644
+--- a/Source/JavaScriptCore/assembler/MacroAssemblerARM64.cpp
++++ b/Source/JavaScriptCore/assembler/MacroAssemblerARM64.cpp
+@@ -753,6 +753,15 @@ void MacroAssemblerARM64::collectCPUFeatures()
+     }
+ }
+ 
++#if USE(BUN_JSC_ADDITIONS)
++void MacroAssemblerARM64::restrictCPUFeaturesToBaseline()
++{
++    collectCPUFeatures();
++    for (auto* state : { &s_lseCheckState, &s_jscvtCheckState, &s_float16CheckState, &s_frintCheckState, &s_sha3CheckState, &s_dotProdCheckState })
++        *state = CPUIDCheckState::Clear;
++}
++#endif
++
+ MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_lseCheckState = CPUIDCheckState::NotChecked;
+ MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_jscvtCheckState = CPUIDCheckState::NotChecked;
+ MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_float16CheckState = CPUIDCheckState::NotChecked;
+diff --git a/Source/JavaScriptCore/assembler/MacroAssemblerARM64.h b/Source/JavaScriptCore/assembler/MacroAssemblerARM64.h
+index 8a7c73bbae..0b6765b18b 100644
+--- a/Source/JavaScriptCore/assembler/MacroAssemblerARM64.h
++++ b/Source/JavaScriptCore/assembler/MacroAssemblerARM64.h
+@@ -6386,6 +6386,12 @@ public:
+         return s_dotProdCheckState == CPUIDCheckState::Set;
+     }
+ 
++#if USE(BUN_JSC_ADDITIONS)
++    // Code for any ARMv8.0 CPU from now on: none of the extensions below is used, whatever this CPU has (code compiled ahead of
++    // time for other CPUs: BUN_AOT_CPU=baseline). Not where the runtime is built to need one anyway (HAVE(LSE_INSTRUCTION), ...).
++    JS_EXPORT_PRIVATE static void restrictCPUFeaturesToBaseline();
++#endif
++
+     ALWAYS_INLINE static bool supportsLSE()
+     {
+ #if HAVE(LSE_INSTRUCTION)
 diff --git a/Source/JavaScriptCore/assembler/ProbeContext.cpp b/Source/JavaScriptCore/assembler/ProbeContext.cpp
 index b52b4897a1..e67bce685f 100644
 --- a/Source/JavaScriptCore/assembler/ProbeContext.cpp
@@ -9103,7 +9167,7 @@ index b894755248..2b1d40c454 100644
          patchpoint->effects.terminal = true;
          if (actualAllocator.isConstant())
 diff --git a/Source/JavaScriptCore/heap/StaticHeap.cpp b/Source/JavaScriptCore/heap/StaticHeap.cpp
-index 96edcf1624..8f1415aa47 100644
+index 96edcf1624..0db5d86ad7 100644
 --- a/Source/JavaScriptCore/heap/StaticHeap.cpp
 +++ b/Source/JavaScriptCore/heap/StaticHeap.cpp
 @@ -14,6 +14,7 @@
@@ -9126,7 +9190,20 @@ index 96edcf1624..8f1415aa47 100644
  #include <wtf/text/AtomStringTable.h>
  #include <wtf/text/SymbolRegistry.h>
  
-@@ -68,7 +73,7 @@ static uint32_t s_entryOffsetOfModuleBeingBuilt;
+@@ -42,7 +47,12 @@ VM* StaticHeap::s_vm = nullptr;
+ bool StaticHeap::s_isShared = false;
+ bool StaticHeap::s_hasNoCompilerThreads = false;
+ const StaticHeap::Header* StaticHeap::s_header = nullptr;
++// (The page size it is mapped in: 64 KB on Linux ARM64, whose kernels use 4, 16 or 64 KB pages.)
++#if OS(LINUX) && CPU(ARM64)
++static constexpr size_t pageSizeOfImage = 64 * KB;
++#else
+ static constexpr size_t pageSizeOfImage = 16 * KB;
++#endif
+ 
+ struct StaticHeapModule {
+     uint32_t entryOffset; // What they are sorted by.
+@@ -68,7 +78,7 @@ static uint32_t s_entryOffsetOfModuleBeingBuilt;
  
  // The file: this, then each arena, on a page boundary.
  struct StaticHeap::Header {
@@ -9135,7 +9212,7 @@ index 96edcf1624..8f1415aa47 100644
      static constexpr unsigned maxStructures = 32;
  
      uint64_t magic;
-@@ -111,6 +116,13 @@ struct StaticHeap::Header {
+@@ -111,6 +121,13 @@ struct StaticHeap::Header {
      uint64_t constantsOfProgram; // EncodedJSValue[]. See AOT::NumbersOfConstants.
      uint64_t keysOfImage; // AOT::ImageKey[]. See keysOfImage().
      uint64_t capacityOfKeysOfImage;
@@ -9149,7 +9226,7 @@ index 96edcf1624..8f1415aa47 100644
  
      // What the cells say they are: which of the VM's own structures, and where that has to be.
      uint32_t numberOfStructures;
-@@ -118,6 +130,8 @@ struct StaticHeap::Header {
+@@ -118,6 +135,8 @@ struct StaticHeap::Header {
          uint32_t indexInVM;
          uint32_t id;
      } structures[maxStructures];
@@ -9158,7 +9235,7 @@ index 96edcf1624..8f1415aa47 100644
  };
  
  // The VM's own structures, which it makes first, are members of it that follow one another.
-@@ -127,10 +141,23 @@ static std::span<WriteBarrier<Structure>> structuresOf(VM& vm)
+@@ -127,10 +146,23 @@ static std::span<WriteBarrier<Structure>> structuresOf(VM& vm)
  }
  
  // In Arena::Bss, a Decoder for each module.
@@ -9184,7 +9261,7 @@ index 96edcf1624..8f1415aa47 100644
  }
  
  static VM* s_vmOfContainer = nullptr;
-@@ -178,7 +205,7 @@ static std::atomic<unsigned> s_numberOfOwnersEverUsed { 0 }; // The first so man
+@@ -178,7 +210,7 @@ static std::atomic<unsigned> s_numberOfOwnersEverUsed { 0 }; // The first so man
  PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
  {
      uintptr_t address = std::bit_cast<uintptr_t>(cell);
@@ -9193,7 +9270,7 @@ index 96edcf1624..8f1415aa47 100644
          for (unsigned i = 0, count = s_numberOfOwnersEverUsed.load(std::memory_order_acquire); i < count; ++i) {
              auto& owner = s_ownersOfBlocks[i];
              if (address - owner.start.load(std::memory_order_relaxed) < owner.size.load(std::memory_order_acquire))
-@@ -209,8 +236,33 @@ void StaticHeap::willAllocateUnlinkedFunctionSlow()
+@@ -209,8 +241,33 @@ void StaticHeap::willAllocateUnlinkedFunctionSlow()
      s_nextCellIsOfAFunction = true;
  }
  
@@ -9227,7 +9304,7 @@ index 96edcf1624..8f1415aa47 100644
  
  template<typename Functor> static void forEachCell(Region::Arena arena, const Functor& functor)
  {
-@@ -244,7 +296,7 @@ static Vector<std::pair<void*, size_t>>& freeBlocks() WTF_REQUIRES_LOCK(s_blocks
+@@ -244,7 +301,7 @@ static Vector<std::pair<void*, size_t>>& freeBlocks() WTF_REQUIRES_LOCK(s_blocks
      return blocks;
  }
  
@@ -9236,7 +9313,7 @@ index 96edcf1624..8f1415aa47 100644
  {
      RELEASE_ASSERT(!(size % WTF::pageSize()));
      Locker locker { s_blocksLock };
-@@ -258,11 +310,11 @@ void* StaticHeap::allocateBlock(VM& vm, size_t size)
+@@ -258,11 +315,11 @@ void* StaticHeap::allocateBlock(VM& vm, size_t size)
          }
      }
      if (!result) {
@@ -9251,7 +9328,7 @@ index 96edcf1624..8f1415aa47 100644
      for (unsigned i = 0; i < maxBlocks; ++i) {
          auto& owner = s_ownersOfBlocks[i];
          if (owner.size.load(std::memory_order_relaxed))
-@@ -283,9 +335,16 @@ void StaticHeap::freeBlock(void* block, size_t size)
+@@ -283,9 +340,16 @@ void StaticHeap::freeBlock(void* block, size_t size)
          if (owner.start.load(std::memory_order_relaxed) == std::bit_cast<uintptr_t>(block) && owner.size.load(std::memory_order_relaxed))
              owner.size.store(0, std::memory_order_release);
      }
@@ -9268,7 +9345,7 @@ index 96edcf1624..8f1415aa47 100644
      Locker locker { s_blocksLock };
      freeBlocks().append({ block, size });
  }
-@@ -303,6 +362,7 @@ void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
+@@ -303,6 +367,7 @@ void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
      if (vm.heap.m_placeOfNextCell != placeOfEveryCellWhileBuilding) {
          return std::exchange(vm.heap.m_placeOfNextCell, nullptr);
      }
@@ -9276,7 +9353,7 @@ index 96edcf1624..8f1415aa47 100644
      if (!Region::isAllocatingOnThisThread())
          return nullptr;
      if (std::exchange(s_nextCellIsOfAFunction, false) && s_allocatesFunctionsInScratch) {
-@@ -312,9 +372,22 @@ void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
+@@ -312,9 +377,22 @@ void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
          return cell;
      }
      bool isMutable = Region::isAllocatingMutable();
@@ -9300,7 +9377,7 @@ index 96edcf1624..8f1415aa47 100644
      return cell;
  }
  
-@@ -351,7 +424,7 @@ public:
+@@ -351,7 +429,7 @@ public:
  
      void check(const void* pointer, const char* what)
      {
@@ -9309,7 +9386,7 @@ index 96edcf1624..8f1415aa47 100644
          if (!pointer || (StaticHeap::contains(pointer) && isKept))
              return;
          numberOfEscapes++;
-@@ -707,11 +780,43 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
+@@ -707,11 +785,43 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
      fillMetadata(function.index, codeBlock, executable, s_entryOffsetOfModuleBeingBuilt);
  }
  
@@ -9356,7 +9433,7 @@ index 96edcf1624..8f1415aa47 100644
              return;
          // The source of a constructor that nobody wrote is one of the engine's own, so its executable is made when the program runs.
          bool isDefaultConstructor = unlinked->isBuiltinDefaultClassConstructor();
-@@ -753,13 +858,11 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
+@@ -753,13 +863,11 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
              if (!isComplete)
                  return;
              unlinked->setStaticExecutable(executable);
@@ -9372,7 +9449,7 @@ index 96edcf1624..8f1415aa47 100644
          executable = unlinked->link(vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
          if (s_allocatesFunctionsInScratch) {
              Region::AllocationScope notInRegion(false);
-@@ -779,10 +882,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
+@@ -779,10 +887,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
          }
          unlinked->setStaticExecutable(executable);
          made++;
@@ -9384,7 +9461,7 @@ index 96edcf1624..8f1415aa47 100644
      };
      if (only) {
          make(only);
-@@ -1219,9 +1319,16 @@ static void deduplicateSymbolTables()
+@@ -1219,9 +1324,16 @@ static void deduplicateSymbolTables()
      for (uintptr_t table : tables) {
          std::span bytes { std::bit_cast<const Latin1Character*>(table), sizeof(SymbolTable) };
          moved.add(table, kept.ensure(String { bytes }, [&] {
@@ -9403,7 +9480,7 @@ index 96edcf1624..8f1415aa47 100644
              return std::bit_cast<uintptr_t>(cell);
          }).iterator->value);
      }
-@@ -1240,12 +1347,35 @@ static void deduplicateSymbolTables()
+@@ -1240,12 +1352,35 @@ static void deduplicateSymbolTables()
      }
  }
  
@@ -9440,7 +9517,7 @@ index 96edcf1624..8f1415aa47 100644
          for (auto& cells : s_cellsBeingBuilt)
              cells = { };
          s_allocatesFunctionsInScratch = false;
-@@ -1277,8 +1407,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1277,8 +1412,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
      s_vm = &vm;
  
      Header header { };
@@ -9451,7 +9528,7 @@ index 96edcf1624..8f1415aa47 100644
  
      auto copy = [&](std::span<const uint8_t> bytes) {
          auto* result = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, bytes.size(), pageSizeOfImage));
-@@ -1307,12 +1439,23 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1307,12 +1444,23 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
              s_symbolRegistriesBeingBuilt[isPrivate] = new (NotNull, Region::allocate(Region::Arena::Data, sizeof(SymbolRegistry), 16)) SymbolRegistry(isPrivate ? SymbolRegistry::Type::PrivateSymbol : SymbolRegistry::Type::PublicSymbol);
              header.symbolRegistries[isPrivate] = std::bit_cast<uint64_t>(s_symbolRegistriesBeingBuilt[isPrivate]);
          }
@@ -9476,7 +9553,7 @@ index 96edcf1624..8f1415aa47 100644
                  table.atomFor(vm, ordinal);
                  // So that nothing that is decoded when the program runs has to make one, which would be writing to the slot. If
                  // nothing is going to be, the ones that are wanted are the ones that what is decoded here and now asks for.
-@@ -1330,6 +1473,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1330,6 +1478,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                  auto* modules = static_cast<StaticHeapModule*>(Region::allocate(Region::Arena::Data, sortedOffsets.size() * sizeof(StaticHeapModule), 16));
                  header.modules = std::bit_cast<uint64_t>(modules);
                  header.numberOfModules = sortedOffsets.size();
@@ -9484,7 +9561,7 @@ index 96edcf1624..8f1415aa47 100644
                  auto imageView = AOT::ImageView::tryCreate(imageOfCode, reinterpret_cast<const void*>(Region::startOf(Region::Arena::Image)));
                  std::span<AOT::FunctionInfo> infosOfFunctions;
                  if (imageView) {
-@@ -1365,9 +1509,27 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1365,9 +1514,27 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                  Vector<StaticHeapTDZ> tdz;
                  s_tdzBeingBuilt = &tdz;
                  s_emptyStringBeingBuilt = nullptr;
@@ -9512,7 +9589,7 @@ index 96edcf1624..8f1415aa47 100644
                      RefPtr<CachedBytecode> cachedBytecode;
                      {
                          Region::AllocationScope notInRegion(false);
-@@ -1396,7 +1558,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1396,7 +1563,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                              if (builtinFunction) {
                                  static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
                                  SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(lengthOfBuiltin), 1, 1 };
@@ -9521,7 +9598,7 @@ index 96edcf1624..8f1415aa47 100644
                              }
                          }
                          UnlinkedCodeBlock* codeBlock = isBuiltinFunction ? nullptr : decodeAllForStaticHeap(decoder, key, functions);
-@@ -1411,7 +1573,27 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1411,7 +1578,27 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                              // not kept: once more than it is, or it would be destroyed if the module turns out to have no functions.
                              static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
                              SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(key.length()), 1, 1 };
@@ -9550,7 +9627,7 @@ index 96edcf1624..8f1415aa47 100644
                              // The code of the module itself, but for its executable, which is made when the program runs.
                              if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
                                  fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall);
-@@ -1460,6 +1642,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1460,6 +1647,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                      memset(address, 0, sizeof(Decoder));
                  }
                  s_tdzBeingBuilt = nullptr;
@@ -9559,7 +9636,7 @@ index 96edcf1624..8f1415aa47 100644
                  if (imageView && imageView->keysAreOmitted()) {
                      // An executable made here says which function it is. The rest are made when the program runs, and are looked up.
                      auto isLookedUp = [&](const AOT::ImageKey& key) {
-@@ -1532,24 +1716,33 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1532,24 +1721,33 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
          Thread::currentSingleton().setCurrentAtomStringTable(usualAtoms);
          {
              using StaticAtoms = AtomStringTable::StaticAtoms;
@@ -9598,7 +9675,7 @@ index 96edcf1624..8f1415aa47 100644
          }
          for (auto* registry : s_symbolRegistriesBeingBuilt)
              registry->becomeStatic();
-@@ -1575,6 +1768,37 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
+@@ -1575,6 +1773,37 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
          }
      }
  
@@ -9636,7 +9713,7 @@ index 96edcf1624..8f1415aa47 100644
      // Cells are as they would be in the VM that is going to have them, after a collection that found them.
      auto structures = structuresOf(vm);
      uint32_t blockOfStructures = vm.structureStructure->id().bits() & ~static_cast<uint32_t>(MarkedBlock::blockSize - 1);
-@@ -1691,13 +1915,51 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
+@@ -1691,13 +1920,51 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
      AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
      if (!atoms->table().isEmpty())
          return false;
@@ -9689,7 +9766,7 @@ index 96edcf1624..8f1415aa47 100644
      for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
          // (Some of it mapped and the rest not is nothing that anybody gets to see.)
          if (static_cast<Region::Arena>(i) == Region::Arena::Data && header.sizeOfHoleInData) {
-@@ -1710,14 +1972,98 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
+@@ -1710,14 +1977,98 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
          if (!Region::map(static_cast<Region::Arena>(i), fileDescriptor, offsetInFile + header.arenaOffset[i], header.arenaSize[i]))
              return false;
      }
@@ -9792,7 +9869,7 @@ index 96edcf1624..8f1415aa47 100644
  void StaticHeap::prepareThread()
  {
      if (!s_header || !s_vm || t_threadIsPrepared)
-@@ -1725,7 +2071,8 @@ void StaticHeap::prepareThread()
+@@ -1725,7 +2076,8 @@ void StaticHeap::prepareThread()
      AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
      if (!atoms->table().isEmpty())
          return;
@@ -9803,10 +9880,10 @@ index 96edcf1624..8f1415aa47 100644
  }
  
 diff --git a/Source/JavaScriptCore/heap/StaticHeap.h b/Source/JavaScriptCore/heap/StaticHeap.h
-index b4c5c6697e..e319bf4a3d 100644
+index b4c5c6697e..0971a6a820 100644
 --- a/Source/JavaScriptCore/heap/StaticHeap.h
 +++ b/Source/JavaScriptCore/heap/StaticHeap.h
-@@ -7,6 +7,7 @@
+@@ -7,10 +7,12 @@
  
  #include "CodeSpecializationKind.h"
  #include "LineColumn.h"
@@ -9814,7 +9891,12 @@ index b4c5c6697e..e319bf4a3d 100644
  #include <bmalloc/StaticRegion.h>
  #include <span>
  #include <wtf/Forward.h>
-@@ -27,6 +28,7 @@ class JSString;
+ #include <wtf/Function.h>
++#include <wtf/PageBlock.h>
+ #include <wtf/Vector.h>
+ 
+ namespace WTF {
+@@ -27,6 +29,7 @@ class JSString;
  class PreciseAllocation;
  class FunctionExecutable;
  class Identifier;
@@ -9822,7 +9904,7 @@ index b4c5c6697e..e319bf4a3d 100644
  namespace AOT {
  struct FunctionInfo;
  struct ImageFunction;
-@@ -36,7 +38,6 @@ class ScriptExecutable;
+@@ -36,7 +39,6 @@ class ScriptExecutable;
  class SourceCodeKey;
  class SourceOrigin;
  class SourceProvider;
@@ -9830,7 +9912,7 @@ index b4c5c6697e..e319bf4a3d 100644
  class TDZEnvironmentLink;
  class UnlinkedCodeBlock;
  class UnlinkedFunctionCodeBlock;
-@@ -73,7 +74,18 @@ public:
+@@ -73,7 +75,18 @@ public:
      };
      // If keptPayloadStart is nonzero, the payload before it is omitted. It must be the start of
      // BytecodeLinkRegions::ExpressionInfo. The program can then no longer be interpreted or decoded again.
@@ -9850,7 +9932,7 @@ index b4c5c6697e..e319bf4a3d 100644
      static bool isBuilding() { return s_isBuilding; }
      static JSString* emptyStringWhileBuilding(VM&); // Distinct from the VM's own empty string.
      static WTF::SymbolRegistry& symbolRegistryWhileBuilding(bool isPrivate); // Distinct from the VM's own registries.
-@@ -98,6 +110,31 @@ public:
+@@ -98,6 +111,31 @@ public:
          bool hasPositionsOfCallSites; // See PositionsToKeep.
      };
      JS_EXPORT_PRIVATE static std::optional<Copies> copiesIn(std::span<const uint8_t> image);
@@ -9882,7 +9964,7 @@ index b4c5c6697e..e319bf4a3d 100644
      // Call on a thread that will own a VM other than the first, before it creates any atom string. Does for that thread what map()
      // does for its own.
      JS_EXPORT_PRIVATE static void prepareThread();
-@@ -109,7 +146,7 @@ public:
+@@ -109,7 +147,7 @@ public:
      static bool isFirst(VM& vm) { return s_vm == &vm; }
      static ALWAYS_INLINE bool isOnlyForFirstVM(const void* pointer)
      {
@@ -9891,7 +9973,19 @@ index b4c5c6697e..e319bf4a3d 100644
      }
      // Once more than one VM uses the heap, the PreciseAllocation for a static cell is that of the VM that placed it, or else that
      // of the calling thread's VM.
-@@ -170,6 +207,13 @@ public:
+@@ -143,8 +181,9 @@ public:
+     JS_EXPORT_PRIVATE static RefPtr<TDZEnvironmentLink> parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&);
+ 
+     // A cell's header identifies its Structure by StructureID, which is an offset into the structure heap. The first VM of a
+-    // process creates its initial Structures in a fixed order, in a block at this offset.
+-    static constexpr uint32_t offsetOfFirstStructureBlock = 16 * 1024;
++    // process creates its initial Structures in a fixed order, in a block at this offset: the second MarkedBlock (the first is
++    // not used, StructureID 0 being none). MarkedBlock::blockSize: 16 KB, or the largest page size, 64 KB on Linux ARM64.
++    static constexpr uint32_t offsetOfFirstStructureBlock = std::max<size_t>(16 * KB, CeilingOnPageSize);
+ 
+     // Per-function data for FunctionExecutables in the short form. Indexed by AOT::CodeHeader::index.
+     struct RowOfFunction {
+@@ -170,6 +209,13 @@ public:
          if (s_isBuilding) [[unlikely]]
              willAllocateUnlinkedFunctionSlow();
      }
@@ -9905,7 +9999,7 @@ index b4c5c6697e..e319bf4a3d 100644
  
      // Static cells are placed 8 bytes past a 16-byte boundary.
      static constexpr size_t sizeOfCellHeader = 8;
-@@ -247,8 +291,9 @@ public:
+@@ -247,8 +293,9 @@ public:
      // All cells placed outside the GC's own memory belong to a single VM. Returns whether that is this VM. Without a static heap,
      // the first VM to ask claims the role.
      JS_EXPORT_PRIVATE static bool canPlaceCellsOf(VM&);
@@ -9917,7 +10011,7 @@ index b4c5c6697e..e319bf4a3d 100644
      JS_EXPORT_PRIVATE static void freeBlock(void*, size_t);
  
  private:
-@@ -258,6 +303,7 @@ private:
+@@ -258,6 +305,7 @@ private:
  
      JS_EXPORT_PRIVATE static bool s_isBuilding;
      JS_EXPORT_PRIVATE static void willAllocateUnlinkedFunctionSlow();
@@ -9926,7 +10020,7 @@ index b4c5c6697e..e319bf4a3d 100644
      JS_EXPORT_PRIVATE static const RowOfFunction* s_rowsOfFunctions;
      JS_EXPORT_PRIVATE static VM* s_vm;
 diff --git a/Source/JavaScriptCore/heap/StructureAlignedMemoryAllocator.cpp b/Source/JavaScriptCore/heap/StructureAlignedMemoryAllocator.cpp
-index dab620a1df..f678854542 100644
+index dab620a1df..389908face 100644
 --- a/Source/JavaScriptCore/heap/StructureAlignedMemoryAllocator.cpp
 +++ b/Source/JavaScriptCore/heap/StructureAlignedMemoryAllocator.cpp
 @@ -117,9 +117,10 @@ public:
@@ -9942,6 +10036,14 @@ index dab620a1df..f678854542 100644
  #endif
                  ));
              if (g_jscConfig.startOfStructureHeap)
+@@ -149,6 +150,7 @@ public:
+ #elif USE(MIMALLOC)
+         if (!m_useSystemHeap) [[likely]] {
+             // The block after the one that is not used is for whoever asks first (StaticHeap::offsetOfFirstStructureBlock).
++            static_assert(StaticHeap::offsetOfFirstStructureBlock == MarkedBlock::blockSize);
+             void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + 2 * MarkedBlock::blockSize);
+             size_t size = g_jscConfig.sizeOfStructureHeap - 2 * MarkedBlock::blockSize;
+ 
 diff --git a/Source/JavaScriptCore/inspector/remote/socket/RemoteInspectorSocket.cpp b/Source/JavaScriptCore/inspector/remote/socket/RemoteInspectorSocket.cpp
 index 6af090ce50..b911c57744 100644
 --- a/Source/JavaScriptCore/inspector/remote/socket/RemoteInspectorSocket.cpp
@@ -13807,7 +13909,7 @@ index 77260b2296..bbe9ce4ee0 100644
                  return pointer;
              }
 diff --git a/Source/bmalloc/bmalloc/StaticRegion.h b/Source/bmalloc/bmalloc/StaticRegion.h
-index c87b01ecf0..60f226a4c9 100644
+index c87b01ecf0..860441b75b 100644
 --- a/Source/bmalloc/bmalloc/StaticRegion.h
 +++ b/Source/bmalloc/bmalloc/StaticRegion.h
 @@ -7,12 +7,45 @@
@@ -13856,7 +13958,7 @@ index c87b01ecf0..60f226a4c9 100644
  // Memory that is at the same address in every process. What a program is going to need that does not depend on how it is run is
  // made once, when the program is built, by the code that would otherwise make it each time the program starts; the memory it was
  // made in is written to the program's file, and mapped from there when the program runs. Pointers from one part of it to another
-@@ -39,12 +72,39 @@ public:
+@@ -39,12 +72,47 @@ public:
      static constexpr unsigned numberOfArenas = 8;
      static constexpr unsigned numberOfArenasInFile = 5;
  
@@ -13883,7 +13985,15 @@ index c87b01ecf0..60f226a4c9 100644
 +    // How many pages of the arenas that are read-only in an executable were written to, and made the process's.
 +    BEXPORT static size_t pagesMadeWritable();
 +#else
++#if BOS(LINUX) && BCPU(ARM64)
++    // ARM64 kernels give a process 512 GB of addresses (39-bit, as Android's and the Raspberry Pi's), 4 TB (42-bit, with 64 KB
++    // pages) or more: from 64 GB, the arenas and the Structures' 4 GB after them end at 100 GB, below where the kernel puts a
++    // program's loader (two thirds of the way up), its other mappings (from the top down) and, in the legacy layout (an
++    // unlimited stack), the first of them (a quarter of the way up: 128 GB) on all of them.
++    static constexpr uintptr_t baseAddress = 0x1000000000ULL;
++#else
 +    static constexpr uintptr_t baseAddress = 0x200000000000ULL; // Beyond where mimalloc asks for memory, and far from where the kernel puts things.
++#endif
 +    static constexpr uintptr_t base() { return baseAddress; }
      static constexpr size_t arenaReservation = 4ULL << 30;
 +    static constexpr size_t reservationOf(Arena) { return arenaReservation; }
@@ -13900,7 +14010,7 @@ index c87b01ecf0..60f226a4c9 100644
  
      // ---- When the program is built. One thread does it.
  
-@@ -80,6 +140,7 @@ public:
+@@ -80,6 +148,7 @@ public:
      // ---- When it runs.
  
      BEXPORT static void mapBss(); // Before anything else here. Crashes if the addresses are taken.
@@ -13908,7 +14018,7 @@ index c87b01ecf0..60f226a4c9 100644
      // What is where in Arena::Bss.
      static constexpr size_t offsetOfEmptyStringInBss = 0; // WTF::StringImpl::empty()
      static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
-@@ -88,10 +149,31 @@ public:
+@@ -88,10 +157,31 @@ public:
      static constexpr size_t offsetOfVTablesInBss = 256 * 1024;
      static constexpr size_t offsetOfVMInBss = 1 << 20;
      static constexpr size_t offsetOfGlobalObjectInBss = 2 << 20;
@@ -13940,7 +14050,7 @@ index c87b01ecf0..60f226a4c9 100644
  
      // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
      BEXPORT static bool map(Arena, int fileDescriptor, off_t offsetInFile, size_t, size_t offsetInArena = 0, bool isCode = false);
-@@ -116,6 +198,10 @@ public:
+@@ -116,6 +206,10 @@ public:
  private:
      BEXPORT static void didFreeSlow(void*);
      BEXPORT static void* tryMallocSlow(size_t, size_t alignment);
@@ -14194,5 +14304,5 @@ index de16575461..dd18e3f63b 100644
      Write-Host ":: WARNING: ICU data library not found. Listing generated files..."
      Get-ChildItem -Path $OutputDir -Recurse -Filter "*.lib" | ForEach-Object {
 -- 
-2.43.0
+2.54.0 (Apple Git-157)
 

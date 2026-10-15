@@ -5,7 +5,7 @@
 // On Windows it installs the native executable: the release build of this package's version, checked as install.ps1 checks
 // it (the Ed25519 signature of the release's SHA256SUMS, the version they say, the build's SHA-256), and unpacked into bin\
 // over the placeholder, so that npm's pi-bolt.cmd and pi-bolt.ps1 start pi-bolt.exe itself, with no Node.js in between.
-// The build comes from the npm package pi-bolt-win32-<variant> of the same version (the release's .zip, byte for byte),
+// The build comes from the npm package @kushalkhemka/pi-bolt-win32-<variant> of the same version (the release's .zip, byte for byte),
 // or from the GitHub release if that fails; the checksums and their signature always come from the release.
 // On Linux and macOS it puts the launcher (bin/pi-bolt) over the placeholder, and the first run downloads the build, as
 // before.
@@ -488,11 +488,12 @@ async function installWindows({
 		const zip = path.join(stage, archive);
 		let from = "";
 		if (source !== "github" && !mirror) {
-			// The npm package pi-bolt-win32-<variant> of the same version: a .tgz with the release's .zip in it.
+			// The npm package @kushalkhemka/pi-bolt-win32-<variant> of the same version: a .tgz with the release's .zip in it.
+			// (Releases before 0.8.5 have none: they come from GitHub.)
 			const registry = withoutTrailingSlashes(env.PIBOLT_NPM_REGISTRY || "https://registry.npmjs.org");
 			const tgz = path.join(stage, "npm.tgz");
 			if (
-				(await download(fetchImpl, `${registry}/${name}/-/${name}-${version}.tgz`, tgz)) &&
+				(await download(fetchImpl, `${registry}/@kushalkhemka/${name}/-/${name}-${version}.tgz`, tgz)) &&
 				(await extractFromTgz(tgz, `package/${archive}`, zip)) &&
 				(await sha256(zip)) === want
 			) {
