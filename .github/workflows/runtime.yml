@@ -162,9 +162,11 @@ jobs:
           $archive = Get-ChildItem "$env:RUNNER_TEMP\clang+llvm-*-x86_64-pc-windows-msvc.tar.xz" | Select-Object -First 1
           & tar -xf $archive.FullName -C C:\
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          Move-Item "C:\$($archive.Name -replace '\.tar\.xz$', '')" C:\LLVM23
-          if (-not (Test-Path 'C:\LLVM23\bin\clang-cl.exe')) { Write-Host "no clang-cl in $($archive.Name)"; exit 1 }
-          Add-Content -Encoding utf8 $env:GITHUB_PATH 'C:\LLVM23\bin'
+          # (Where the image has an older LLVM, which Bun's build would find first: its llvm-nm cannot read LLVM 23's bitcode.)
+          Remove-Item -Recurse -Force 'C:\Program Files\LLVM' -ErrorAction SilentlyContinue
+          Move-Item "C:\$($archive.Name -replace '\.tar\.xz$', '')" 'C:\Program Files\LLVM'
+          if (-not (Test-Path 'C:\Program Files\LLVM\bin\clang-cl.exe')) { Write-Host "no clang-cl in $($archive.Name)"; exit 1 }
+          Add-Content -Encoding utf8 $env:GITHUB_PATH 'C:\Program Files\LLVM\bin'
           & choco install -y --no-progress nasm
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Add-Content -Encoding utf8 $env:GITHUB_PATH 'C:\Program Files\NASM'
