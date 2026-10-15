@@ -11,10 +11,13 @@
  * dialogs reach the user as permission requests (confirm, select) and forms (input, editor), when the editor offers them.
  */
 
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { unlink } from "node:fs/promises";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { COMMAND_NAME, getDocsPath, PRODUCT_NAME, VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
@@ -24,7 +27,8 @@ import {
 	createAgentSessionRuntime,
 } from "../../core/agent-session-runtime.ts";
 import { formatNoApiKeyFoundMessage } from "../../core/auth-guidance.ts";
-import type { ExtensionUIContext, ExtensionUIDialogOptions } from "../../core/extensions/index.ts";
+import type { ExtensionUIContext, ExtensionUIDialogOptions, SessionStartEvent } from "../../core/extensions/index.ts";
+import { findExactModelReferenceMatch } from "../../core/model-resolver.ts";
 import {
 	flushRawStdout,
 	takeOverStdout,
@@ -33,10 +37,10 @@ import {
 } from "../../core/output-guard.ts";
 import { type SessionInfo as PiSessionInfo, SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import { theme } from "../../modes/interactive/theme/theme.ts";
 import { attachJsonlLineReader } from "../../modes/rpc/jsonl.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
-import { AcpConnection, AcpError, errorText, isRecord } from "./connection.ts";
+import { clientUIContext, settleWithin } from "../client-ui.ts";
+import { errorText, isRecord, JsonRpcConnection, JsonRpcError } from "../json-rpc.ts";
 import { setSessionMcpServers } from "./extension.ts";
 import {
 	bashExitCode,
@@ -69,6 +73,7 @@ import {
 	type PermissionOption,
 	type RequestPermissionResponse,
 	type SessionInfo,
+	type SessionModeState,
 	type SessionUpdate,
 	type StopReason,
 	type ToolCallContent,
@@ -101,7 +106,24 @@ const ACP_COMMANDS: AvailableCommand[] = [
 		input: { hint: "optional instructions for the summary" },
 	},
 	{ name: "name", description: "Name this session", input: { hint: "session name" } },
+	{ name: "model", description: "Set the model", input: { hint: "provider/model" } },
+	{ name: "thinking", description: "Set the thinking level", input: { hint: "level" } },
+	{ name: "session", description: "Show session info and stats" },
+	{
+		name: "export",
+		description: "Export the session (HTML, or JSONL for a .jsonl path)",
+		input: { hint: "optional file path" },
+	},
+	{ name: "reload", description: "Reload extensions, skills, prompt templates and context files" },
 ];
+const ACP_COMMAND_NAMES = new Set(ACP_COMMANDS.map((command) => command.name));
+
+type AcpModeId = "default" | "read-only";
+const ACP_MODES: { id: AcpModeId; name: string; description: string }[] = [
+	{ id: "default", name: "Default", description: "Pi's usual tools: it reads, edits, and runs commands" },
+	{ id: "read-only", name: "Read-only", description: "Only tools that read: read, grep, find, and ls" },
+];
+const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 
 /** Runs ACP on stdin and stdout until the editor closes them. */
 export async function runAcpMode(options: AcpModeOptions): Promise<never> {
@@ -130,17 +152,19 @@ export async function runAcpMode(options: AcpModeOptions): Promise<never> {
 
 /** The agent side of one ACP connection. Exported for tests, which drive it without stdio. */
 export class AcpAgent {
-	readonly connection: AcpConnection;
+	readonly connection: JsonRpcConnection;
 	private readonly options: AcpModeOptions;
 	private readonly sessions = new Map<string, AcpSession>();
 	private clientCapabilities: ClientCapabilities = {};
 	/** Session creation runs one at a time: extensions load and project trust is decided per session. */
 	private creating: Promise<unknown> = Promise.resolve();
 	private refreshedModels = false;
+	/** Files of the sessions `session/list` has shown, for `session/delete`, which names only the session. */
+	private readonly listed = new Map<string, string>();
 
 	constructor(options: AcpModeOptions, write: (line: string) => void) {
 		this.options = options;
-		this.connection = new AcpConnection({
+		this.connection = new JsonRpcConnection({
 			write,
 			onRequest: (method, params) => this.handleRequest(method, params),
 			onNotification: (method, params) => this.handleNotification(method, params),
@@ -194,8 +218,15 @@ export class AcpAgent {
 				await session.dispose();
 				return {};
 			}
+			case "session/delete":
+				return this.deleteSession(params);
+			case "session/fork":
+				return this.forkSession(params);
 			case "session/prompt":
 				return this.session(params).prompt(Array.isArray(params.prompt) ? (params.prompt as ContentBlock[]) : []);
+			case "session/set_mode":
+				await this.session(params).setConfigOption("mode", requireString(params, "modeId"));
+				return {};
 			case "session/set_config_option":
 				return {
 					configOptions: await this.session(params).setConfigOption(
@@ -204,7 +235,7 @@ export class AcpAgent {
 					),
 				};
 			default:
-				throw new AcpError(AcpErrorCode.MethodNotFound, `Method not found: ${method}`);
+				throw new JsonRpcError(AcpErrorCode.MethodNotFound, `Method not found: ${method}`);
 		}
 	}
 
@@ -224,7 +255,7 @@ export class AcpAgent {
 				loadSession: true,
 				promptCapabilities: { image: true, audio: false, embeddedContext: true },
 				mcpCapabilities: { http: true, sse: false },
-				sessionCapabilities: { list: {}, resume: {}, close: {} },
+				sessionCapabilities: { list: {}, resume: {}, close: {}, delete: {}, fork: {} },
 			},
 			agentInfo: { name: COMMAND_NAME, title: PRODUCT_NAME, version: VERSION },
 			authMethods: [],
@@ -234,7 +265,7 @@ export class AcpAgent {
 	private session(params: Record<string, unknown>): AcpSession {
 		const id = requireString(params, "sessionId");
 		const session = this.sessions.get(id);
-		if (!session) throw new AcpError(AcpErrorCode.ResourceNotFound, `Session not found: ${id}`);
+		if (!session) throw new JsonRpcError(AcpErrorCode.ResourceNotFound, `Session not found: ${id}`);
 		return session;
 	}
 
@@ -249,8 +280,8 @@ export class AcpAgent {
 	private async newSession(params: Record<string, unknown>) {
 		const cwd = requireDirectory(params);
 		const sessionManager = SessionManager.create(cwd, this.sessionDirFor(cwd));
-		const session = await this.open(sessionManager, mcpServersOf(params), false);
-		return { sessionId: session.id, configOptions: session.configOptions() };
+		const session = await this.open(sessionManager, mcpServersOf(params));
+		return { sessionId: session.id, ...session.settings() };
 	}
 
 	private async loadSession(params: Record<string, unknown>, replay: boolean) {
@@ -259,14 +290,16 @@ export class AcpAgent {
 		const open = this.sessions.get(id);
 		if (open) {
 			if (replay) open.replay();
-			return { configOptions: open.configOptions() };
+			return open.settings();
 		}
-		const sessionDir = this.sessionDirFor(cwd);
-		const path = SessionManager.findById(cwd, id, sessionDir) ?? (await findSessionFile(id, this.options.sessionDir));
-		if (!path) throw new AcpError(AcpErrorCode.ResourceNotFound, `Session not found: ${id}`);
-		const session = await this.open(SessionManager.open(path, sessionDir, cwd), mcpServersOf(params), true);
+		const path = await this.findSession(id, cwd);
+		if (!path) throw new JsonRpcError(AcpErrorCode.ResourceNotFound, `Session not found: ${id}`);
+		const session = await this.open(SessionManager.open(path, this.sessionDirFor(cwd), cwd), mcpServersOf(params), {
+			type: "session_start",
+			reason: "resume",
+		});
 		if (replay) session.replay();
-		return { configOptions: session.configOptions() };
+		return session.settings();
 	}
 
 	private async listSessions(params: Record<string, unknown>) {
@@ -281,9 +314,10 @@ export class AcpAgent {
 		if (typeof params.cursor === "string" && params.cursor !== "") {
 			start = Number.parseInt(params.cursor, 10);
 			if (!Number.isSafeInteger(start) || start < 0)
-				throw new AcpError(AcpErrorCode.InvalidParams, "Invalid cursor");
+				throw new JsonRpcError(AcpErrorCode.InvalidParams, "Invalid cursor");
 		}
 		const page = all.slice(start, start + SESSION_LIST_PAGE_SIZE);
+		for (const info of page) this.listed.set(info.id, info.path);
 		const next = start + page.length;
 		return {
 			sessions: page.map(sessionInfo),
@@ -291,7 +325,58 @@ export class AcpAgent {
 		};
 	}
 
-	private async open(sessionManager: SessionManager, mcpServers: McpServer[], resumed: boolean): Promise<AcpSession> {
+	/** Deletes a session's file as `/resume` in the terminal does: to the trash when the `trash` command is there. */
+	private async deleteSession(params: Record<string, unknown>) {
+		const id = requireString(params, "sessionId");
+		const open = this.sessions.get(id);
+		const path = open?.sessionFile ?? this.listed.get(id) ?? (await findSessionFile(id, this.options.sessionDir));
+		if (open) {
+			this.sessions.delete(id);
+			await open.dispose();
+		}
+		this.listed.delete(id);
+		// Deleting a session that is not there (deleted already, or never saved) succeeds, as ACP asks.
+		if (path && existsSync(path)) await deleteSessionFile(path);
+		return {};
+	}
+
+	/** A new session with the history of another one, as `--fork` makes it. */
+	private async forkSession(params: Record<string, unknown>) {
+		const id = requireString(params, "sessionId");
+		const cwd = requireDirectory(params);
+		const source = this.sessions.get(id)?.sessionFile ?? (await this.findSession(id, cwd));
+		const sessionDir = this.sessionDirFor(cwd);
+		let sessionManager: SessionManager;
+		const exists = source !== undefined && existsSync(source);
+		if (source && exists) {
+			sessionManager = SessionManager.forkFrom(source, cwd, sessionDir);
+		} else if (this.sessions.has(id)) {
+			// An open session that has nothing saved yet has no history to copy.
+			sessionManager = SessionManager.create(cwd, sessionDir);
+		} else {
+			throw new JsonRpcError(AcpErrorCode.ResourceNotFound, `Session not found: ${id}`);
+		}
+		const session = await this.open(sessionManager, mcpServersOf(params), {
+			type: "session_start",
+			reason: "fork",
+			...(exists ? { previousSessionFile: source } : {}),
+		});
+		return { sessionId: session.id, ...session.settings() };
+	}
+
+	private async findSession(id: string, cwd: string): Promise<string | undefined> {
+		return (
+			SessionManager.findById(cwd, id, this.sessionDirFor(cwd)) ??
+			this.listed.get(id) ??
+			(await findSessionFile(id, this.options.sessionDir))
+		);
+	}
+
+	private async open(
+		sessionManager: SessionManager,
+		mcpServers: McpServer[],
+		sessionStartEvent?: SessionStartEvent,
+	): Promise<AcpSession> {
 		const create = this.creating.then(async () => {
 			const id = sessionManager.getSessionId();
 			setSessionMcpServers(id, mcpServers);
@@ -299,7 +384,7 @@ export class AcpAgent {
 				cwd: sessionManager.getCwd(),
 				agentDir: this.options.agentDir,
 				sessionManager,
-				sessionStartEvent: resumed ? { type: "session_start", reason: "resume" } : undefined,
+				sessionStartEvent,
 			});
 			for (const diagnostic of runtime.diagnostics) {
 				console.error(`${diagnostic.type === "error" ? "Error" : "Warning"}: ${diagnostic.message}`);
@@ -310,7 +395,7 @@ export class AcpAgent {
 			if (errors.length > 0) {
 				setSessionMcpServers(id, undefined);
 				await runtime.dispose();
-				throw new AcpError(AcpErrorCode.InternalError, errors.map((error) => error.message).join("\n"));
+				throw new JsonRpcError(AcpErrorCode.InternalError, errors.map((error) => error.message).join("\n"));
 			}
 			const session = new AcpSession(this, id, runtime);
 			this.sessions.set(id, session);
@@ -319,8 +404,8 @@ export class AcpAgent {
 				this.refreshedModels = true;
 				void runtime.services.modelRuntime.refresh({ signal: AbortSignal.timeout(15_000) }).catch(() => {});
 			}
-			// After the response that tells the client the session exists.
-			setTimeout(() => session.announce(), 0);
+			// After the response that tells the client the session exists (and has its settings).
+			setTimeout(() => session.announce(false), 0);
 			return session;
 		});
 		this.creating = create.catch(() => {});
@@ -350,6 +435,14 @@ class AcpSession {
 	>();
 	/** Commands shown in a terminal view, with what each terminal has been sent. */
 	private readonly terminals = new Map<string, TerminalSent>();
+	/** The mode the editor chose: "read-only" limits the model to tools that only read. */
+	private mode: AcpModeId = "default";
+	/** The tools that were active before read-only mode, to give back. */
+	private toolsBeforeReadOnly: string[] | undefined;
+	/** Set while the editor changes a setting, whose response carries the new settings. */
+	private settingConfig = false;
+	/** The compaction running, for clients that show compactions. */
+	private compactionId: string | undefined;
 	private disposed = false;
 
 	constructor(agent: AcpAgent, id: string, runtime: AgentSessionRuntime) {
@@ -366,6 +459,11 @@ class AcpSession {
 		return this.runtime.cwd;
 	}
 
+	/** The session's file; it exists once the session has a conversation. */
+	get sessionFile(): string | undefined {
+		return this.session.sessionManager.getSessionFile();
+	}
+
 	private send(update: SessionUpdate): void {
 		if (!this.disposed) this.agent.sendUpdate(this.id, update);
 	}
@@ -373,6 +471,7 @@ class AcpSession {
 	async bind(): Promise<void> {
 		this.runtime.setRebindSession(async () => {
 			await this.rebind();
+			this.applyMode();
 			this.announce();
 		});
 		await this.rebind();
@@ -403,6 +502,7 @@ class AcpSession {
 				switchSession: async (sessionPath, options) => this.runtime.switchSession(sessionPath, options),
 				reload: async () => {
 					await this.session.reload();
+					this.applyMode();
 					this.announce();
 				},
 			},
@@ -416,17 +516,22 @@ class AcpSession {
 		});
 	}
 
-	/** Sends what the editor shows next to the session: its commands, settings, title, and context use. */
-	announce(): void {
+	/**
+	 * Sends what the editor shows next to the session: its commands, settings, title, and context use. Settings only when
+	 * they may have changed: the response that opens a session has them, and a JetBrains IDE answers an update with its
+	 * own earlier values.
+	 */
+	announce(settings = true): void {
 		this.send({ sessionUpdate: "available_commands_update", availableCommands: this.availableCommands() });
-		this.send({ sessionUpdate: "config_option_update", configOptions: this.configOptions() });
+		if (settings) this.send({ sessionUpdate: "config_option_update", configOptions: this.configOptions() });
 		const title = this.session.sessionName;
 		if (title) this.send({ sessionUpdate: "session_info_update", title });
 		this.sendUsage();
 	}
 
 	replay(): void {
-		for (const update of replayMessages(this.session.messages, this.cwd)) this.send(update);
+		const compaction = Boolean(this.agent.capabilities.session?.compaction);
+		for (const update of replayMessages(this.session.messages, this.cwd, { compaction })) this.send(update);
 	}
 
 	async dispose(): Promise<void> {
@@ -453,14 +558,14 @@ class AcpSession {
 	private async runPrompt(blocks: ContentBlock[]): Promise<{ stopReason: StopReason }> {
 		this.cancelled = false;
 		const { text, images } = promptToPi(blocks);
-		const command = /^\/(compact|name)(?:\s+([\s\S]*))?$/.exec(text.trim());
-		if (command && images.length === 0) {
+		const command = /^\/([a-z-]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+		if (command && ACP_COMMAND_NAMES.has(command[1]) && images.length === 0) {
 			await this.runCommand(command[1], command[2]?.trim() ?? "");
 			return { stopReason: this.cancelled ? "cancelled" : "end_turn" };
 		}
 		const session = this.session;
 		if (!session.model) {
-			throw new AcpError(AcpErrorCode.InternalError, `No models available. ${setupHelp()}`);
+			throw new JsonRpcError(AcpErrorCode.InternalError, `No models available. ${setupHelp()}`);
 		}
 		const start = session.messages.length;
 		try {
@@ -474,7 +579,7 @@ class AcpSession {
 			if (provider && errorText(error) === formatNoApiKeyFoundMessage(provider)) {
 				// (A provider of "unknown" is the placeholder model of a Pi with nothing set up.)
 				const problem = provider === "unknown" ? "No model is set up." : `No API key found for ${provider}.`;
-				throw new AcpError(AcpErrorCode.InternalError, `${problem} ${setupHelp()}`);
+				throw new JsonRpcError(AcpErrorCode.InternalError, `${problem} ${setupHelp()}`);
 			}
 			throw error;
 		} finally {
@@ -482,28 +587,93 @@ class AcpSession {
 		}
 		const messages = session.messages.slice(start);
 		const error = this.cancelled ? undefined : runError(messages);
-		if (error) throw new AcpError(AcpErrorCode.InternalError, error);
+		if (error) throw new JsonRpcError(AcpErrorCode.InternalError, error);
 		return { stopReason: stopReasonOf(messages, this.cancelled) };
 	}
 
 	private async runCommand(name: string, argument: string): Promise<void> {
 		const reply = (text: string) =>
 			this.send({ sessionUpdate: "agent_message_chunk", messageId: randomUUID(), content: { type: "text", text } });
-		if (name === "name") {
-			if (!argument) {
-				reply(this.session.sessionName ? `Session name: ${this.session.sessionName}` : "Usage: /name <name>");
+		const session = this.session;
+		switch (name) {
+			case "name":
+				if (!argument) {
+					reply(session.sessionName ? `Session name: ${session.sessionName}` : "Usage: /name <name>");
+					return;
+				}
+				session.setSessionName(argument);
+				reply(`Session named "${argument}".`);
+				return;
+			case "model": {
+				const models = [...this.selectableModels()];
+				if (!argument) {
+					const current = session.model ? modelKey(session.model) : "none";
+					reply(`Model: ${current}\n\nAvailable: ${models.map(modelKey).join(", ") || "none"}`);
+					return;
+				}
+				const model = findExactModelReferenceMatch(argument, models);
+				if (!model) throw new JsonRpcError(AcpErrorCode.InvalidParams, `Unknown model: ${argument}`);
+				await session.setModel(model, { persist: false });
+				this.send({ sessionUpdate: "config_option_update", configOptions: this.configOptions() });
+				this.sendUsage();
+				reply(`Model: ${modelKey(model)}`);
 				return;
 			}
-			this.session.setSessionName(argument);
-			reply(`Session named "${argument}".`);
-			return;
+			case "thinking": {
+				const levels = session.getAvailableThinkingLevels();
+				if (!argument) {
+					reply(`Thinking level: ${session.thinkingLevel}\n\nAvailable: ${levels.join(", ")}`);
+					return;
+				}
+				const level = levels.find((candidate) => candidate === argument.toLowerCase());
+				if (!level) {
+					throw new JsonRpcError(
+						AcpErrorCode.InvalidParams,
+						`Unknown thinking level "${argument}". Available levels: ${levels.join(", ")}.`,
+					);
+				}
+				// (The thinking_level_changed event updates the editor's setting.)
+				session.setThinkingLevel(level, { persist: false });
+				reply(`Thinking level: ${level}`);
+				return;
+			}
+			case "session":
+				reply(sessionInfoText(session));
+				return;
+			case "export": {
+				const path = argument ? resolve(this.cwd, unquote(argument)) : undefined;
+				try {
+					const file = path?.endsWith(".jsonl")
+						? session.exportToJsonl(path)
+						: await session.exportToHtml(path ?? join(this.cwd, `pi-session-${session.sessionId}.html`));
+					this.send({
+						sessionUpdate: "agent_message_chunk",
+						messageId: randomUUID(),
+						content: { type: "resource_link", uri: pathToFileURL(file).href, name: basename(file) },
+					});
+					reply(`Session exported to: ${file}`);
+				} catch (error) {
+					throw new JsonRpcError(AcpErrorCode.InternalError, `Failed to export session: ${errorText(error)}`);
+				}
+				return;
+			}
+			case "reload":
+				await session.reload();
+				this.applyMode();
+				this.announce();
+				reply("Reloaded extensions, skills, prompt templates and context files.");
+				return;
+			default:
+				break;
 		}
 		try {
-			const result = await this.session.compact(argument || undefined);
-			reply(`Compacted the conversation (${result.tokensBefore.toLocaleString("en-US")} tokens before).`);
+			const result = await session.compact(argument || undefined);
+			// Clients that show compactions have it with its summary already.
+			if (!this.agent.capabilities.session?.compaction)
+				reply(`Compacted the conversation (${result.tokensBefore.toLocaleString("en-US")} tokens before).`);
 		} catch (error) {
 			if (this.cancelled) return;
-			throw new AcpError(AcpErrorCode.InternalError, errorText(error));
+			throw new JsonRpcError(AcpErrorCode.InternalError, errorText(error));
 		} finally {
 			this.sendUsage();
 		}
@@ -527,13 +697,14 @@ class AcpSession {
 			if (!commands.has(name))
 				commands.set(name, { name, description: description || name, input: hint ? { hint } : null });
 		};
+		// Built-in commands first: a prompt runs them before an extension's command or a template of the same name.
+		for (const command of ACP_COMMANDS) commands.set(command.name, command);
 		for (const command of this.session.extensionRunner.getRegisteredCommands()) {
 			add(command.invocationName, command.description);
 		}
 		for (const template of this.session.promptTemplates)
 			add(template.name, template.description, template.argumentHint);
 		for (const skill of this.session.resourceLoader.getSkills().skills) add(`skill:${skill.name}`, skill.description);
-		for (const command of ACP_COMMANDS) if (!commands.has(command.name)) commands.set(command.name, command);
 		return [...commands.values()];
 	}
 
@@ -543,8 +714,25 @@ class AcpSession {
 		return scoped.length > 0 ? scoped.map((entry) => entry.model) : this.session.modelRuntime.getAvailableSnapshot();
 	}
 
+	/** The settings a response that opens a session carries: modes (for clients without config options) and options. */
+	settings(): { modes: SessionModeState; configOptions: ConfigOption[] } {
+		return {
+			modes: { currentModeId: this.mode, availableModes: ACP_MODES },
+			configOptions: this.configOptions(),
+		};
+	}
+
 	configOptions(): ConfigOption[] {
-		const options: ConfigOption[] = [];
+		const options: ConfigOption[] = [
+			{
+				id: "mode",
+				name: "Mode",
+				category: "mode",
+				type: "select",
+				currentValue: this.mode,
+				options: ACP_MODES.map(({ id, name, description }) => ({ value: id, name, description })),
+			},
+		];
 		const session = this.session;
 		const models = this.selectableModels();
 		const current = session.model;
@@ -584,22 +772,55 @@ class AcpSession {
 		return options;
 	}
 
+	/** Changes a setting for the editor, which has the new settings from the response (and no update). */
 	async setConfigOption(configId: string, value: unknown): Promise<ConfigOption[]> {
-		if (typeof value !== "string") throw new AcpError(AcpErrorCode.InvalidParams, "value must be a string");
+		if (typeof value !== "string") throw new JsonRpcError(AcpErrorCode.InvalidParams, "value must be a string");
 		const session = this.session;
-		if (configId === "model") {
-			const model = this.selectableModels().find((candidate) => modelKey(candidate) === value);
-			if (!model) throw new AcpError(AcpErrorCode.InvalidParams, `Unknown model: ${value}`);
-			await session.setModel(model);
-		} else if (configId === "thinking") {
-			const level = session.getAvailableThinkingLevels().find((candidate) => candidate === value);
-			if (!level) throw new AcpError(AcpErrorCode.InvalidParams, `Unknown thinking level: ${value}`);
-			session.setThinkingLevel(level);
-		} else {
-			throw new AcpError(AcpErrorCode.InvalidParams, `Unknown config option: ${configId}`);
+		this.settingConfig = true;
+		try {
+			if (configId === "mode") {
+				const mode = ACP_MODES.find((candidate) => candidate.id === value);
+				if (!mode) throw new JsonRpcError(AcpErrorCode.InvalidParams, `Unknown mode: ${value}`);
+				this.setMode(mode.id);
+			} else if (configId === "model") {
+				const model = this.selectableModels().find((candidate) => modelKey(candidate) === value);
+				if (!model) throw new JsonRpcError(AcpErrorCode.InvalidParams, `Unknown model: ${value}`);
+				await session.setModel(model);
+			} else if (configId === "thinking") {
+				const level = session.getAvailableThinkingLevels().find((candidate) => candidate === value);
+				if (!level) throw new JsonRpcError(AcpErrorCode.InvalidParams, `Unknown thinking level: ${value}`);
+				session.setThinkingLevel(level);
+			} else {
+				throw new JsonRpcError(AcpErrorCode.InvalidParams, `Unknown config option: ${configId}`);
+			}
+		} finally {
+			this.settingConfig = false;
 		}
 		this.sendUsage();
 		return this.configOptions();
+	}
+
+	/** Read-only mode keeps the tools that only read; the default mode gives back the tools of before. */
+	private setMode(mode: AcpModeId): void {
+		if (mode === this.mode) return;
+		const session = this.session;
+		if (mode === "read-only") {
+			this.toolsBeforeReadOnly = session.getActiveToolNames();
+			this.mode = mode;
+			this.applyMode();
+		} else {
+			this.mode = mode;
+			if (this.toolsBeforeReadOnly) session.setActiveToolsByName(this.toolsBeforeReadOnly);
+			this.toolsBeforeReadOnly = undefined;
+		}
+	}
+
+	/** Puts read-only mode's tools back after something set the session's tools again (a reload, another session). */
+	private applyMode(): void {
+		if (this.mode !== "read-only") return;
+		const session = this.session;
+		const registered = new Set(session.getAllTools().map((tool) => tool.name));
+		session.setActiveToolsByName(READ_ONLY_TOOLS.filter((name) => registered.has(name)));
 	}
 
 	// =========================================================================
@@ -681,9 +902,32 @@ class AcpSession {
 				this.send({ sessionUpdate: "session_info_update", title: event.name ?? null });
 				break;
 			case "thinking_level_changed":
-				this.send({ sessionUpdate: "config_option_update", configOptions: this.configOptions() });
+				// (Not for the editor's own change, which its response answers.)
+				if (!this.settingConfig)
+					this.send({ sessionUpdate: "config_option_update", configOptions: this.configOptions() });
+				break;
+			case "compaction_start":
+				if (this.agent.capabilities.session?.compaction) {
+					this.compactionId = `compaction_${randomUUID()}`;
+					this.send({
+						sessionUpdate: "compaction_update",
+						compactionId: this.compactionId,
+						status: "in_progress",
+					});
+				}
 				break;
 			case "compaction_end":
+				if (this.compactionId) {
+					const result = event.result;
+					this.send({
+						sessionUpdate: "compaction_update",
+						compactionId: this.compactionId,
+						status: result ? "completed" : event.aborted ? "cancelled" : "failed",
+						...(result ? { summary: [{ type: "text", text: result.summary }] } : {}),
+						...(event.errorMessage ? { error: event.errorMessage } : {}),
+					});
+					this.compactionId = undefined;
+				}
 				this.sendUsage();
 				break;
 			case "auto_retry_start":
@@ -885,7 +1129,7 @@ class AcpSession {
 	}
 
 	private createUIContext(): ExtensionUIContext {
-		return {
+		return clientUIContext({
 			select: async (title, options, opts) => {
 				const permissionOptions: PermissionOption[] = options.map((option, index) => ({
 					optionId: String(index),
@@ -909,54 +1153,8 @@ class AcpSession {
 				this.askText(title, placeholder ? { description: placeholder } : {}, opts),
 			editor: (title, prefill) => this.askText(title, prefill ? { default: prefill } : {}, undefined),
 			notify: (message, type) => this.notice(type ?? "info", message),
-			onTerminalInput: () => () => {},
-			setStatus: () => {},
-			setWorkingMessage: () => {},
-			setWorkingVisible: () => {},
-			setWorkingIndicator: () => {},
-			setHiddenThinkingLabel: () => {},
-			setWidget: () => {},
-			setFooter: () => {},
-			setHeader: () => {},
-			setTitle: () => {},
-			custom: async () => undefined as never,
-			pasteToEditor: () => {},
-			setEditorText: () => {},
-			getEditorText: () => "",
-			addAutocompleteProvider: () => {},
-			setEditorComponent: () => {},
-			getEditorComponent: () => undefined,
-			get theme() {
-				return theme;
-			},
-			getAllThemes: () => [],
-			getTheme: () => undefined,
-			setTheme: () => ({ success: false, error: "Themes do not apply in ACP mode" }),
-			getToolsExpanded: () => false,
-			setToolsExpanded: () => {},
-		};
+		});
 	}
-}
-
-/** The client's answer, or undefined when the dialog's signal aborts or its timeout passes first. */
-async function settleWithin<T>(
-	request: Promise<T>,
-	opts: ExtensionUIDialogOptions | undefined,
-): Promise<T | undefined> {
-	const guarded = request.catch(() => undefined);
-	if (!opts?.signal && !opts?.timeout) return guarded;
-	return new Promise<T | undefined>((resolve) => {
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const finish = (value: T | undefined) => {
-			clearTimeout(timer);
-			opts.signal?.removeEventListener("abort", onAbort);
-			resolve(value);
-		};
-		const onAbort = () => finish(undefined);
-		opts.signal?.addEventListener("abort", onAbort, { once: true });
-		if (opts.timeout) timer = setTimeout(() => finish(undefined), opts.timeout);
-		void guarded.then(finish);
-	});
 }
 
 function textContent(text: string): ToolCallContent {
@@ -976,13 +1174,45 @@ function setupHelp(): string {
 	].join(" ");
 }
 
+/** What `/session` shows in the terminal, as text: the session's file, messages, tokens, and cost. */
+function sessionInfoText(session: AgentSession): string {
+	const stats = session.getSessionStats();
+	const { input, output, cacheRead, cacheWrite, total } = stats.tokens;
+	const lines = ["Session info", ""];
+	if (session.sessionName) lines.push(`Name: ${session.sessionName}`);
+	lines.push(`File: ${stats.sessionFile ?? "not saved yet"}`, `ID: ${stats.sessionId}`, "");
+	lines.push(
+		`Messages: ${stats.totalMessages} (user ${stats.userMessages}, assistant ${stats.assistantMessages})`,
+		`Tools: ${stats.toolCalls} calls, ${stats.toolResults} results`,
+		"",
+	);
+	const cached = cacheRead > 0 || cacheWrite > 0 ? ` (cached ${cacheRead.toLocaleString("en-US")})` : "";
+	lines.push(
+		`Input tokens: ${(input + cacheRead + cacheWrite).toLocaleString("en-US")}${cached}`,
+		`Output tokens: ${output.toLocaleString("en-US")}`,
+		`Total tokens: ${total.toLocaleString("en-US")}`,
+	);
+	if (stats.cost > 0) lines.push(`Cost: $${stats.cost.toFixed(3)}`);
+	return lines.join("\n");
+}
+
+/** A path argument, without the quotes around it. */
+function unquote(text: string): string {
+	const trimmed = text.trim();
+	const quote = trimmed[0];
+	return (quote === '"' || quote === "'") && trimmed.endsWith(quote) && trimmed.length > 1
+		? trimmed.slice(1, -1)
+		: trimmed;
+}
+
 function modelKey(model: Pick<Model<Api>, "provider" | "id">): string {
 	return `${model.provider}/${model.id}`;
 }
 
 function requireString(params: Record<string, unknown>, key: string): string {
 	const value = params[key];
-	if (typeof value !== "string" || value === "") throw new AcpError(AcpErrorCode.InvalidParams, `${key} is required`);
+	if (typeof value !== "string" || value === "")
+		throw new JsonRpcError(AcpErrorCode.InvalidParams, `${key} is required`);
 	return value;
 }
 
@@ -996,7 +1226,7 @@ function requireDirectory(params: Record<string, unknown>): string {
 		// Reported below.
 	}
 	if (!isDirectory)
-		throw new AcpError(AcpErrorCode.InvalidParams, `cwd is not an absolute path of a directory: ${cwd}`);
+		throw new JsonRpcError(AcpErrorCode.InvalidParams, `cwd is not an absolute path of a directory: ${cwd}`);
 	return cwd;
 }
 
@@ -1014,6 +1244,17 @@ function isMcpServer(value: unknown): value is McpServer {
 function sessionInfo(info: PiSessionInfo): SessionInfo {
 	const title = info.name || info.firstMessage.replace(/\s+/g, " ").trim().slice(0, 100) || null;
 	return { sessionId: info.id, cwd: info.cwd, title, updatedAt: info.modified.toISOString() };
+}
+
+/** Deletes a file with the `trash` command when it is there, else for good (as the terminal's session selector does). */
+async function deleteSessionFile(path: string): Promise<void> {
+	const trash = spawnSync("trash", path.startsWith("-") ? ["--", path] : [path], { encoding: "utf-8" });
+	if (trash.status === 0 || !existsSync(path)) return;
+	try {
+		await unlink(path);
+	} catch (error) {
+		throw new JsonRpcError(AcpErrorCode.InternalError, `Could not delete the session: ${errorText(error)}`);
+	}
 }
 
 /** A session of any directory, for `session/load` of a session listed without a directory filter. */

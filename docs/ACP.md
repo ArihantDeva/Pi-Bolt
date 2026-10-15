@@ -47,12 +47,18 @@ Other flags work as on the command line, for example `["--acp", "--model", "anth
 - **Tool calls** with a title, a kind (read, edit, run, search) and the files they touch, so the editor can follow along. Edits and
   writes show as diffs, and commands show their output while they run (in a terminal view, with colours, in editors that
   offer one, such as Zed).
-- **Model and thinking level** as session settings the editor shows next to the prompt. Changing them affects that session only.
-- **Slash commands**: extension commands, prompt templates, skills (`/skill:name`), and `/compact` and `/name`.
+- **Mode, model and thinking level** as session settings the editor shows next to the prompt. The *Read-only* mode gives the
+  model only the tools that read (`read`, `grep`, `find`, `ls`); *Default* gives back the usual ones. Changing a setting affects
+  that session only.
+- **Slash commands**: extension commands, prompt templates, skills (`/skill:name`), and the built-in commands that need no
+  terminal: `/compact`, `/name`, `/model`, `/thinking`, `/session`, `/export` (the editor gets a link to the file) and `/reload`.
 - **Context usage and cost** after each prompt.
-- **Sessions**: Pi's own session files. The editor lists them (`session/list`), opens one with its history (`session/load`), or
-  continues one without it (`session/resume`). Sessions started in the editor open in the terminal with
-  `pi-bolt --session <id>`, and the other way round.
+- **Compactions** as an entry of their own with the summary, in editors that show compactions; a loaded session replays the
+  summary with its history.
+- **Sessions**: Pi's own session files. The editor lists them (`session/list`), opens one with its history (`session/load`),
+  continues one without it (`session/resume`), forks one into a new session (`session/fork`), or deletes one
+  (`session/delete`: to the trash when the `trash` command is installed, as `/resume` in the terminal deletes). Sessions
+  started in the editor open in the terminal with `pi-bolt --session <id>`, and the other way round.
 - **The editor's MCP servers**, passed when a session starts, connect next to those of `mcp.json` (stdio and HTTP; legacy SSE is not
   supported). `/mcp` lists them. A server of the same name in `mcp.json` takes precedence.
 - **Images and files** in prompts: images are attached, `@` mentions read as the file's path, and embedded file contents are added to
