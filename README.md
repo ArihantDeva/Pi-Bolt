@@ -43,7 +43,9 @@ lower is better. See [Benchmarks](#benchmarks).</sub>
 curl -fsSL https://pi-bolt.opensec.in/install.sh | sh
 ```
 
-The same command installs Pi-Bolt on Linux x86-64 and ARM64, on macOS, and on Android in Termux.
+The same command installs Pi-Bolt on Linux x86-64 and ARM64, on macOS, and on Android in Termux. On Arch Linux there is also
+a community package in the AUR, [`pi-bolt-avx2-bin-release-git`](https://aur.archlinux.org/packages/pi-bolt-avx2-bin-release-git)
+(the x86-64 AVX2 build, signature checked): `paru -S pi-bolt-avx2-bin-release-git`.
 
 On Windows, in PowerShell:
 

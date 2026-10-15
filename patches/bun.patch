@@ -54,14 +54,14 @@ stale and rewrote in turn.
  .../libuv/win-thread-stack-reservation.patch  |   19 +
  .../page-commit-on-demand-default.patch       |   22 +
  scripts/build/CLAUDE.md                       |    2 +-
- scripts/build/binary-expectations.ts          |   32 +-
+ scripts/build/binary-expectations.ts          |   41 +-
  scripts/build/bun.ts                          |   18 +-
  scripts/build/deps/libuv.ts                   |    7 +-
  scripts/build/deps/mimalloc.ts                |   11 +-
  scripts/build/deps/webkit.ts                  |   56 +-
  scripts/build/download.ts                     |   28 +-
  scripts/build/fetch-cli.ts                    |   39 +-
- scripts/build/flags.ts                        |   47 +-
+ scripts/build/flags.ts                        |   53 +-
  scripts/build/ninja.ts                        |    1 +
  scripts/build/rust.ts                         |    3 +
  scripts/build/source.ts                       |   10 +
@@ -177,7 +177,7 @@ stale and rewrote in turn.
  test/napi/napi-app/binding.gyp                |   10 +
  ...eue_async_work_in_finalizer_experimental.c |   87 ++
  test/napi/napi.test.ts                        |   81 ++
- 131 files changed, 6513 insertions(+), 915 deletions(-)
+ 131 files changed, 6521 insertions(+), 922 deletions(-)
  create mode 100644 patches/libuv/win-thread-stack-reservation.patch
  create mode 100644 patches/mimalloc/page-commit-on-demand-default.patch
  create mode 100644 test/js/node/process/fd-nonblock-fixture.js
@@ -359,7 +359,7 @@ index 4d067e9044..41c47fee81 100644
  **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
  
 diff --git a/scripts/build/binary-expectations.ts b/scripts/build/binary-expectations.ts
-index f18a60b06b..0ba5981b7f 100644
+index f18a60b06b..fabdf34910 100644
 --- a/scripts/build/binary-expectations.ts
 +++ b/scripts/build/binary-expectations.ts
 @@ -7,9 +7,9 @@
@@ -470,7 +470,26 @@ index f18a60b06b..0ba5981b7f 100644
    const localWebKitLibs =
      cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
        ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"]
-@@ -523,7 +523,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
+@@ -425,14 +425,13 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
+         ...(staticInitializers && { staticInitializers }),
+         elf: {
+           // Android requires PIE; everywhere else bun is a fixed-address
+-          // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
+-          // flags.ts links `-z norelro -z lazy` (a startup-time choice from
+-          // the CMake era, kept as is); recorded so a change is deliberate.
++          // executable (-fno-pic, see flags.ts). Pi-Bolt links Linux with
++          // `-z relro -z now` (flags.ts); FreeBSD keeps `-z norelro -z lazy`.
+           type: android ? "DYN" : "EXEC",
+           execStack: false,
+           rwxLoad: false,
+-          relro: false,
+-          bindNow: false,
++          relro: cfg.linux,
++          bindNow: cfg.linux,
+           tlsSegment: !android,
+         },
+         debugInfo: { symtab: true, debugSections: true, compressed: true },
+@@ -523,7 +522,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
          forbiddenImports: forbiddenImports(cfg),
          // No initializer audit: PE has no symbol table to name .CRT$XCU entries by.
          pe: {
@@ -803,7 +822,7 @@ index eebc97cc79..e8abff8093 100644
  // github-archive dep fetch: download tarball, extract, patch, stamp
  // ───────────────────────────────────────────────────────────────────────────
 diff --git a/scripts/build/flags.ts b/scripts/build/flags.ts
-index 3d40f647a4..bbbc26ad1e 100644
+index 3d40f647a4..59befe77c9 100644
 --- a/scripts/build/flags.ts
 +++ b/scripts/build/flags.ts
 @@ -499,6 +499,13 @@ export const globalFlags: Flag[] = [
@@ -854,20 +873,20 @@ index 3d40f647a4..bbbc26ad1e 100644
 +    // .pblay is where the region's arenas are (bmalloc::StaticRegionLayout): read-only, since that decides where the engine
 +    // reads and writes.
 +    flag: ["/SECTION:.pbreg,R", "/SECTION:.pblay,R", "/guard:cf"],
-     when: c => c.windows,
--    desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
++    when: c => c.windows,
 +    desc: "The static region's section is read-only until used; its layout is read-only; Control Flow Guard's table (/guard:cf)",
 +  },
 +  {
 +    // The DLLs the executable imports are system DLLs: from System32 only (LOAD_LIBRARY_SEARCH_SYSTEM32), not from the folder
 +    // the executable was unzipped to. The delay-loaded ones go there too (c-bindings.cpp, __pfnDliNotifyHook2).
 +    flag: "/DEPENDENTLOADFLAG:0x800",
-+    when: c => c.windows,
+     when: c => c.windows,
+-    desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
 +    desc: "Imported DLLs from System32 only",
    },
    {
      flag: "/DEBUG:FULL",
-@@ -1333,6 +1368,14 @@ export const linkerFlags: Flag[] = [
+@@ -1333,12 +1368,22 @@ export const linkerFlags: Flag[] = [
      when: c => c.abi === "android",
      desc: "Android: bionic loader requires PIE",
    },
@@ -882,6 +901,16 @@ index 3d40f647a4..bbbc26ad1e 100644
    {
      flag: [
        "-Wl,--as-needed",
+       "-Wl,-z,stack-size=12800000",
+-      "-Wl,-z,lazy",
+-      "-Wl,-z,norelro",
++      // Pi-Bolt: RELRO with immediate binding (the GOT read-only after startup), at the cost of resolving the few hundred
++      // imports at startup instead of on first call.
++      "-Wl,-z,relro",
++      "-Wl,-z,now",
+       // (no --pack-dyn-relocs=relr: DT_RELR needs glibc ≥ 2.36 to load,
+       // and we wrap symbols for portability down to 2.17. With -no-pie
+       // there are <500 R_*_RELATIVE entries anyway — not worth the compat
 diff --git a/scripts/build/ninja.ts b/scripts/build/ninja.ts
 index e6a4479f14..b7c38f8aa3 100644
 --- a/scripts/build/ninja.ts
