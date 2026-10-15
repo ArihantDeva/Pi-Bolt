@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
+import { PIBOLT } from "../../pi-bolt.ts";
 import type { CacheWarmingAction } from "../cache-warmer.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
@@ -25,6 +26,7 @@ import {
 	normalizeBuildSystemPromptOptions,
 } from "../system-prompt.ts";
 import type { VirtualModelDefinition } from "../virtual-models.ts";
+import { extensionDisplayName, extensionOfStack, isJitRequiredMessage, withJitHint } from "./jit-hint.ts";
 import type {
 	AgentBeforeSettleEvent,
 	BeforeAgentStartCustomEvent,
@@ -583,7 +585,32 @@ export class ExtensionRunner {
 				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
+			// Pi-Bolt without the JIT: an extension's own notice of "bun:ffi requires the JIT" says which extension needs the JIT
+			// build (core/extensions/jit-hint.ts). The extension is the one whose code called notify().
+			...(PIBOLT && !PIBOLT.jit
+				? {
+						notify: (message: string, type?: "info" | "warning" | "error") =>
+							ui.notify(
+								withJitHint(message, () =>
+									this.jitExtensionName(
+										extensionOfStack(
+											new Error().stack,
+											this.extensions.map((extension) => extension.resolvedPath),
+										),
+									),
+								),
+								type,
+							),
+					}
+				: {}),
 		};
+	}
+
+	/** How the JIT hint names an extension, by its path as loaded or as configured. */
+	private jitExtensionName(extensionPath: string | undefined): string | undefined {
+		if (extensionPath === undefined) return undefined;
+		const extension = this.extensions.find((e) => e.path === extensionPath || e.resolvedPath === extensionPath);
+		return extensionDisplayName(extension?.resolvedPath ?? extensionPath);
 	}
 
 	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
@@ -747,6 +774,9 @@ export class ExtensionRunner {
 	}
 
 	emitError(error: ExtensionError): void {
+		if (isJitRequiredMessage(error.error)) {
+			error = { ...error, error: withJitHint(error.error, () => this.jitExtensionName(error.extensionPath)) };
+		}
 		for (const listener of this.errorListeners) {
 			listener(error);
 		}

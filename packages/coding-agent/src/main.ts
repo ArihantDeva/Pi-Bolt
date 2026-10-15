@@ -27,6 +27,7 @@ import {
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { loadDoctor } from "./cli/doctor.lazy.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
@@ -618,6 +619,12 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (await handleConfigCommand(args, { extensionFactories })) {
 		return;
+	}
+
+	// `pi-bolt doctor` (Pi-Bolt only): a report for an issue. It exits: the extensions it loaded may keep timers running.
+	if (PIBOLT && args[0] === "doctor") {
+		const { runDoctor } = await loadDoctor();
+		process.exit(await runDoctor(args.slice(1), { cwd, agentDir, extensionFactories }));
 	}
 
 	if (args[0] === "mcp") {

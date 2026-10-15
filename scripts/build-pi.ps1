@@ -268,7 +268,10 @@ foreach ($k in $vars.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable(
 function Build-Pi($runtime, $outfile, $log) {
 	# A JSON string. (Windows PowerShell passes a native command's argument's double quotes as they are, which the program's runtime
 	# then takes away, and splits an argument with quotes at its spaces: the quotes are written \" and the spaces as JSON escapes.)
-	$build = "$PiboltVersion $CpuVariant jit-$Jit" -replace ' ', ('\' + 'u0020')
+	# (With which engine the runtime is, scripts/runtime-stamp.sh, for `pi-bolt doctor`: PIBOLT_RUNTIME_STAMP, from the release
+	# workflow, else a RUNTIME_STAMP beside the runtime.)
+	$stamp = if ($env:PIBOLT_RUNTIME_STAMP) { $env:PIBOLT_RUNTIME_STAMP } else { Get-Content -LiteralPath (Join-Path (Split-Path $runtime) 'RUNTIME_STAMP') -ErrorAction SilentlyContinue | Select-Object -First 1 }
+	$build = "$PiboltVersion $CpuVariant jit-$Jit$(if ($stamp -match '^[0-9a-f]{16}$') { " $stamp" })" -replace ' ', ('\' + 'u0020')
 	# (What the compiler prints on stderr is its progress: Windows PowerShell would make each line of it an error, and stop.)
 	$ErrorActionPreference = 'Continue'
 	# Extensions resolve their own packages as on Node, through their package.json files; Pi's own code resolves nothing in the

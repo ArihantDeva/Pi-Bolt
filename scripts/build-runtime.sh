@@ -64,4 +64,6 @@ fi
 mkdir -p "$PIBOLT_WORK/runtime"
 cp "$BUN_SRC/$BUILD_DIR/bun" "$PIBOLT_WORK/runtime/bun"
 cp "$BUN_SRC/$BUILD_DIR/bun-profile" "$PIBOLT_WORK/runtime/bun-profile" 2>/dev/null || true
+# Which engine it is (scripts/build-pi.sh records it in the executables it builds, for `pi-bolt doctor`).
+"$PIBOLT_ROOT/scripts/runtime-stamp.sh" >"$PIBOLT_WORK/runtime/RUNTIME_STAMP" 2>/dev/null || rm -f "$PIBOLT_WORK/runtime/RUNTIME_STAMP"
 log "runtime: $PIBOLT_WORK/runtime/bun ($("$PIBOLT_WORK/runtime/bun" --version))"

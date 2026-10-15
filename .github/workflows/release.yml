@@ -135,6 +135,8 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       RUNTIME_FROM: ${{ needs.prepare.outputs.runtime_from }}
       RUNTIME_SHA: ${{ matrix.platform == 'linux-x64' && needs.prepare.outputs.runtime_sha_linux || matrix.platform == 'linux-arm64' && needs.prepare.outputs.runtime_sha_linux_arm64 || needs.prepare.outputs.runtime_sha_darwin }}
+      # (The engine the executables are built for: build-pi.sh records it in them, and `pi-bolt doctor` reports it.)
+      PIBOLT_RUNTIME_STAMP: ${{ needs.prepare.outputs.stamp }}
     steps:
       # (No token kept in .git: what the build and the tests run, dependencies included, gets none. GH_TOKEN is given to the
       # one step that downloads.)
@@ -221,6 +223,7 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       RUNTIME_FROM: ${{ needs.prepare.outputs.runtime_from }}
       RUNTIME_SHA: ${{ needs.prepare.outputs.runtime_sha_win32 }}
+      PIBOLT_RUNTIME_STAMP: ${{ needs.prepare.outputs.stamp }}
     steps:
       # (No token kept in .git, as in the build job above.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

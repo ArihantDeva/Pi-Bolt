@@ -83,6 +83,9 @@ curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=x64-jit sh    
 On Windows, run `$env:PIBOLT_VARIANT = "x64-jit"` before the PowerShell command. With npm, keep `PIBOLT_VARIANT` set in your
 shell profile; it is read on every run. `pi-bolt --version` then ends in `JIT on`, and `pi-bolt update` keeps the build you chose.
 
+On the default build, an extension that needs the JIT (it calls into a native library through `bun:ffi`) fails with a line that
+names the extension and gives the command that switches to the JIT build.
+
 <details>
 <summary>Manual download</summary>
 
@@ -248,6 +251,14 @@ sessions. In Zed's `settings.json`:
 ```
 
 Other editors, and what the editor gets: [docs/ACP.md](docs/ACP.md).
+
+## Doctor
+
+`pi-bolt doctor` prints a report of your installation, in plain text to paste into an issue: the build and how it was installed,
+whether the release's signature verifies, which extensions are compiled in, run at run time or fail to load, how Pi's `packages`
+and `piBolt.packages` differ, the Herdr and editor setup, and the problems it finds, such as another `pi-bolt` earlier on your
+`PATH`. It prints no keys or tokens, and shows your home folder as `~`. `pi-bolt doctor --offline` leaves out the release
+signature and the check for a newer version.
 
 ## How it works
 
