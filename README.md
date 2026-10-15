@@ -59,7 +59,8 @@ powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"
 
 or `npm install -g --allow-scripts=pi-bolt pi-bolt`, or `bun add -g --trust pi-bolt`. Then run `pi-bolt` in your project. Your
 Pi configuration in `~/.pi/agent` is used as is; new to Pi? Run `/login` to connect a provider. `pi-bolt update` installs the
-latest release.
+latest release, `pi-bolt update --rollback` puts back the build it replaced, and `pi-bolt update --channel beta` takes
+pre-releases too.
 
 The installer verifies the release signature and offers three optional extensions by OpenSec:
 

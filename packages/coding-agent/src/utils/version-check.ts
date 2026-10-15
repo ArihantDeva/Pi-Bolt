@@ -1,5 +1,11 @@
 import { compare, valid } from "semver";
-import { PIBOLT, PIBOLT_LATEST_RELEASE_API, piBoltVersionOfTag } from "../pi-bolt.ts";
+import {
+	PIBOLT,
+	PIBOLT_LATEST_RELEASE_API,
+	PIBOLT_RELEASES_API,
+	piBoltChannel,
+	piBoltVersionOfTag,
+} from "../pi-bolt.ts";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
@@ -89,19 +95,35 @@ export async function getLatestPiRelease(
 	};
 }
 
-/** Pi-Bolt updates as a whole (its Pi and its engine together), so a Pi-Bolt build looks at Pi-Bolt's releases, by Pi-Bolt version. */
+/** The newest Pi-Bolt version among GitHub's releases (pre-releases too; drafts never). */
+export function newestPiBoltVersion(releases: unknown): string | undefined {
+	if (!Array.isArray(releases)) return undefined;
+	let newest: string | undefined;
+	for (const release of releases as Array<{ tag_name?: unknown; draft?: unknown }>) {
+		if (release?.draft === true) continue;
+		const version = piBoltVersionOfTag(release?.tag_name);
+		if (version && (!newest || (comparePackageVersions(version, newest) ?? 0) > 0)) newest = version;
+	}
+	return newest;
+}
+
+/**
+ * Pi-Bolt updates as a whole (its Pi and its engine together), so a Pi-Bolt build looks at Pi-Bolt's releases, by Pi-Bolt
+ * version: the latest release, or on the beta channel the newest, pre-releases included.
+ */
 async function getLatestPiBoltRelease(
 	currentVersion: string,
 	options: { timeoutMs?: number; retry?: boolean },
 ): Promise<LatestPiRelease | undefined> {
+	const beta = piBoltChannel() === "beta";
 	const response = await fetchWithRetry(
-		PIBOLT_LATEST_RELEASE_API,
+		beta ? PIBOLT_RELEASES_API : PIBOLT_LATEST_RELEASE_API,
 		{ headers: { "User-Agent": getPiUserAgent(currentVersion), accept: "application/vnd.github+json" } },
 		{ maxRetries: options.retry ? 2 : 0, timeoutMs: options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS },
 	);
 	if (!response.ok) return undefined;
-	const data = (await response.json()) as { tag_name?: unknown; name?: unknown };
-	const version = piBoltVersionOfTag(data.tag_name);
+	const data = (await response.json()) as unknown;
+	const version = beta ? newestPiBoltVersion(data) : piBoltVersionOfTag((data as { tag_name?: unknown }).tag_name);
 	return version ? { version } : undefined;
 }
 

@@ -101,14 +101,17 @@ npm install -g --allow-scripts=pi-bolt pi-bolt</pre>
   <a href="troubleshooting.html#check-the-compiled-code">Check the compiled code</a>.</p>
 
 <h2>Update</h2>
-<pre data-label="Terminal"><span class="p">$ </span>pi-bolt update          <span class="c"># Pi-Bolt only</span>
-<span class="p">$ </span>pi-bolt update --all    <span class="c"># Pi-Bolt and your extensions</span></pre>
-<p>With npm, run <code>npm update -g pi-bolt</code>; the next run downloads the new release. Running the installer again also
-  updates.</p>
+<pre data-label="Terminal"><span class="p">$ </span>pi-bolt update                  <span class="c"># Pi-Bolt only</span>
+<span class="p">$ </span>pi-bolt update --all            <span class="c"># Pi-Bolt and your extensions</span>
+<span class="p">$ </span>pi-bolt update --rollback       <span class="c"># back to the build the last update replaced</span>
+<span class="p">$ </span>pi-bolt update --channel beta   <span class="c"># take pre-releases too (stable: the latest release only)</span></pre>
+<p>An update keeps the build it replaces; <code>pi-bolt update --rollback</code> puts it back without downloading anything, and
+  running it again goes forward again. The channel is kept for the installation. With npm, run <code>npm update -g pi-bolt</code>;
+  the next run downloads the new release. Running the installer again also updates.</p>
 
 <h2>Uninstall</h2>
-<p>Run the installer again and choose <strong>uninstall</strong>. It removes the Pi-Bolt builds from <code>~/.pi-bolt</code> and
-  the <code>pi-bolt</code> link. With npm, run <code>npm uninstall -g pi-bolt</code>, then delete <code>~/.pi-bolt/npm</code>,
+<p>Run the installer again and choose <strong>uninstall</strong>. It removes the Pi-Bolt builds from <code>~/.pi-bolt</code>, the
+  one kept for a rollback among them, and the <code>pi-bolt</code> link. With npm, run <code>npm uninstall -g pi-bolt</code>, then delete <code>~/.pi-bolt/npm</code>,
   where the npm package keeps the release it downloaded.</p>
 <p>Your Pi configuration in <code>~/.pi/agent</code> belongs to Pi and is not removed.</p>
 
@@ -144,6 +147,7 @@ npm install -g --allow-scripts=pi-bolt pi-bolt</pre>
   <tbody>
     <tr><td><code>PIBOLT_VARIANT</code></td><td>The build to install (see <a href="#builds">Builds</a>).</td></tr>
     <tr><td><code>PIBOLT_VERSION</code></td><td>A release tag such as <code>bolt-v0.8.0</code>. Default: the latest release.</td></tr>
+    <tr><td><code>PIBOLT_CHANNEL</code></td><td><code>stable</code> (the latest release; the default) or <code>beta</code> (the newest release, pre-releases included), for this installation and its updates.</td></tr>
     <tr><td><code>PIBOLT_INSTALL</code></td><td>Where to install. Default: <code>~/.pi-bolt</code> (Windows: <code>%USERPROFILE%\.pi-bolt</code>).</td></tr>
     <tr><td><code>PIBOLT_BIN_DIR</code></td><td>macOS and Linux: where to link <code>pi-bolt</code>. Default: <code>~/.local/bin</code>.</td></tr>
     <tr><td><code>PIBOLT_NO_PATH=1</code></td><td>Windows: do not add Pi-Bolt to your PATH.</td></tr>

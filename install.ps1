@@ -11,6 +11,8 @@
 #
 # Environment:
 #   PIBOLT_VERSION   a release tag such as bolt-v0.8.0 (default: the latest release)
+#   PIBOLT_CHANNEL   stable (the latest release; the default) or beta (the newest release, pre-releases included), for this
+#                    installation and its updates (`pi-bolt update --channel` changes it)
 #   PIBOLT_VARIANT   x64 (default), x64-baseline (any x86-64 CPU; picked when the CPU has no AVX2 and the release has one) or
 #                    x64-jit
 #   PIBOLT_INSTALL   where to install (default: %USERPROFILE%\.pi-bolt)
@@ -30,6 +32,7 @@
 # The public key that releases are signed with (keys/release.pub in the repository; scripts/sign-release.sh).
 $PiBoltReleaseKey = 'MCowBQYDK2VwAyEAoLboJqtKaoISPqffk03vHZr+1sRBG3uIRIWeKOew+aY='
 $PiBoltRepo = 'https://github.com/opensec-git/Pi-Bolt'
+$PiBoltApi = 'https://api.github.com/repos/opensec-git/Pi-Bolt'
 
 # --- Modules ---------------------------------------------------------------------------------------------------------------
 # PowerShell 7 passes its own module directories to everything it starts, and they come before this PowerShell's own. An
@@ -517,6 +520,25 @@ function Install-PiBoltRelease($state) {
 		New-Item -ItemType Directory -Force -Path $state.Dir | Out-Null
 		if ($made) { Protect-PiBoltFolder $made }
 		Protect-PiBoltFolder $state.Dir
+		# The build this replaces is kept as <folder>.previous, for `pi-bolt update --rollback`: copied, since a running Pi-Bolt
+		# (`pi-bolt update`) keeps its folder from being renamed. The same build installed again (the same pi-bolt.txt) is not.
+		$current = Join-Path $state.Dir 'pi-bolt.txt'
+		$incoming = Join-Path (Join-Path $unpacked $name) 'pi-bolt.txt'
+		if ($env:PIBOLT_LAUNCHER -ne '1' -and (Test-Path -LiteralPath (Join-Path $state.Dir 'pi-bolt.exe')) -and
+			-not ((Test-Path -LiteralPath $current) -and (Get-Content -LiteralPath $current -Raw) -eq (Get-Content -LiteralPath $incoming -Raw))) {
+			$previous = "$($state.Dir).previous"
+			Show-PiBoltProgress 'keeping the build it replaces'
+			try {
+				if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous -Recurse -Force -ErrorAction Stop }
+				Copy-Item -LiteralPath $state.Dir -Destination $previous -Recurse -ErrorAction Stop
+				Get-ChildItem -LiteralPath $previous -Recurse -File | Where-Object { $_.Name -like '*.pibolt-old' -or $_.Name -like '*.pibolt-new' } |
+					Remove-Item -Force -ErrorAction SilentlyContinue
+				Protect-PiBoltFolder $previous
+			} catch {
+				Clear-PiBoltProgress
+				Write-Host "  ${dim}the build this replaces was not kept ($($_.Exception.Message)): pi-bolt update --rollback has none to go back to$reset"
+			}
+		}
 		Install-PiBoltFiles (Join-Path $unpacked $name) $state.Dir
 		Clear-PiBoltProgress
 		$size = (Get-Item -LiteralPath $file).Length
@@ -783,6 +805,8 @@ function Install-PiBolt {
 	Test-PiBoltPrerequisites
 
 	$version = if ($env:PIBOLT_VERSION) { $env:PIBOLT_VERSION } else { 'latest' }
+	$channel = $env:PIBOLT_CHANNEL
+	if ($channel -and $channel -notin 'stable', 'beta') { Stop-PiBolt 'PIBOLT_CHANNEL must be stable or beta' }
 	$source = if ($env:PIBOLT_SOURCE) { $env:PIBOLT_SOURCE } else { 'auto' }
 	if ($source -notin 'auto', 'npm', 'github') { Stop-PiBolt 'PIBOLT_SOURCE must be auto, npm or github' }
 	$variant = $env:PIBOLT_VARIANT
@@ -793,6 +817,16 @@ function Install-PiBolt {
 	if ($version -ne 'latest') {
 		if ($version -notmatch '^bolt-v(\d+\.\d+\.\d+)$') { Stop-PiBolt 'PIBOLT_VERSION must be a release tag such as bolt-v0.8.0' }
 		$shown = $Matches[1]
+	} elseif (-not $env:PIBOLT_DOWNLOAD_BASE -and $channel -eq 'beta') {
+		# The newest release, pre-releases included: the highest bolt-vX.Y.Z tag GitHub lists (it lists no drafts to anyone without
+		# write access).
+		try {
+			$releases = (New-PiBoltClient).GetStringAsync("$PiBoltApi/releases?per_page=30").GetAwaiter().GetResult() | ConvertFrom-Json
+			$newest = $releases | Where-Object { -not $_.draft -and $_.tag_name -match '^bolt-v\d+\.\d+\.\d+$' } |
+				ForEach-Object { [version]($_.tag_name -replace '^bolt-v', '') } | Sort-Object -Descending | Select-Object -First 1
+			if ($newest) { $shown = $newest.ToString() }
+		} catch { }
+		if (-not $shown) { Stop-PiBolt "could not find the newest release ($PiBoltApi/releases): try again, or set PIBOLT_VERSION=bolt-vX.Y.Z" }
 	} elseif (-not $env:PIBOLT_DOWNLOAD_BASE) {
 		try {
 			$response = (New-PiBoltClient).GetAsync("$PiBoltRepo/releases/latest").GetAwaiter().GetResult()
@@ -840,11 +874,17 @@ function Install-PiBolt {
 			Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction SilentlyContinue
 			if (Test-Path -LiteralPath $dir.FullName) { Write-Host "  ${dim}$($dir.FullName) is in use (is Pi-Bolt running?): close it, then remove the folder$reset" }
 		}
+		foreach ($item in 'cache', 'compile.json', 'channel') {
+			Remove-Item -LiteralPath (Join-Path $install $item) -Recurse -Force -ErrorAction SilentlyContinue
+		}
 		if ((Test-Path -LiteralPath $install) -and -not (Get-ChildItem -LiteralPath $install -Force)) { Remove-Item -LiteralPath $install -Force }
 		Write-Host "`nPi-Bolt was uninstalled."
 		return
 	}
 	Install-PiBoltRelease $state
+	# The channel this installation's updates take (Pi-Bolt reads <install>\channel; stable, the default, is no file).
+	if ($channel -eq 'beta') { Set-Content -LiteralPath (Join-Path $install 'channel') -Value 'beta' -Encoding ascii }
+	elseif ($channel -eq 'stable') { Remove-Item -LiteralPath (Join-Path $install 'channel') -Force -ErrorAction SilentlyContinue }
 	$exe = Join-Path $state.Dir 'pi-bolt.exe'
 	# Pi-Bolt keeps the packages only it runs (OpenSec's extensions) out of Pi's list, which it does as it starts: once now, so
 	# that Pi, if it is started before Pi-Bolt, does not find them (an earlier installer put them there).
