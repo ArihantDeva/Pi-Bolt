@@ -49,7 +49,8 @@ $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
 $listener.Start(); $port = $listener.LocalEndpoint.Port; $listener.Stop()
 # (py -3 where the launcher is installed, as the other Windows scripts run it; python otherwise.)
 $python = if (Get-Command py -ErrorAction SilentlyContinue) { @('py', '-3') } else { @('python') }
-$server = Start-Process -FilePath $python[0] -ArgumentList (@($python | Select-Object -Skip 1) + '-m', 'http.server', $port, '--bind', '127.0.0.1', '--directory', "`"$work`"" -WindowStyle Hidden -PassThru
+$arguments = @($python | Select-Object -Skip 1) + '-m', 'http.server', $port, '--bind', '127.0.0.1', '--directory', "`"$work`""
+$server = Start-Process -FilePath $python[0] -ArgumentList $arguments -WindowStyle Hidden -PassThru
 for ($i = 0; $i -lt 50; $i++) {
 	try { $null = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$port/" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 200 }
 }
