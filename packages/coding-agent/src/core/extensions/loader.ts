@@ -22,6 +22,7 @@ import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
+import { extensionDisplayName, withJitHint } from "./jit-hint.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -70,7 +71,7 @@ function getVirtualModules(): Promise<Record<string, unknown>> {
  * these fails, so that the extension takes its alternative: pi-fff, which tries @ff-labs/fff-bun first, then uses
  * @ff-labs/fff-node (the same native library, through ffi-rs, a Node-API module).
  */
-const JIT_ONLY_PACKAGES = ["@ff-labs/fff-bun"];
+export const JIT_ONLY_PACKAGES = ["@ff-labs/fff-bun"];
 
 function withoutJitOnlyPackages(modules: Record<string, unknown>): Record<string, unknown> {
 	const result = { ...modules };
@@ -694,7 +695,10 @@ async function loadExtension(
 		return { extension, error: null };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		return { extension: null, error: `Failed to load extension: ${message}` };
+		return {
+			extension: null,
+			error: `Failed to load extension: ${withJitHint(message, () => extensionDisplayName(resolvedPath))}`,
+		};
 	}
 }
 

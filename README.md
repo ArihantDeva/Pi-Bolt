@@ -85,6 +85,9 @@ curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=x64-jit sh    
 On Windows, run `$env:PIBOLT_VARIANT = "x64-jit"` before the PowerShell command. With npm, keep `PIBOLT_VARIANT` set in your
 shell profile; it is read on every run. `pi-bolt --version` then ends in `JIT on`, and `pi-bolt update` keeps the build you chose.
 
+On the default build, an extension that needs the JIT (it calls into a native library through `bun:ffi`) fails with a line that
+names the extension and gives the command that switches to the JIT build.
+
 <details>
 <summary>Manual download</summary>
 
@@ -216,17 +219,27 @@ See [docs/PLUGINS.md](docs/PLUGINS.md).
 
 ### Pi and Pi-Bolt side by side
 
-Pi-Bolt uses Pi's agent directory (`~/.pi/agent`), so your Pi setup works in it as it is. Packages you install with `pi-bolt`
-go to Pi-Bolt's own list, `piBolt.packages`, and Pi keeps using `packages`, so each can load different packages:
+Pi-Bolt uses Pi's agent directory (`~/.pi/agent`) and shared `packages` list. Ordinary `pi-bolt install` and `pi-bolt remove`
+update that shared list, just as Pi does, and drop Pi-Bolt's own entry for that package, so both load what the shared list
+declares. Add `--pi-bolt` to change only Pi-Bolt's overrides. Using fictional package names:
+
+```bash
+pi-bolt install --pi-bolt npm:@example/bolt-tools
+pi-bolt remove --pi-bolt npm:@example/shared-tools
+```
+
+`piBolt.packages` extends the shared list. A `-source` entry excludes an inherited package from Pi-Bolt without changing Pi:
 
 ```json
 {
   "packages": ["npm:@juicesharp/rpiv-todo"],
-  "piBolt": { "packages": ["npm:opensec-pi-todo"] }
+  "piBolt": { "packages": ["-npm:@juicesharp/rpiv-todo", "npm:opensec-pi-todo"] }
 }
 ```
 
-Without `piBolt.packages`, Pi-Bolt loads `packages`. See [Configuration](https://pi-bolt.opensec.in/docs/configuration.html).
+Other shared packages remain inherited. A `piBolt.packages` list copied from `packages` by Pi-Bolt before 0.9.1 is converted
+once into exclusions and differing entries, so Pi-Bolt keeps loading what it did. See
+[Configuration](https://pi-bolt.opensec.in/docs/configuration.html).
 
 ## Herdr
 
@@ -250,6 +263,23 @@ sessions. In Zed's `settings.json`:
 ```
 
 Other editors, and what the editor gets: [docs/ACP.md](docs/ACP.md).
+
+`pi-bolt --mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server, so other agents give Pi-Bolt a task with
+its `prompt` tool and continue the session in later calls. In Claude Code:
+
+```bash
+claude mcp add pi-bolt -- /full/path/to/pi-bolt --mcp
+```
+
+Other clients, and what the tools do: [docs/MCP.md](docs/MCP.md).
+
+## Doctor
+
+`pi-bolt doctor` prints a report of your installation, in plain text to paste into an issue: the build and how it was installed,
+whether the release's signature verifies, which extensions are compiled in, run at run time or fail to load, how Pi's `packages`
+and `piBolt.packages` differ, the Herdr and editor setup, and the problems it finds, such as another `pi-bolt` earlier on your
+`PATH`. It prints no keys or tokens, and shows your home folder as `~`. `pi-bolt doctor --offline` leaves out the release
+signature and the check for a newer version.
 
 ## How it works
 
@@ -278,6 +308,7 @@ in [`sources.json`](sources.json) with Pi-Bolt's changes on top; the engine chan
 | [Benchmarks](docs/BENCHMARKS.md) | Method, results and raw data |
 | [Plugins](docs/PLUGINS.md) | Porting Pi extensions and writing them for AOT |
 | [Editors](docs/ACP.md) | Pi-Bolt in Zed, JetBrains IDEs, VS Code and other ACP editors |
+| [Other agents](docs/MCP.md) | Pi-Bolt as a tool of other agents and MCP clients |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Diagnostics, environment variables, known limitations |
 | [Releasing](docs/RELEASING.md) | CI, releases, signing |
 

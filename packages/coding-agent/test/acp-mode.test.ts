@@ -1,5 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,6 +13,7 @@ import type {
 	InitializeResponse,
 	RequestPermissionRequest,
 	SessionInfo,
+	SessionModeState,
 	SessionNotification,
 	SessionUpdate,
 	StopReason,
@@ -62,6 +63,9 @@ function sse(delta: Record<string, unknown>, finish: string | null = null): stri
 	})}\n\n`;
 }
 
+/** The tools the model was offered in its latest request. */
+let offeredTools: string[] = [];
+
 function startFakeModel(): Promise<Server> {
 	const server = createServer((req, res) => {
 		let body = "";
@@ -74,7 +78,11 @@ function startFakeModel(): Promise<Server> {
 				res.end(JSON.stringify({ object: "list", data: [{ id: "fake-model", object: "model" }] }));
 				return;
 			}
-			const request = JSON.parse(body || "{}") as { messages?: Array<{ role: string; content: unknown }> };
+			const request = JSON.parse(body || "{}") as {
+				messages?: Array<{ role: string; content: unknown }>;
+				tools?: Array<{ function: { name: string } }>;
+			};
+			offeredTools = (request.tools ?? []).map((tool) => tool.function.name);
 			let turn = 0;
 			let prompt = "";
 			for (const message of request.messages ?? []) {
@@ -108,6 +116,9 @@ function startFakeModel(): Promise<Server> {
 			} else {
 				res.write(sse({}, "stop"));
 			}
+			res.write(
+				`data: ${JSON.stringify({ id: "fake", object: "chat.completion.chunk", model: "fake-model", choices: [], usage: { prompt_tokens: 12, completion_tokens: 3, total_tokens: 15 } })}\n\n`,
+			);
 			res.end("data: [DONE]\n\n");
 		});
 	});
@@ -155,13 +166,13 @@ class AcpTestClient {
 	/** Answers the agent's requests (permission, elicitation). */
 	onRequest: (message: Message) => unknown = () => ({ outcome: { outcome: "cancelled" } });
 
-	constructor(cwd: string, agentDir: string, args: string[] = []) {
+	constructor(cwd: string, agentDir: string, args: string[] = [], env: Record<string, string> = {}) {
 		const command = executable
 			? { file: executable, args: ["--acp", ...args] }
 			: { file: process.execPath, args: ["--import", sourceResolverUrl, cliPath, "--acp", ...args] };
 		this.child = spawn(command.file, command.args, {
 			cwd,
-			env: { ...process.env, [ENV_AGENT_DIR]: agentDir, PI_OFFLINE: "1" },
+			env: { ...process.env, [ENV_AGENT_DIR]: agentDir, PI_OFFLINE: "1", ...env },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		this.child.stdout.setEncoding("utf8");
@@ -248,8 +259,12 @@ describe("ACP mode", () => {
 	let projectDir: string;
 	const clients: AcpTestClient[] = [];
 
-	const startClient = async (args: string[] = [], clientCapabilities: object = CLIENT_CAPABILITIES) => {
-		const client = new AcpTestClient(projectDir, agentDir, args);
+	const startClient = async (
+		args: string[] = [],
+		clientCapabilities: object = CLIENT_CAPABILITIES,
+		env: Record<string, string> = {},
+	) => {
+		const client = new AcpTestClient(projectDir, agentDir, args, env);
 		clients.push(client);
 		const init = await client.request<InitializeResponse>("initialize", {
 			protocolVersion: 1,
@@ -281,7 +296,13 @@ describe("ACP mode", () => {
 		);
 		writeFileSync(
 			join(agentDir, "settings.json"),
-			JSON.stringify({ lastChangelogVersion: "9999.0.0", defaultProvider: "fake", defaultModel: "fake-model" }),
+			JSON.stringify({
+				lastChangelogVersion: "9999.0.0",
+				defaultProvider: "fake",
+				defaultModel: "fake-model",
+				// Small sessions can be compacted.
+				compaction: { keepRecentTokens: 1 },
+			}),
 		);
 		writeFileSync(join(agentDir, "auth.json"), "{}");
 	});
@@ -302,7 +323,7 @@ describe("ACP mode", () => {
 			loadSession: true,
 			promptCapabilities: { image: true, embeddedContext: true },
 			mcpCapabilities: { http: true },
-			sessionCapabilities: { list: {}, resume: {}, close: {} },
+			sessionCapabilities: { list: {}, resume: {}, close: {}, delete: {}, fork: {} },
 		});
 		expect(init.authMethods).toEqual([]);
 	});
@@ -642,5 +663,174 @@ process.stdin.on("data", (chunk) => {
 		});
 		const listed = await client.request<{ sessions: SessionInfo[] }>("session/list", {});
 		expect(listed.sessions.map((session) => session.sessionId)).toContain(sessionId);
+	});
+
+	it("offers a read-only mode, as modes and as a config option", async () => {
+		const { client } = await startClient();
+		const created = await client.request<SessionResponse & { modes: SessionModeState }>("session/new", {
+			cwd: projectDir,
+			mcpServers: [],
+		});
+		const { sessionId } = created;
+		expect(created.modes.currentModeId).toBe("default");
+		expect(created.modes.availableModes.map((mode) => mode.id)).toEqual(["default", "read-only"]);
+		expect(created.configOptions[0]).toMatchObject({ id: "mode", category: "mode", currentValue: "default" });
+
+		await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "[hello] tools?" }] });
+		const usual = offeredTools;
+		expect(usual).toContain("bash");
+
+		const set = await client.request<{ configOptions: ConfigOption[] }>("session/set_config_option", {
+			sessionId,
+			configId: "mode",
+			value: "read-only",
+		});
+		expect(set.configOptions[0].currentValue).toBe("read-only");
+		await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "[hello] tools?" }] });
+		expect(offeredTools.sort()).toEqual(["find", "grep", "ls", "read"]);
+
+		expect(await client.request("session/set_mode", { sessionId, modeId: "default" })).toEqual({});
+		await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "[hello] tools?" }] });
+		expect(offeredTools).toEqual(usual);
+
+		const bad = await client.call("session/set_mode", { sessionId, modeId: "yolo" });
+		expect(bad.error?.code).toBe(-32602);
+		// The editor's own changes are answered by their responses, not by updates.
+		expect(client.updatesOf("config_option_update")).toEqual([]);
+	});
+
+	it("runs Pi's commands that need no terminal", async () => {
+		const { client } = await startClient();
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
+		await client.waitFor(() => client.updatesOf("available_commands_update").length > 0);
+		expect(commandNames(client)).toEqual(
+			expect.arrayContaining(["compact", "name", "model", "thinking", "session", "export", "reload"]),
+		);
+		const run = async (text: string) => {
+			const before = client.updates.length;
+			await client.request<PromptResponse>("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+			return client.updates.slice(before).map((notification) => notification.update);
+		};
+		const replies = (updates: SessionUpdate[]) =>
+			updates
+				.filter(
+					(update): update is UpdateOf<"agent_message_chunk"> => update.sessionUpdate === "agent_message_chunk",
+				)
+				.map((update) => blockText(update.content))
+				.join("");
+
+		await run("[hello] hi");
+		expect(replies(await run("/session"))).toContain(`ID: ${sessionId}`);
+
+		const exported = await run("/export transcript.jsonl");
+		const exportPath = join(projectDir, "transcript.jsonl");
+		expect(replies(exported)).toContain(exportPath);
+		expect(exported).toContainEqual(
+			expect.objectContaining({
+				sessionUpdate: "agent_message_chunk",
+				content: { type: "resource_link", uri: pathToFileURL(exportPath).href, name: "transcript.jsonl" },
+			}),
+		);
+		expect(readFileSync(exportPath, "utf8")).toContain("[hello] hi");
+
+		const switched = await run("/model fake/other-model");
+		expect(replies(switched)).toContain("Model: fake/other-model");
+		const update = switched.find(
+			(u): u is UpdateOf<"config_option_update"> => u.sessionUpdate === "config_option_update",
+		);
+		expect(update?.configOptions.find((option) => option.id === "model")?.currentValue).toBe("fake/other-model");
+		expect(replies(await run("/model"))).toContain("fake/fake-model");
+
+		const reloaded = await run("/reload");
+		expect(reloaded.some((u) => u.sessionUpdate === "available_commands_update")).toBe(true);
+		expect(replies(reloaded)).toContain("Reloaded");
+
+		const unknown = await client.call("session/prompt", {
+			sessionId,
+			prompt: [{ type: "text", text: "/thinking extreme" }],
+		});
+		expect(unknown.error?.message).toContain("Unknown thinking level");
+	});
+
+	it("shows compactions to clients that take them, live and when loading", async () => {
+		const capabilities = { ...CLIENT_CAPABILITIES, session: { notices: {}, compaction: {} } };
+		const first = await startClient([], capabilities);
+		const { sessionId } = await first.client.request<SessionResponse>("session/new", {
+			cwd: projectDir,
+			mcpServers: [],
+		});
+		for (const text of ["[hello] one", "[hello] two"]) {
+			await first.client.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+		}
+		await first.client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "/compact" }] });
+		const live = first.client.updatesOf("compaction_update");
+		expect(live.map((u) => u.status)).toEqual(["in_progress", "completed"]);
+		expect(live[1].compactionId).toBe(live[0].compactionId);
+		expect(live[1].summary?.[0]).toMatchObject({ type: "text" });
+		// The compaction entry says it all: no reply of its own.
+		expect(first.client.updatesOf("agent_message_chunk").map((u) => blockText(u.content))).not.toContainEqual(
+			expect.stringContaining("Compacted"),
+		);
+		await first.client.stop();
+
+		const { client } = await startClient([], capabilities);
+		await client.request("session/load", { sessionId, cwd: projectDir, mcpServers: [] });
+		expect(client.updatesOf("compaction_update")).toEqual([
+			expect.objectContaining({ status: "completed", summary: live[1].summary }),
+		]);
+	});
+
+	it("forks a session into a new one with its history", async () => {
+		const { client } = await startClient();
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
+		await client.request("session/prompt", {
+			sessionId,
+			prompt: [{ type: "text", text: "[hello] before the fork" }],
+		});
+		const fork = await client.request<SessionResponse & { modes: SessionModeState }>("session/fork", {
+			sessionId,
+			cwd: projectDir,
+			mcpServers: [],
+		});
+		expect(fork.sessionId).not.toBe(sessionId);
+		expect(fork.modes.currentModeId).toBe("default");
+		await client.request("session/prompt", {
+			sessionId: fork.sessionId,
+			prompt: [{ type: "text", text: "[hello] after the fork" }],
+		});
+
+		const other = await startClient();
+		await other.client.request("session/load", { sessionId: fork.sessionId, cwd: projectDir, mcpServers: [] });
+		expect(other.client.updatesOf("user_message_chunk").map((u) => blockText(u.content))).toEqual([
+			"[hello] before the fork",
+			"[hello] after the fork",
+		]);
+		const missing = await client.call("session/fork", { sessionId: "nope", cwd: projectDir, mcpServers: [] });
+		expect(missing.error?.code).toBe(-32002);
+	});
+
+	it("deletes a session, to the trash when the trash command is there", async () => {
+		const bin = join(root, "bin");
+		const trashDir = join(root, "trash");
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(trashDir, { recursive: true });
+		writeFileSync(join(bin, "trash"), `#!/bin/sh\n[ "$1" = "--" ] && shift\nmv "$1" "${trashDir}/"\n`, {
+			mode: 0o755,
+		});
+		const { client } = await startClient([], CLIENT_CAPABILITIES, { PATH: `${bin}:${process.env.PATH}` });
+		const { sessionId } = await client.request<SessionResponse>("session/new", { cwd: projectDir, mcpServers: [] });
+		await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "[hello] delete me" }] });
+		const listed = await client.request<{ sessions: SessionInfo[] }>("session/list", { cwd: projectDir });
+		expect(listed.sessions.map((session) => session.sessionId)).toContain(sessionId);
+
+		expect(await client.request("session/delete", { sessionId })).toEqual({});
+		const after = await client.request<{ sessions: SessionInfo[] }>("session/list", { cwd: projectDir });
+		expect(after.sessions.map((session) => session.sessionId)).not.toContain(sessionId);
+		expect(readdirSync(trashDir).some((file) => file.includes(sessionId))).toBe(true);
+		const prompt = await client.call("session/prompt", { sessionId, prompt: [{ type: "text", text: "hi" }] });
+		expect(prompt.error?.code).toBe(-32002);
+		// Deleting it again, or a session that never was, succeeds.
+		expect(await client.request("session/delete", { sessionId })).toEqual({});
+		expect(await client.request("session/delete", { sessionId: "never-was" })).toEqual({});
 	});
 });

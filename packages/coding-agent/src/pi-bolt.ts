@@ -1,8 +1,10 @@
 /**
  * Pi-Bolt: Pi compiled ahead of time (https://github.com/opensec-git/Pi-Bolt).
  *
- * scripts/build-pi.sh defines PIBOLT_BUILD when it compiles this tree ("0.3.1 x64 jit-off": the Pi-Bolt version, the CPU
- * variant (x64, x64-baseline, x64-jit, arm64), and whether the JIT is on). In every other build it is undefined and nothing here changes what Pi does.
+ * scripts/build-pi.sh defines PIBOLT_BUILD when it compiles this tree ("0.3.1 x64 jit-off e0f307e3d3f66944": the Pi-Bolt
+ * version, the CPU variant (x64, x64-baseline, x64-jit, arm64), whether the JIT is on, and the runtime stamp of the engine it
+ * was built for, scripts/runtime-stamp.sh, when known). In every other build it is undefined and nothing here changes what Pi
+ * does.
  */
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -13,9 +15,12 @@ export interface PiBoltBuild {
 	version: string;
 	variant: string;
 	jit: boolean;
+	runtimeStamp?: string;
 }
 
-export const PIBOLT: PiBoltBuild | undefined = parse(typeof PIBOLT_BUILD === "string" ? PIBOLT_BUILD : undefined);
+export const PIBOLT: PiBoltBuild | undefined = parsePiBoltBuild(
+	typeof PIBOLT_BUILD === "string" ? PIBOLT_BUILD : undefined,
+);
 
 export const PIBOLT_INSTALL_URL =
 	process.platform === "win32" ? "https://pi-bolt.opensec.in/install.ps1" : "https://pi-bolt.opensec.in/install.sh";
@@ -62,12 +67,17 @@ export function piBoltInstallerProcess(): { command: string; args: string[] } {
 	};
 }
 export const PIBOLT_RELEASES_URL = "https://github.com/opensec-git/Pi-Bolt/releases";
+/** The key releases' SHA256SUMS are signed with (keys/release.pub; the installers carry it too). */
+export const PIBOLT_RELEASE_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAoLboJqtKaoISPqffk03vHZr+1sRBG3uIRIWeKOew+aY=
+-----END PUBLIC KEY-----
+`;
 export const PIBOLT_LATEST_RELEASE_API = "https://api.github.com/repos/opensec-git/Pi-Bolt/releases/latest";
 
-function parse(build: string | undefined): PiBoltBuild | undefined {
+export function parsePiBoltBuild(build: string | undefined): PiBoltBuild | undefined {
 	if (!build) return undefined;
-	const [version, variant = "x64", jit = "jit-off"] = build.split(" ");
-	return { version, variant, jit: jit === "jit-on" };
+	const [version, variant = "x64", jit = "jit-off", runtimeStamp] = build.split(" ");
+	return { version, variant, jit: jit === "jit-on", ...(runtimeStamp ? { runtimeStamp } : {}) };
 }
 
 /** "0.3.1" from the release tag "bolt-v0.3.1"; undefined for anything else. */
@@ -126,6 +136,32 @@ export function piBoltUpdateEnvironment(version: string): NodeJS.ProcessEnv {
 		delete env[name];
 	}
 	return env;
+}
+
+/** The JIT build for the CPU of `variant`: x64-jit for x64 and x64-baseline, arm64-jit for arm64. */
+export function piBoltJitVariant(variant: string = PIBOLT?.variant ?? "x64"): string {
+	if (variant.endsWith("-jit")) return variant;
+	return variant.startsWith("arm64") ? "arm64-jit" : "x64-jit";
+}
+
+/**
+ * The command that installs the JIT build in place of this one, as it was installed: the installer with PIBOLT_VARIANT (which
+ * keeps the default build's folder, and links `pi-bolt` to the new one), or for npm, PIBOLT_VARIANT where the package reads it
+ * (every run on macOS and Linux; when it is installed on Windows).
+ */
+export function piBoltJitSwitchCommand(
+	method: "npm" | "installer" = piBoltInstallMethod(),
+	platform: NodeJS.Platform = process.platform,
+	variant: string = piBoltJitVariant(),
+): string {
+	if (method === "npm") {
+		return platform === "win32"
+			? `$env:PIBOLT_VARIANT = "${variant}"; npm install -g --allow-scripts=pi-bolt pi-bolt`
+			: `export PIBOLT_VARIANT=${variant} (in your shell profile)`;
+	}
+	return platform === "win32"
+		? `$env:PIBOLT_VARIANT = "${variant}"; irm https://pi-bolt.opensec.in/install.ps1 | iex`
+		: `curl -fsSL https://pi-bolt.opensec.in/install.sh | PIBOLT_VARIANT=${variant} sh`;
 }
 
 /** The executable the installer puts in `installDir` for this variant (on macOS, the launcher that starts pi-bin). */

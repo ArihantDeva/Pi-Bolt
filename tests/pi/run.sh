@@ -97,6 +97,45 @@ else
 	status=1
 fi
 
+# An extension that needs the JIT (bun:ffi's dlopen): without it, the error says which extension and how to switch to the JIT
+# build; with it, the extension loads. `pi-bolt doctor` reports it the same way, and the rest of the setup.
+needs="$home/agent/extensions/needs-jit"
+mkdir -p "$needs"
+printf '{"name": "needs-jit", "version": "1.0.0"}\n' >"$needs/package.json"
+cat >"$needs/index.ts" <<'TS'
+import { dlopen } from "bun:ffi";
+export default function () {
+	dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", { getpid: { returns: "i32", args: [] } });
+	console.log("needs-jit: loaded");
+}
+TS
+jit_on=""; "$PI" --version | grep -q "JIT on" && jit_on=1
+out=$(env -i HOME="$home" PATH=/usr/bin:/bin PI_CODING_AGENT_DIR="$home/agent" DO_NOT_TRACK=1 BUN_ENABLE_CRASH_REPORTING=0 \
+	"$PI" -ne -e "$needs/index.ts" --offline --no-session -p hi 2>&1 </dev/null)
+if { [ -n "$jit_on" ] && grep -q "^needs-jit: loaded" <<<"$out"; } ||
+	{ [ -z "$jit_on" ] && grep -q "bun:ffi requires the JIT\. needs-jit needs Pi-Bolt's JIT build (bun:ffi); switch with: .*PIBOLT_VARIANT=" <<<"$out"; }; then
+	echo "PASS an extension that needs the JIT ($([ -n "$jit_on" ] && echo "loads" || echo "says so"))"
+else
+	echo "FAIL an extension that needs the JIT"
+	grep -m3 -i "needs-jit\|error" <<<"$out" | cut -c1-300 | sed 's/^/   /'
+	status=1
+fi
+out=$(cd "$home" && env -i HOME="$home" PATH=/usr/bin:/bin PI_CODING_AGENT_DIR="$home/agent" DO_NOT_TRACK=1 BUN_ENABLE_CRASH_REPORTING=0 \
+	"$PI" doctor --offline 2>&1 </dev/null)
+doctor_status=$?
+real_home=$(cd "$home" && pwd -P)
+if [ "$doctor_status" = 0 ] && grep -q "^Pi-Bolt doctor" <<<"$out" && grep -q "^  compiled code  *used" <<<"$out" &&
+	{ { [ -n "$jit_on" ] && grep -q "run time  *~/agent/extensions/needs-jit/index.ts: JIT, loaded" <<<"$out"; } ||
+		{ [ -z "$jit_on" ] && grep -q "needs-jit needs Pi-Bolt's JIT build" <<<"$out"; }; } &&
+	! grep -q "$home\|$real_home" <<<"$out"; then
+	echo "PASS pi-bolt doctor"
+else
+	echo "FAIL pi-bolt doctor (exit $doctor_status)"
+	head -c 3000 <<<"$out" | sed 's/^/   /'
+	status=1
+fi
+rm -rf "$needs"
+
 # Programs started from Pi (on macOS through pi-spawn). The probe says where its code and stack are.
 probe=
 printf '#include <stdio.h>\nint main(void) { int x; printf("%%p/%%p\\n", (void*)main, (void*)&x); return 0; }\n' >"$home/probe.c"

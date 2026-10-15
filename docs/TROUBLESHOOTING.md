@@ -91,6 +91,10 @@ build runs on it; the installer says so.
 **A theme, the HTML export or image tools are missing.** The executable was moved away from the files around it. Keep the whole
 folder together, and link or alias the executable instead of copying it.
 
+**`bun:ffi requires the JIT`.** The extension calls into a native library through `bun:ffi`, which works only on the JIT build.
+The message names the extension and gives the command that installs the JIT build
+([README](../README.md#jit-build-for-heavy-plugins)); `pi-bolt doctor` lists every extension that uses `bun:ffi`.
+
 **A plugin works with stock Pi but not when compiled in.** See the [compatibility checklist](PLUGINS.md#compatibility-checklist):
 usually a dynamic import, or a file read from next to the plugin's source.
 
@@ -181,10 +185,9 @@ remove anything private from it before you post it.
 
 Please [open an issue](https://github.com/opensec-git/Pi-Bolt/issues/new) with:
 
-- the output of `BUN_STATIC_HEAP_VERBOSE=1 pi-bolt --version`;
-- your distribution, `ldd --version | head -1`, and the CPU model (`grep -m1 "model name" /proc/cpuinfo`); on macOS, `sw_vers` and
-  `sysctl -n machdep.cpu.brand_string`; on Windows, `winver`'s version and build, the terminal (Windows Terminal, the console
-  window, VS Code), and the CPU (`Get-CimInstance Win32_Processor | Select-Object Name` in PowerShell);
+- the output of `pi-bolt doctor` (the build, installation, extensions and packages, and the problems it finds; no keys or
+  tokens, and your home folder shown as `~`);
+- on Linux, `ldd --version | head -1`; on Windows, the terminal (Windows Terminal, the console window, VS Code);
 - whether the problem also happens with `BUN_AOT=0 pi-bolt`, and with stock Pi.
 
 If it only happens with the compiled code, it is a Pi-Bolt bug. If it also happens with stock Pi, report it to

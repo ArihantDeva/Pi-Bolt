@@ -7,8 +7,9 @@ import chalk from "chalk";
 import { COMMAND_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR, PRODUCT_NAME } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
+import { PIBOLT } from "../pi-bolt.ts";
 
-export type Mode = "text" | "json" | "rpc" | "acp";
+export type Mode = "text" | "json" | "rpc" | "acp" | "mcp";
 
 export interface Args {
 	provider?: string;
@@ -96,20 +97,22 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--mode") {
 			const mode = args[i + 1];
 			if (mode === undefined || mode.startsWith("-")) {
-				result.diagnostics.push({ type: "error", message: "--mode requires text, json, rpc, or acp" });
+				result.diagnostics.push({ type: "error", message: "--mode requires text, json, rpc, acp, or mcp" });
 				continue;
 			}
 			i++;
-			if (mode !== "text" && mode !== "json" && mode !== "rpc" && mode !== "acp") {
+			if (mode !== "text" && mode !== "json" && mode !== "rpc" && mode !== "acp" && mode !== "mcp") {
 				result.diagnostics.push({
 					type: "error",
-					message: `Invalid mode "${mode}". Valid values: text, json, rpc, acp`,
+					message: `Invalid mode "${mode}". Valid values: text, json, rpc, acp, mcp`,
 				});
 				continue;
 			}
 			result.mode = mode;
 		} else if (arg === "--acp") {
 			result.mode = "acp";
+		} else if (arg === "--mcp") {
+			result.mode = "mcp";
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
@@ -297,7 +300,7 @@ ${chalk.bold("Commands:")}
   ${COMMAND_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${COMMAND_NAME} auth <command>            Print credentials or check provider readiness
   ${COMMAND_NAME} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
-  ${COMMAND_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
+${PIBOLT ? `  ${COMMAND_NAME} doctor                    Print a report of this installation, to paste into an issue\n` : ""}  ${COMMAND_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider to search for --model (requires --model)
@@ -305,8 +308,9 @@ ${chalk.bold("Options:")}
   --api-key <key>                API key (defaults to env vars)
   --system-prompt <text>         System prompt (default: coding assistant prompt)
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
-  --mode <mode>                  Output mode: text (default), json, rpc, or acp
+  --mode <mode>                  Output mode: text (default), json, rpc, acp, or mcp
   --acp                          Agent Client Protocol server on stdin/stdout, for editors (same as --mode acp)
+  --mcp                          Model Context Protocol server on stdin/stdout, for other agents (same as --mode mcp)
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
