@@ -1,27 +1,32 @@
 #!/usr/bin/env bash
 # Builds and packages a release: the Pi executables for each target, the runtime, and SHA256SUMS, in dist/<version>/.
 #
-# Usage: scripts/package-release.sh [--pi DIR] [--no-build]
+# Usage: scripts/package-release.sh [--pi DIR] [--no-build] [--runtime-only]
 #   --pi DIR      the built Pi tree (default: this repository)
 #   --no-build    package the builds already in out/ instead of building them
+#   --runtime-only  only the runtime's archive (.github/workflows/runtime.yml), no Pi and no SHA256SUMS
 # Archives (the names stay the same from release to release, so that releases/latest/download/<name> always works), of what
 # this machine builds:
 #   pi-bolt-linux-x64.tar.gz           JIT off, code for AVX2-class CPUs (falls back to bytecode on others)
 #   pi-bolt-linux-x64-baseline.tar.gz  JIT off, code for any x86-64 CPU
 #   pi-bolt-linux-x64-jit.tar.gz       JIT on, for code loaded at run time
 #   pi-bolt-runtime-linux-x64.tar.gz   the Pi-Bolt Bun runtime, to build Pi with plugins (docs/PLUGINS.md)
+#   pi-bolt-linux-arm64.tar.gz         on Linux ARM64: JIT off, code for any ARMv8.0 CPU
+#   pi-bolt-linux-arm64-jit.tar.gz     on Linux ARM64: JIT on
+#   pi-bolt-runtime-linux-arm64.tar.gz
 #   pi-bolt-darwin-arm64.tar.gz        on macOS: JIT off, for Apple silicon (M1 and later)
 #   pi-bolt-darwin-arm64-jit.tar.gz    on macOS: JIT on
 #   pi-bolt-runtime-darwin-arm64.tar.gz
 # The Pi archives also come as .tar.xz, about 40% smaller, which install.sh prefers where xz is installed.
 source "$(dirname "$0")/lib/common.sh"
 
-PI_DIR="$PIBOLT_PI"; BUILD=1
+PI_DIR="$PIBOLT_PI"; BUILD=1; RUNTIME_ONLY=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--pi) PI_DIR="$2"; shift ;;
 	--no-build) BUILD="" ;;
-	-h | --help) sed -n '2,12p' "$0"; exit 0 ;;
+	--runtime-only) RUNTIME_ONLY=1; BUILD="" ;;
+	-h | --help) sed -n '2,20p' "$0"; exit 0 ;;
 	*) die "unknown option $1" ;;
 	esac
 	shift
@@ -36,6 +41,7 @@ DIST="$PIBOLT_ROOT/dist/$VERSION"
 PI_ROOT="$(realpath "$PI_DIR")"
 case "$PIBOLT_PLATFORM" in
 linux-x64) TARGETS=("linux-x64:pi-bolt:" "linux-x64-baseline:pi-bolt-baseline:--cpu baseline" "linux-x64-jit:pi-bolt-jit:--jit on") ;;
+linux-arm64) TARGETS=("linux-arm64:pi-bolt:" "linux-arm64-jit:pi-bolt-jit:--jit on") ;;
 darwin-arm64) TARGETS=("darwin-arm64:pi-bolt:" "darwin-arm64-jit:pi-bolt-jit:--jit on") ;;
 *) die "no release is built on $PIBOLT_PLATFORM" ;;
 esac
@@ -60,6 +66,7 @@ notices() {
 	return 0
 }
 
+[ -z "$RUNTIME_ONLY" ] || TARGETS=()
 for target in "${TARGETS[@]}"; do
 	IFS=: read -r name out _ <<<"$target"
 	build="$PIBOLT_ROOT/out/$out"
@@ -78,6 +85,7 @@ dir="$STAGE/pi-bolt-runtime-$PIBOLT_PLATFORM"
 mkdir -p "$dir" && cp "$runtime" "$dir/bun" && notices "$dir"
 log "pi-bolt-runtime-$PIBOLT_PLATFORM.tar.gz (Bun $("$runtime" --version))"
 "${TAR[@]}" -C "$STAGE" -czf "$DIST/pi-bolt-runtime-$PIBOLT_PLATFORM.tar.gz" "pi-bolt-runtime-$PIBOLT_PLATFORM"
+[ -z "$RUNTIME_ONLY" ] || exit 0
 
 # The extensions the installers offer, pinned; and checksums whose first line says which release they are (install.ps1 refuses
 # another version's: an older release, signed all the same, served as a newer one).
