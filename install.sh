@@ -958,7 +958,7 @@ offer_extensions() {
 		answer=$(head -n 1 </dev/tty || true)
 		case "$answer" in
 		n | N | no | NO)
-			printf '%sYou can install them later with: pi-bolt install npm:<name>%s\n' "$dim" "$reset"
+			printf '%sYou can install them later with: pi-bolt install --pi-bolt npm:<name>%s\n' "$dim" "$reset"
 			return 0
 			;;
 		esac
@@ -973,11 +973,11 @@ offer_extensions() {
 		fi
 		# (From the registry that was checked, and without the package's install scripts: nothing of it runs before its lockfile
 		# entry is compared with the pin, below, and an extension of Pi needs none.)
-		if out=$(NPM_CONFIG_REGISTRY="$NPM_REGISTRY" NPM_CONFIG_IGNORE_SCRIPTS=true "$INSTALL/$NAME/pi" install "npm:$package@$version" 2>&1); then
+		if out=$(NPM_CONFIG_REGISTRY="$NPM_REGISTRY" NPM_CONFIG_IGNORE_SCRIPTS=true "$INSTALL/$NAME/pi" install --pi-bolt "npm:$package@$version" 2>&1); then
 			# What the package manager installed is a download of its own: its lockfile says what it got.
 			case $(installed_matches "$package" "$integrity") in
 			different)
-				"$INSTALL/$NAME/pi" remove "npm:$package@$version" >/dev/null 2>&1 || true
+				"$INSTALL/$NAME/pi" remove --pi-bolt "npm:$package@$version" >/dev/null 2>&1 || true
 				printf '  %sremoved %s@%s again: what the package manager installed is not the one this release pins%s\n' "$red" "$package" "$version" "$reset"
 				continue
 				;;
@@ -986,7 +986,7 @@ offer_extensions() {
 			printf '  %s%s%s %s@%s installed\n' "$green" "$CHECK" "$reset" "$package" "$version"
 		else
 			printf '  %scould not install %s (Pi-Bolt itself is installed): %s%s\n' "$red" "$package" "$(printf '%s' "$out" | tail -1)" "$reset"
-			printf '  %sInstall it later with: pi-bolt install npm:%s%s\n' "$dim" "$package" "$reset"
+			printf '  %sInstall it later with: pi-bolt install --pi-bolt npm:%s%s\n' "$dim" "$package" "$reset"
 		fi
 	done
 }

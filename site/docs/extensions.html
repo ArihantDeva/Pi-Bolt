@@ -73,13 +73,14 @@
 <h2 id="install-and-manage-extensions">Install and manage extensions<a class="anchor" href="#install-and-manage-extensions" aria-label="Link to this section">#</a></h2>
 <p>Pi-Bolt loads extensions from the same places as Pi: <code>~/.pi/agent/extensions</code>, a project's
   <code>.pi/extensions</code>, Pi packages, and <code>-e &lt;path&gt;</code> on the command line.</p>
-<pre data-label="Terminal"><span class="p">$ </span>pi-bolt install npm:opensec-pi-todo     <span class="c"># install a Pi package</span>
+<pre data-label="Terminal"><span class="p">$ </span>pi-bolt install --pi-bolt npm:opensec-pi-todo <span class="c"># install for Pi-Bolt only</span>
 <span class="p">$ </span>pi-bolt list                           <span class="c"># list installed packages</span>
 <span class="p">$ </span>pi-bolt update --extensions            <span class="c"># update them</span>
-<span class="p">$ </span>pi-bolt remove npm:opensec-pi-todo     <span class="c"># remove one</span>
+<span class="p">$ </span>pi-bolt remove --pi-bolt npm:opensec-pi-todo <span class="c"># remove one</span>
 <span class="p">$ </span>pi-bolt config                         <span class="c"># turn resources on and off</span></pre>
-<p><code>pi-bolt install</code> and <code>pi-bolt remove</code> change Pi-Bolt's own package list, not Pi's: what you install
-  with <code>pi-bolt</code> does not load in Pi (see <a href="configuration.html">Configuration</a>).</p>
+<p><code>pi-bolt install</code> and <code>pi-bolt remove</code> change the shared <code>packages</code> list used by both Pi and
+  Pi-Bolt. Add <code>--pi-bolt</code> to change only Pi-Bolt's package overrides, which inherit the shared list and can add,
+  exclude or replace packages (see <a href="configuration.html#shared-packages-and-pi-bolt-overrides">Configuration</a>).</p>
 <p>Pi-Bolt installs packages with its own package manager when npm is not installed. A run-time extension's own dependencies
   resolve as they do on Node, through its <code>package.json</code>. Writing extensions is covered by Pi's
   <a href="https://pi.dev/docs/latest/extensions">Extensions</a> guide.</p>
@@ -118,8 +119,8 @@
 
 <h2 id="opensec-extensions">OpenSec extensions<a class="anchor" href="#opensec-extensions" aria-label="Link to this section">#</a></h2>
 <p>The installer offers three extensions that OpenSec maintains for Pi-Bolt. They are prebuilt for Pi-Bolt's runtime, so they
-  load without being transpiled; they are in Pi-Bolt's package list only, as Pi cannot run them. The installer installs the
-  versions each release pins.</p>
+  load without being transpiled. The installer uses <code>--pi-bolt</code> to keep them out of Pi's shared list, as Pi on Node
+  cannot run them. It installs the versions each release pins.</p>
 <div class="table"><table>
   <thead><tr><th>Package</th><th>What it does</th></tr></thead>
   <tbody>
@@ -128,9 +129,9 @@
     <tr><td><a href="https://www.npmjs.com/package/opensec-pi-fff"><code>opensec-pi-fff</code></a></td><td>Fast file and content search: find, grep and @-mentions, as fast on the default build as with the JIT. Not offered when <code>@ff-labs/pi-fff</code> is installed.</td></tr>
   </tbody>
 </table></div>
-<pre data-label="Terminal"><span class="p">$ </span>pi-bolt install npm:opensec-pi-subagents
-<span class="p">$ </span>pi-bolt install npm:opensec-pi-todo
-<span class="p">$ </span>pi-bolt install npm:opensec-pi-fff</pre>
+<pre data-label="Terminal"><span class="p">$ </span>pi-bolt install --pi-bolt npm:opensec-pi-subagents
+<span class="p">$ </span>pi-bolt install --pi-bolt npm:opensec-pi-todo
+<span class="p">$ </span>pi-bolt install --pi-bolt npm:opensec-pi-fff</pre>
 
 <h2 id="compile-extensions-in">Compile extensions in<a class="anchor" href="#compile-extensions-in" aria-label="Link to this section">#</a></h2>
 <p>An extension compiled into the executable runs as machine code like Pi itself, with no startup cost. On Linux and macOS,
