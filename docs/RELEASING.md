@@ -1,13 +1,14 @@
 # Releasing Pi-Bolt
 
-Five workflows, all on GitHub's own runners:
+Six workflows, all on GitHub's own runners:
 
 | Workflow | When | What |
 |---|---|---|
-| `ci` | every push to `pi-bolt`, every pull request | lint and types, Pi's tests, Pi-Bolt built and tested on Linux x86-64 and macOS (Apple silicon), the installer's checks, whether the engine patches apply |
+| `ci` | every push to `pi-bolt`, every pull request | lint and types, Pi's tests, Pi-Bolt built and tested on Linux x86-64, Linux ARM64 and macOS (Apple silicon), the installer's checks, whether the engine patches apply |
 | `tag` | `ci` passed on a push to `pi-bolt` | when `VERSION` has no `bolt-vX.Y.Z` tag yet, tags that commit and runs `release` |
-| `release` | a `bolt-vX.Y.Z` tag | builds the 15 archives on Linux, macOS and Windows, tests each as unpacked from its archive, makes a **draft** release with `SHA256SUMS`, `extensions.txt` and `RUNTIME_STAMP`, and runs `publish` |
+| `release` | a `bolt-vX.Y.Z` tag | builds the 20 archives on Linux (x86-64 and ARM64), macOS and Windows, tests each as unpacked from its archive, makes a **draft** release with `SHA256SUMS`, `extensions.txt` and `RUNTIME_STAMP`, and runs `publish` |
 | `publish` | after `release`, or by hand | signs `SHA256SUMS`, checks the signature and the checksums, publishes the release, puts `install.sh`, `install.ps1` and the site on `gh-pages`, and publishes npm |
+| `runtime` | by hand, when the engine changed | builds the four runtimes, each on its platform's runner, and attaches them to the tag's draft ([below](#when-the-engine-changed)) |
 | `upstream` | daily | opens an issue when Pi has a new release, with the files where merging it conflicts |
 
 `tag` and the hand-over from `release` to `publish` run only when the repository variable `AUTO_RELEASE` is `true`. The
@@ -72,28 +73,33 @@ each as it is, and that `extensions.txt` pins at least one extension and has no 
 
 ## When the engine changed
 
-The runtime (patched WebKit and Bun) takes about 32 GB of RAM, 40 GB of disk and an hour on 16 cores to build, more than
-GitHub's runners give. `release` therefore uses the previous release's runtimes when the engine is the same: `RUNTIME_STAMP`
-is the hash of the engine entries of `sources.json`, the patches, the runtime build scripts and the linker-order hints
-they link with (`profiles/runtime-*.hints`) (`scripts/runtime-stamp.sh`). `ci` says when it differs. The previous release's stamp counts only as its signed `SHA256SUMS`
+`release` uses the previous release's runtimes when the engine is the same: `RUNTIME_STAMP` is the hash of the engine entries of
+`sources.json`, the patches, the runtime build scripts and the linker-order hints they link with (`profiles/runtime-*.hints`)
+(`scripts/runtime-stamp.sh`). `ci` says when it differs. The previous release's stamp counts only as its signed `SHA256SUMS`
 gives it, for that release's version (releases before 0.8.0 did not sign it, so their runtimes are not reused). Runtimes
 uploaded to the draft are hashed by `release`'s first job and checked again by each build job before it uses one.
 
-When it changed, build the four runtimes by hand before tagging:
+When it changed, the four runtimes are built before tagging, by the `runtime` workflow, from `pi-bolt` once the change is
+merged:
 
-1. On Linux x86-64 and on Linux ARM64: `scripts/toolchain/make-sysroot.sh` once, then `scripts/fetch-sources.sh` and
-   `scripts/build-runtime.sh` ([BUILDING.md](BUILDING.md); Linux ARM64 can be the Mac's Docker, [Linux ARM64 in a
-   container](BUILDING.md#linux-arm64-in-a-container)). On a Mac with Apple silicon: `scripts/fetch-sources.sh` and
-   `scripts/build-runtime.sh`. On Windows x64: `scripts\fetch-sources.ps1` and `scripts\build-runtime.ps1` ([WINDOWS.md](WINDOWS.md)).
-   `fetch-sources` stops when `.work/webkit` or `.work/bun` is not the pinned commit with the current patch applied (sources of
-   an earlier engine, or a fetch that stopped halfway): delete that folder and run it again.
-2. On each, `scripts/package-release.sh` (Windows: `scripts\package-release.ps1`) and keep `pi-bolt-runtime-<platform>.tar.gz`
-   (Windows: `.zip`) from `dist/X.Y.Z`. Run `tests/aot/run.sh` and `tests/runtime/run.sh` there (Windows: the `.ps1` ones; Linux
-   ARM64: `tests/termux/run.sh` too).
-3. Make a draft for the tag and upload all four: `gh release create bolt-vX.Y.Z --draft --title "Pi-Bolt X.Y.Z" --notes ""`,
-   then `gh release upload bolt-vX.Y.Z pi-bolt-runtime-linux-x64.tar.gz pi-bolt-runtime-linux-arm64.tar.gz
-   pi-bolt-runtime-darwin-arm64.tar.gz pi-bolt-runtime-win32-x64.zip`.
-4. Push the tag (or run `release` for it): it builds Pi on those runtimes.
+```bash
+gh workflow run runtime.yml -R opensec-git/Pi-Bolt -f tag=bolt-vX.Y.Z
+```
+
+It builds each runtime on its platform's runner (Linux x86-64 and ARM64, macOS, Windows), runs `tests/aot` and `tests/runtime`
+on it, and attaches the four archives to the tag's draft release (making the draft if there is none). The runners are smaller than
+the machine [BUILDING.md](BUILDING.md) asks for, so the build runs with swap and four jobs, for two to four hours. A branch
+`runtime/<name>` builds its commit's runtimes the same way, as workflow artifacts, to try an engine change. Then push the tag (or
+run `release` for it): it builds Pi on those runtimes.
+
+By hand, on each platform: `scripts/toolchain/make-sysroot.sh` once (Linux), `scripts/fetch-sources.sh` and
+`scripts/build-runtime.sh` ([BUILDING.md](BUILDING.md); Linux ARM64 can be the Mac's Docker, [Linux ARM64 in a
+container](BUILDING.md#linux-arm64-in-a-container)), on Windows `scripts\fetch-sources.ps1` and `scripts\build-runtime.ps1`
+([WINDOWS.md](WINDOWS.md)); then `scripts/package-release.sh --runtime-only` (Windows: `scripts\package-release.ps1
+-RuntimeOnly`), and upload `dist/X.Y.Z/pi-bolt-runtime-<platform>.tar.gz` (Windows: `.zip`) to a draft of the tag:
+`gh release create bolt-vX.Y.Z --draft --title "Pi-Bolt X.Y.Z" --notes ""`, then `gh release upload bolt-vX.Y.Z <archive>`.
+`fetch-sources` stops when `.work/webkit` or `.work/bun` is not the pinned commit with the current patch applied (sources of an
+earlier engine, or a fetch that stopped halfway): delete that folder and run it again.
 
 Say in the release notes, for each runtime, where it was built, the engine commits it was built from (`.work/webkit` and
 `.work/bun`, whose trees the patches make) and its SHA-256, so that it can be built again elsewhere and compared. (A runtime is
