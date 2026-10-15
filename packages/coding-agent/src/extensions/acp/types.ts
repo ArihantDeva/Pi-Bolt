@@ -47,7 +47,7 @@ export interface InitializeResponse {
 		loadSession: boolean;
 		promptCapabilities: { image: boolean; audio: boolean; embeddedContext: boolean };
 		mcpCapabilities: { http: boolean; sse: boolean };
-		sessionCapabilities: { list: object; resume: object; close: object };
+		sessionCapabilities: { list: object; resume: object; close: object; delete: object; fork: object };
 	};
 	agentInfo: Implementation;
 	authMethods: AuthMethod[];
@@ -180,6 +180,17 @@ export interface AvailableCommand {
 	input?: { hint: string } | null;
 }
 
+export interface SessionMode {
+	id: string;
+	name: string;
+	description?: string | null;
+}
+
+export interface SessionModeState {
+	currentModeId: string;
+	availableModes: SessionMode[];
+}
+
 export interface ConfigOptionValue {
 	value: string;
 	name: string;
@@ -206,7 +217,14 @@ export type SessionUpdate =
 	| { sessionUpdate: "config_option_update"; configOptions: ConfigOption[] }
 	| { sessionUpdate: "session_info_update"; title?: string | null; updatedAt?: string | null }
 	| { sessionUpdate: "usage_update"; used: number; size: number; cost?: { amount: number; currency: string } | null }
-	| { sessionUpdate: "notice"; severity: "info" | "warning" | "error"; title: string; description?: string | null };
+	| { sessionUpdate: "notice"; severity: "info" | "warning" | "error"; title: string; description?: string | null }
+	| {
+			sessionUpdate: "compaction_update";
+			compactionId: string;
+			status: "in_progress" | "completed" | "failed" | "cancelled";
+			summary?: ContentBlock[] | null;
+			error?: string | null;
+	  };
 
 export interface SessionNotification {
 	sessionId: string;

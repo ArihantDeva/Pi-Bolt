@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { resolveToCwd } from "../../core/tools/path-utils.ts";
-import { isRecord } from "./connection.ts";
+import { isRecord } from "../json-rpc.ts";
 import type {
 	ContentBlock,
 	SessionUpdate,
@@ -326,9 +326,14 @@ function imagesOf(content: unknown): ContentBlock[] {
 
 /**
  * The conversation as session updates, for `session/load`: user and assistant messages, thinking, and tool calls with
- * their results. Messages Pi keeps out of the transcript (extension state, summaries) are left out.
+ * their results, and compaction summaries for clients that show compactions. Messages Pi keeps out of the transcript
+ * (extension state, branch summaries) are left out.
  */
-export function replayMessages(messages: readonly AgentMessage[], cwd: string): SessionUpdate[] {
+export function replayMessages(
+	messages: readonly AgentMessage[],
+	cwd: string,
+	options: { compaction?: boolean } = {},
+): SessionUpdate[] {
 	const updates: SessionUpdate[] = [];
 	const results = new Map<string, { content: unknown; isError: boolean }>();
 	for (const message of messages) {
@@ -385,6 +390,17 @@ export function replayMessages(messages: readonly AgentMessage[], cwd: string): 
 				}
 				break;
 			}
+			case "compactionSummary":
+				// For clients that show compactions: the summary that took the place of the messages before it.
+				if (options.compaction) {
+					updates.push({
+						sessionUpdate: "compaction_update",
+						compactionId: `compaction_${messageId}`,
+						status: "completed",
+						summary: [{ type: "text", text: message.summary }],
+					});
+				}
+				break;
 			default:
 				break;
 		}
