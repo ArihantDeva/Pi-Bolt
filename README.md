@@ -221,6 +221,20 @@ off. Restoring a session needs Herdr 0.9.2 or later.
 To start other agents in Herdr panes from Pi-Bolt, install [pi-herdr](https://www.npmjs.com/package/@andrewjacop/pi-herdr):
 `pi-bolt install npm:@andrewjacop/pi-herdr`.
 
+## Editors
+
+`pi-bolt --acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com), so Pi-Bolt runs in the agent panel of Zed,
+JetBrains IDEs, VS Code (through an ACP extension), Neovim and other ACP editors, with your Pi settings, extensions, skills and
+sessions. In Zed's `settings.json`:
+
+```json
+"agent_servers": {
+  "Pi-Bolt": { "type": "custom", "command": "/full/path/to/pi-bolt", "args": ["--acp"], "env": {} }
+}
+```
+
+Other editors, and what the editor gets: [docs/ACP.md](docs/ACP.md).
+
 ## How it works
 
 <picture>
@@ -247,6 +261,7 @@ in [`sources.json`](sources.json) with Pi-Bolt's changes on top; the engine chan
 | [Building](docs/BUILDING.md) | Building the runtime and Pi from source, training profiles, tests |
 | [Benchmarks](docs/BENCHMARKS.md) | Method, results and raw data |
 | [Plugins](docs/PLUGINS.md) | Porting Pi extensions and writing them for AOT |
+| [Editors](docs/ACP.md) | Pi-Bolt in Zed, JetBrains IDEs, VS Code and other ACP editors |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Diagnostics, environment variables, known limitations |
 | [Releasing](docs/RELEASING.md) | CI, releases, signing |
 

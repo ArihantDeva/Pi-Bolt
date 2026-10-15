@@ -61,6 +61,7 @@ import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/setti
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
+import { loadAcpMode } from "./extensions/acp/mode.lazy.ts";
 import { quietOtherHerdrReporters } from "./extensions/herdr/index.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
@@ -112,7 +113,8 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
-	if (parsed.mode === "rpc") {
+	// ACP runs headless as RPC does (stdin and stdout carry the protocol); it differs only in the loop that serves it.
+	if (parsed.mode === "rpc" || parsed.mode === "acp") {
 		return "rpc";
 	}
 	if (parsed.mode === "json") {
@@ -124,7 +126,7 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 	return "interactive";
 }
 
-function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
+function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc" | "acp"> {
 	return appMode === "json" ? "json" : "text";
 }
 
@@ -666,8 +668,8 @@ export async function main(args: string[], options?: MainOptions) {
 		takeOverStdout();
 	}
 
-	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
-		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
+	if ((parsed.mode === "rpc" || parsed.mode === "acp") && parsed.fileArgs.length > 0) {
+		console.error(chalk.red(`Error: @file arguments are not supported in ${parsed.mode.toUpperCase()} mode`));
 		process.exit(1);
 	}
 
@@ -716,10 +718,10 @@ export async function main(args: string[], options?: MainOptions) {
 	// the target session cwd is known. The startup-cwd settings manager is used only for
 	// sessionDir lookup during session selection.
 	const envSessionDir = process.env[ENV_SESSION_DIR];
-	const sessionDir =
+	const explicitSessionDir =
 		(parsed.sessionDir ? normalizePath(parsed.sessionDir) : undefined) ??
-		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
-		startupSettingsManager.getSessionDir();
+		(envSessionDir ? expandTildePath(envSessionDir) : undefined);
+	const sessionDir = explicitSessionDir ?? startupSettingsManager.getSessionDir();
 	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {
@@ -770,6 +772,9 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
+	// Loaded only for `--acp`: other modes never load the ACP code.
+	const acp = parsed.mode === "acp" ? await loadAcpMode() : undefined;
+	const runtimeExtensionFactories = acp ? [...extensionFactories, acp.acpExtension] : extensionFactories;
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
@@ -834,7 +839,7 @@ export async function main(args: string[], options?: MainOptions) {
 				noContextFiles: parsed.noContextFiles,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
-				extensionFactories,
+				extensionFactories: runtimeExtensionFactories,
 			},
 		});
 		const { settingsManager, modelRuntime, resourceLoader } = services;
@@ -906,6 +911,11 @@ export async function main(args: string[], options?: MainOptions) {
 		};
 	};
 	time("createRuntime");
+	if (acp) {
+		// The editor chooses each session's directory, so ACP creates its runtimes itself, one per session.
+		await acp.runAcpMode({ createRuntime, agentDir, sessionDir: explicitSessionDir, offline: offlineMode });
+		return;
+	}
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
