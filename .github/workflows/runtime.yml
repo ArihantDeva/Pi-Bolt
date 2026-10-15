@@ -4,7 +4,8 @@ name: runtime
 # GitHub's runners, each on its own: Linux x86-64 and ARM64, macOS on Apple silicon, Windows x64. It is what a release needs when
 # the engine changed (docs/RELEASING.md, "When the engine changed"): run it from pi-bolt with the release's tag, and it attaches
 # pi-bolt-runtime-<platform>.tar.gz (Windows: .zip) to that tag's draft release, which the release workflow then uses. A push to
-# a branch runtime/<name> builds its commit's runtimes as workflow artifacts only.
+# a branch runtime/<name> builds its commit's runtimes as workflow artifacts only: all four, or the one the name is
+# (runtime/win32-x64).
 #
 #   gh workflow run runtime.yml -R opensec-git/Pi-Bolt -f tag=bolt-vX.Y.Z
 #
@@ -32,7 +33,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PLATFORMS: ${{ github.event.inputs.platforms || 'linux-x64,linux-arm64,darwin-arm64,win32-x64' }}
+  PLATFORMS: ${{ github.event.inputs.platforms || (contains(fromJSON('["runtime/linux-x64","runtime/linux-arm64","runtime/darwin-arm64","runtime/win32-x64"]'), github.ref_name) && github.ref_name) || 'linux-x64,linux-arm64,darwin-arm64,win32-x64' }}
 
 jobs:
   unix:
@@ -52,7 +53,7 @@ jobs:
     steps:
       - name: Wanted
         id: wanted
-        run: case ",$PLATFORMS," in *",${{ matrix.platform }},"*) echo "yes=true" >>"$GITHUB_OUTPUT" ;; esac
+        run: case ",${PLATFORMS#runtime/}," in *",${{ matrix.platform }},"*) echo "yes=true" >>"$GITHUB_OUTPUT" ;; esac
       # (No token kept in .git: what the build runs, dependencies included, gets none.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.wanted.outputs.yes
@@ -138,7 +139,7 @@ jobs:
     steps:
       - name: Wanted
         id: wanted
-        run: if (",$env:PLATFORMS," -like '*,win32-x64,*') { Add-Content -Encoding utf8 $env:GITHUB_OUTPUT 'yes=true' }
+        run: if (",$($env:PLATFORMS -replace '^runtime/', '')," -like '*,win32-x64,*') { Add-Content -Encoding utf8 $env:GITHUB_OUTPUT 'yes=true' }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.wanted.outputs.yes
         with:
@@ -149,15 +150,21 @@ jobs:
           bun-version: "1.4.2"
       - name: Tools
         if: steps.wanted.outputs.yes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # LLVM 23 (clang-cl, lld-link), NASM; the image has Visual Studio 2022 with the C++ workload and its Clang tools, Go,
           # Ruby, Python and Git for Windows (perl).
-          choco install -y --no-progress nasm
-          $llvm = (Invoke-RestMethod 'https://api.github.com/repos/llvm/llvm-project/releases?per_page=30' | Where-Object { $_.tag_name -match '^llvmorg-23\.1\.\d+$' } | Select-Object -First 1)
-          $asset = $llvm.assets | Where-Object { $_.name -match '^LLVM-23\.1\.\d+-win64\.exe$' } | Select-Object -First 1
-          Invoke-WebRequest $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\llvm.exe"
-          Start-Process -Wait -FilePath "$env:RUNNER_TEMP\llvm.exe" -ArgumentList '/S', '/D=C:\LLVM23'
+          $tag = (& gh release list -R llvm/llvm-project --limit 60 --json tagName --jq '.[].tagName') | Where-Object { $_ -match '^llvmorg-23\.1\.\d+$' } | Select-Object -First 1
+          if (-not $tag) { Write-Host 'no LLVM 23.1 release'; exit 1 }
+          & gh release download $tag -R llvm/llvm-project --pattern 'LLVM-*-win64.exe' --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $installer = Get-ChildItem "$env:RUNNER_TEMP\LLVM-*-win64.exe" | Select-Object -First 1
+          Start-Process -Wait -FilePath $installer.FullName -ArgumentList '/S', '/D=C:\LLVM23'
+          if (-not (Test-Path 'C:\LLVM23\bin\clang-cl.exe')) { Write-Host "LLVM did not install from $($installer.Name)"; exit 1 }
           Add-Content -Encoding utf8 $env:GITHUB_PATH 'C:\LLVM23\bin'
+          & choco install -y --no-progress nasm
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           Add-Content -Encoding utf8 $env:GITHUB_PATH 'C:\Program Files\NASM'
           # The scripts run Python 3 as `py -3`.
           if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
