@@ -3,7 +3,10 @@
 #   - the release as published installs, its signature verified;
 #   - without SHA256SUMS.sig it is not installed (a signed release must carry its signature);
 #   - an archive replaced together with its checksum is not installed (the signature of SHA256SUMS does not match);
-#   - a PIBOLT_BIN_DIR with quotes, $(...) and backquotes stays a folder name in the line given for the shell's configuration.
+#   - a PIBOLT_BIN_DIR with quotes, $(...) and backquotes stays a folder name in the line given for the shell's configuration;
+#   - an update keeps the build it replaces as <name>.previous (for pi-bolt update --rollback), and the same build installed
+#     again does not replace the one kept;
+#   - PIBOLT_CHANNEL=beta is kept for the installation's updates (<install>/channel), and stable takes it away.
 # Needs curl, python3 and gh (or a GitHub token for gh), and OpenSSL 3 for the verified case.
 #
 # Usage: tests/installer/run.sh
@@ -50,6 +53,13 @@ install() {
 		PIBOLT_YES=1 PIBOLT_INSTALL="$WORK/home/inst" PIBOLT_BIN_DIR="$WORK/home/bin" "$@" sh "$ROOT/install.sh" </dev/null 2>&1 || true
 }
 installed() { [ -x "$WORK/home/inst/$NAME/pi" ]; }
+# install_again CASE [ENV...]: the same, over what the last run installed.
+install_again() {
+	local case=$1
+	shift
+	env HOME="$WORK/home" SHELL=/bin/sh PIBOLT_DOWNLOAD_BASE="http://127.0.0.1:$port/$case" PIBOLT_EXTENSIONS=no PIBOLT_NO_START=1 \
+		PIBOLT_YES=1 PIBOLT_INSTALL="$WORK/home/inst" PIBOLT_BIN_DIR="$WORK/home/bin" "$@" sh "$ROOT/install.sh" </dev/null 2>&1 || true
+}
 
 out=$(install good)
 if installed && grep -q "signature verified" <<<"$out"; then pass "the release installs, signature verified"; else
@@ -74,4 +84,26 @@ else
 	fail "PIBOLT_BIN_DIR stays a folder name (no PATH line)"; printf '%s\n' "$out"
 fi
 
+inst="$WORK/home/inst"
+out=$(install good)
+if [ ! -e "$inst/$NAME.previous" ]; then pass "a first install keeps no previous build"; else fail "a first install keeps no previous build"; fi
+printf 'an older build\n' >>"$inst/$NAME/pi-bolt.txt"
+out=$(install_again good)
+if installed && grep -q "an older build" "$inst/$NAME.previous/pi-bolt.txt" 2>/dev/null &&
+	! grep -q "an older build" "$inst/$NAME/pi-bolt.txt"; then pass "an update keeps the build it replaces as .previous"; else
+	fail "an update keeps the build it replaces as .previous"; printf '%s\n' "$out"; fi
+out=$(install_again good)
+if grep -q "an older build" "$inst/$NAME.previous/pi-bolt.txt" 2>/dev/null; then
+	pass "the same build installed again leaves the previous one"; else
+	fail "the same build installed again leaves the previous one"; printf '%s\n' "$out"; fi
+
+version=$(head -n 1 "$WORK/good/SHA256SUMS" | sed 's/^# pi-bolt //')
+out=$(install_again good PIBOLT_CHANNEL=beta PIBOLT_VERSION="bolt-v$version")
+if [ "$(cat "$inst/channel" 2>/dev/null)" = beta ]; then pass "PIBOLT_CHANNEL=beta is kept for updates"; else
+	fail "PIBOLT_CHANNEL=beta is kept for updates"; printf '%s\n' "$out"; fi
+out=$(install_again good PIBOLT_CHANNEL=stable)
+if [ ! -e "$inst/channel" ]; then pass "PIBOLT_CHANNEL=stable takes it away"; else fail "PIBOLT_CHANNEL=stable takes it away"; fi
+out=$(install_again good PIBOLT_CHANNEL=nightly)
+if grep -q "PIBOLT_CHANNEL must be stable or beta" <<<"$out"; then pass "another channel is refused"; else
+	fail "another channel is refused"; printf '%s\n' "$out"; fi
 exit $status

@@ -6,6 +6,7 @@ and how to write plugin code that the ahead-of-time compiler handles well.
 
 - [Short answer](#short-answer)
 - [Three ways to run a plugin](#three-ways-to-run-a-plugin)
+- [pi-bolt compile](#pi-bolt-compile)
 - [Compile in the plugins you already have](#compile-in-the-plugins-you-already-have)
 - [Compile plugins into the executable](#compile-plugins-into-the-executable)
 - [Compatibility checklist](#compatibility-checklist)
@@ -43,13 +44,13 @@ A compiled-in plugin:
 
 ## Three ways to run a plugin
 
-| | Compiled in (`--plugins`) | Run-time loaded, JIT-off build | Run-time loaded, JIT-on build |
+| | Compiled in (`pi-bolt compile`) | Run-time loaded, JIT-off build | Run-time loaded, JIT-on build |
 |---|---|---|---|
 | Changes to the plugin | none (see the [checklist](#compatibility-checklist)) | none | none |
 | Startup cost | none | jiti + TypeScript compile per start | jiti + TypeScript compile per start |
 | Hot code runs as | AOT machine code | bytecode interpreter | interpreter, then JIT after warm-up |
 | Memory | lowest | low | higher (JIT code and compiler threads) |
-| Update the plugin | rebuild the executable (~10 s) | edit the file and restart | edit the file and restart |
+| Update the plugin | `pi-bolt compile` again (~20 s) | edit the file and restart | edit the file and restart |
 | Best for | plugins you use every day | trying out a plugin, light plugins | many third-party plugins you cannot rebuild |
 
 Run-time loading keeps working in every Pi-Bolt build: `~/.pi/agent/extensions`, project `.pi/extensions`, `pi --extension`, and
@@ -72,9 +73,38 @@ with them (`scripts\train-heap.ps1 -Plugins plugins\opensec\plugins.ts`), then r
 `scripts\package-release.ps1 -WithOpenSec`. There, `-builtin:opensec-pi-todo` (or `-builtin:opensec-pi-subagents`) in the
 `extensions` list of `~/.pi/agent/settings.json` turns one off, and an npm copy of one replaces the compiled one.
 
+## pi-bolt compile
+
+```bash
+pi-bolt compile                             # the extensions installed here
+pi-bolt compile --only pdf-reader,preset    # only these
+pi-bolt compile --exclude big-bundle        # all but these
+pi-bolt compile --status                    # what is compiled in
+pi-bolt compile --off                       # the release's executable again
+```
+
+`pi-bolt compile` builds your Pi-Bolt again with the extensions installed on this machine compiled in: the agent directory's
+`extensions` folder, the paths in its `extensions` setting, and the packages `pi-bolt install` installed (`--no-packages`
+leaves those out). It needs no checkout of this repository and no tools. It downloads its own release's runtime and compile
+kit, checks them against the release's signed `SHA256SUMS` as the installer does, and keeps them in `~/.pi-bolt/cache`. A build
+takes about 20 seconds.
+
+The new executable takes the place of the installed one, and the one it replaces is kept: `pi-bolt update --rollback` puts it
+back. `pi-bolt update` compiles the same extensions into each release it installs; when that fails, the release is installed
+without them, and the update says so.
+
+An extension compiled in stands in for its installed copy while that copy is unchanged. Pi finds, orders and turns extensions on
+and off as always, and uses the compiled one instead of loading the files. An extension changed since (a package updated, a file
+edited) is loaded from its files, with a warning to run `pi-bolt compile` again. One removed or turned off is not loaded.
+
+It works in installations made with the installer, on Linux and macOS. On Windows, in Termux and with the npm package, build in
+a checkout of this repository ([below](#compile-in-the-plugins-you-already-have)). The [checklist](#compatibility-checklist)
+applies as to any compiled-in plugin; `--exclude` leaves out one the compiler refuses.
+
 ## Compile in the plugins you already have
 
-Step 1 below is four steps done by hand: repeat Pi's discovery rules, name each extension, copy its folder where the bundler
+In a checkout of this repository, `scripts/build-pi.sh` does the same with a runtime and a Pi of your own. Step 1 below is four
+steps done by hand: repeat Pi's discovery rules, name each extension, copy its folder where the bundler
 can reach it, and bring its dependencies. `scripts/gen-plugin-manifest.mjs` does all four from what is installed on this
 machine, and `--plugins-from-installed` runs it as part of a build:
 
@@ -366,6 +396,7 @@ python3 bench/ui_check.py --project . --build plugins=out/pi-bolt-plugins/pi
 | `a function of N bytes of bytecode (the top-level code of a module) is bigger than maximumAOTCandidateBytecodeSize` | One module holds more than 256 KB of bytecode, usually a single large literal: a bundled `dist/index.js`, or embedded data such as a tokeniser's rank table. Leave that plugin out of the manifest; or set `BUN_JSC_maximumAOTCandidateBytecodeSize=N` to compile it anyway, which the compiler warns takes minutes and tens of GB; or set `BUN_JSC_omitBytecodeFromStaticHeap=0` to run it from bytecode. A plugin left out still loads at run time, and on the JIT-off build its code runs in the interpreter. |
 | `Could not resolve "./something"` during the build | A dynamic import or a file outside the manifest's folder. Use literal imports and keep the plugin's files under the manifest's folder. |
 | `Could not resolve "<package>"` for a plugin's own dependency | The manifest's folder has no `node_modules` entry for that package. Run `npm install` there. An `optionalDependency` counts: once it is installed, the plugin imports it like any other, so it must be in the folder too. |
+| "changed since it was compiled in, so it was loaded from its files" | The extension changed after `pi-bolt compile` compiled it in. Run `pi-bolt compile` again. |
 | A tool or command "conflicts" at startup | The plugin is also loaded at run time. Remove the run-time copy ([step 3](#3-remove-the-run-time-copies)). |
 | `ENOENT` for a file next to the plugin's source | Embed the file with an `import ... with { type: "text" }` or `{ type: "file" }`. |
 | A plugin's hot path is slow on the JIT-off build | Check it against the [performance guide](#performance-guide). As a stopgap, build with `--jit on`. |

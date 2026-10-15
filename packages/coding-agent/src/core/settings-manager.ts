@@ -82,7 +82,21 @@ function deepMergeObjects(base: Record<string, unknown>, overrides: Record<strin
 }
 
 /** Tools enabled at startup when `defaultTools` does not change them. */
-export const DEFAULT_TOOL_NAMES: readonly string[] = ["read", "bash", "edit", "write"];
+/** Pi's default tools; in Pi-Bolt, grep and find too (searching in-process: core/tools/native-search.ts). */
+export const DEFAULT_TOOL_NAMES: readonly string[] =
+	PIBOLT !== undefined ? ["read", "bash", "edit", "write", "grep", "find"] : ["read", "bash", "edit", "write"];
+
+/** FFF's extension (opensec-pi-fff, @ff-labs/pi-fff), by the path it is loaded from: it brings search tools of its own. */
+const FFF_EXTENSION = /(?:^builtin:|[\\/]node_modules[\\/])(?:opensec-pi-fff|@ff-labs[\\/]pi-fff)(?:[\\/]|$)/;
+
+/**
+ * The default tools with these extensions loaded: in Pi-Bolt, without its grep and find when FFF is loaded (it registers
+ * its own, under those names or as ffgrep and fffind).
+ */
+export function defaultToolNamesFor(extensionPaths: readonly string[]): readonly string[] {
+	if (PIBOLT === undefined || !extensionPaths.some((path) => FFF_EXTENSION.test(path))) return DEFAULT_TOOL_NAMES;
+	return DEFAULT_TOOL_NAMES.filter((name) => name !== "grep" && name !== "find");
+}
 
 /** Whether a tool selection entry is a `+name` or `-name` modifier. */
 export function isToolModifier(entry: unknown): boolean {
@@ -131,12 +145,12 @@ function mergeDefaultTools(base: string[] | undefined, overrides: string[] | und
 }
 
 /**
- * Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name` adds
+ * Resolve a merged `defaultTools` list: plain names replace `base` (`DEFAULT_TOOL_NAMES`), then `+name` adds
  * and `-name` removes a tool, in list order.
  */
-function resolveDefaultTools(entries: string[]): string[] {
+function resolveDefaultTools(entries: string[], base: readonly string[]): string[] {
 	const plain = entries.filter((entry) => !isToolModifier(entry));
-	return applyToolModifiers(plain.length > 0 || entries.length === 0 ? plain : DEFAULT_TOOL_NAMES, entries);
+	return applyToolModifiers(plain.length > 0 || entries.length === 0 ? plain : base, entries);
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1620,10 +1634,11 @@ export class SettingsManager {
 	}
 
 	/** The resolved `defaultTools` selection, or undefined when no settings layer sets it. */
-	getDefaultTools(): string[] | undefined {
+	/** `base`: what a list of only `+name`/`-name` entries changes (Pi-Bolt: `defaultToolNamesFor()`, which knows the extensions). */
+	getDefaultTools(base: readonly string[] = DEFAULT_TOOL_NAMES): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		if (tools === undefined) return undefined;
-		return resolveDefaultTools(Array.isArray(tools) ? tools.filter((tool) => typeof tool === "string") : []);
+		return resolveDefaultTools(Array.isArray(tools) ? tools.filter((tool) => typeof tool === "string") : [], base);
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {
