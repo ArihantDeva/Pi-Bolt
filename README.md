@@ -200,17 +200,25 @@ See [docs/PLUGINS.md](docs/PLUGINS.md).
 
 ### Pi and Pi-Bolt side by side
 
-Pi-Bolt uses Pi's agent directory (`~/.pi/agent`), so your Pi setup works in it as it is. Packages you install with `pi-bolt`
-go to Pi-Bolt's own list, `piBolt.packages`, and Pi keeps using `packages`, so each can load different packages:
+Pi-Bolt uses Pi's agent directory (`~/.pi/agent`) and shared `packages` list. Ordinary `pi-bolt install` and `pi-bolt remove`
+update that shared list, just as Pi does. Add `--pi-bolt` to change only Pi-Bolt's overrides. Using fictional package names:
+
+```bash
+pi-bolt install --pi-bolt npm:@example/bolt-tools
+pi-bolt remove --pi-bolt npm:@example/shared-tools
+```
+
+`piBolt.packages` extends the shared list. A `-source` entry excludes an inherited package from Pi-Bolt without changing Pi:
 
 ```json
 {
   "packages": ["npm:@juicesharp/rpiv-todo"],
-  "piBolt": { "packages": ["npm:opensec-pi-todo"] }
+  "piBolt": { "packages": ["-npm:@juicesharp/rpiv-todo", "npm:opensec-pi-todo"] }
 }
 ```
 
-Without `piBolt.packages`, Pi-Bolt loads `packages`. See [Configuration](https://pi-bolt.opensec.in/docs/configuration.html).
+Other shared packages remain inherited. Existing `piBolt.packages` lists are now additive, not independent lists; add explicit
+exclusions for shared packages you do not want Pi-Bolt to load. See [Configuration](https://pi-bolt.opensec.in/docs/configuration.html).
 
 ## Herdr
 

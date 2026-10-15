@@ -20,10 +20,36 @@
   and <a href="https://pi.dev/docs/latest/environment-variables">Environment variables</a> pages apply to Pi-Bolt as written.
   <code>PI_CODING_AGENT_DIR</code> moves the agent directory, and <code>PI_OFFLINE=1</code> (or <code>--offline</code>) turns off
   network operations at startup.</p>
-<p>Pi-Bolt never changes what Pi loads. It reads the packages in <code>settings.json</code>'s <code>packages</code> as Pi does
-  until you install or remove one with <code>pi-bolt</code>; from then on it keeps a list of its own, <code>piBolt.packages</code>
-  (made from <code>packages</code>), which Pi does not read. OpenSec's extensions are only ever in that list. See
-  <a href="https://github.com/opensec-git/Pi-Bolt#pi-and-pi-bolt-side-by-side">Pi and Pi-Bolt side by side</a>.</p>
+<h2>Shared packages and Pi-Bolt overrides</h2>
+<p><code>pi-bolt install</code> and <code>pi-bolt remove</code> update the shared <code>packages</code> list, just as Pi does.
+  They do not create a separate copy. Use <code>--pi-bolt</code> to change only <code>piBolt.packages</code>, which Pi ignores.
+  These examples use fictional package names:</p>
+<pre data-label="Terminal"><span class="p">$ </span>pi-bolt install --pi-bolt npm:@example/bolt-tools
+<span class="p">$ </span>pi-bolt remove --pi-bolt npm:@example/shared-tools</pre>
+<p><code>piBolt.packages</code> extends <code>packages</code> in the same settings file. Entries are applied in order: a package
+  adds to the inherited list or replaces an entry with the same identity; a <code>-source</code> string excludes it. For example:</p>
+<pre data-label="settings.json">{
+  "packages": ["npm:@example/shared-tools", "npm:@example/theme"],
+  "piBolt": {
+    "packages": ["-npm:@example/shared-tools", "npm:@example/bolt-tools"]
+  }
+}</pre>
+<p>Pi-Bolt loads <code>@example/theme</code> and <code>@example/bolt-tools</code>; Pi still loads <code>@example/shared-tools</code> and
+  <code>@example/theme</code>. Later changes to the shared list remain inherited. Package objects with resource filters work in
+  either list. Identity matching uses the npm package name, the Git repository, or the resolved local path, ignoring versions
+  and Git refs.</p>
+<p><code>remove --pi-bolt</code> removes an explicit override and, if the package is inherited, records an exclusion.
+  <code>install --pi-bolt</code> replaces a matching exclusion with the package. Add <code>--local</code> to either command to
+  edit <code>.pi/settings.json</code> instead of global settings. Each file's overrides affect only its own shared list;
+  project/global precedence is unchanged. A project exclusion does not exclude a global package.</p>
+<p>These are configuration overrides, not separate installations. Pi and Pi-Bolt share installed package files, so selecting
+  different versions or Git refs of the same package can replace the files used by both.</p>
+<p><strong>Existing configurations:</strong> <code>piBolt.packages</code> is now additive, including existing lists and empty
+  arrays. Shared packages previously absent from that list are inherited again. Add <code>-source</code> entries for packages
+  you want excluded; remove copied entries to let future shared changes apply to them. No automatic conversion preserves the
+  old independent-list behaviour.</p>
+<p>The installer uses <code>--pi-bolt</code> for OpenSec's optional Bun-only extensions. The existing startup repair for older
+  installations still moves those extensions out of the shared list, but does not copy other shared packages.</p>
 
 <h2>Pi-Bolt's environment variables</h2>
 <p>These are read by the Pi-Bolt executable at run time.</p>
