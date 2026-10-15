@@ -50,4 +50,10 @@ check_sum "$TMP" "$NAME" || die "checksum mismatch for $NAME"
 tar -C "$TMP" -xzf "$TMP/$NAME"
 mkdir -p "$PIBOLT_WORK/runtime"
 install -m 755 "$TMP/pi-bolt-runtime-$PIBOLT_PLATFORM/bun" "$PIBOLT_WORK/runtime/bun"
+# Which engine it is, as the release's signed checksums give it (scripts/build-pi.sh records it, for `pi-bolt doctor`).
+if curl -fsSL -o "$TMP/RUNTIME_STAMP" "$BASE/RUNTIME_STAMP" 2>/dev/null && check_sum "$TMP" RUNTIME_STAMP; then
+	cp "$TMP/RUNTIME_STAMP" "$PIBOLT_WORK/runtime/RUNTIME_STAMP"
+else
+	rm -f "$PIBOLT_WORK/runtime/RUNTIME_STAMP"
+fi
 log "runtime: $PIBOLT_WORK/runtime/bun (Bun $("$PIBOLT_WORK/runtime/bun" --version))"

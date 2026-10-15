@@ -41,8 +41,9 @@
 <p>The CPU has no SSE4.2 (older than Intel Nehalem, 2008, or AMD Bulldozer, 2011). No Pi-Bolt build runs on it.</p>
 
 <h3><code>bun:ffi requires the JIT</code></h3>
-<p>An extension uses <code>bun:ffi</code> (for example pi-fff). Install the JIT build: see
-  <a href="builds.html#switch-builds">Switch builds</a>.</p>
+<p>An extension calls into a native library through <code>bun:ffi</code>, which works only on the JIT build. The message names
+  the extension and gives the command that installs the JIT build (<a href="builds.html#switch-builds">Switch builds</a>);
+  <code>pi-bolt doctor</code> lists every extension that uses <code>bun:ffi</code>.</p>
 
 <h3>An extension is slow</h3>
 <p>On the default build, extensions loaded at run time are interpreted. Use the <a href="builds.html">JIT build</a>, or
@@ -90,9 +91,9 @@
     <a href="https://github.com/earendil-works/pi/issues">Pi</a>.</li>
   <li>If it only happens with Pi-Bolt, <a href="https://github.com/opensec-git/Pi-Bolt/issues/new">open an issue</a> with:
     <ul>
-      <li>the output of <code>BUN_STATIC_HEAP_VERBOSE=1 pi-bolt --version</code>;</li>
-      <li>your system: on Linux, the distribution, <code>ldd --version | head -1</code> and the CPU model; on macOS,
-        <code>sw_vers</code> and <code>sysctl -n machdep.cpu.brand_string</code>; on Windows, the Windows version and CPU;</li>
+      <li>the output of <code>pi-bolt doctor</code> (the build, installation, extensions and packages, and the problems it
+        finds; no keys or tokens, and your home folder shown as <code>~</code>);</li>
+      <li>on Linux, <code>ldd --version | head -1</code>;</li>
       <li>whether it also happens with <code>BUN_AOT=0 pi-bolt</code>.</li>
     </ul>
   </li>
