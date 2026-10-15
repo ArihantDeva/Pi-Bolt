@@ -157,14 +157,14 @@ function, which compares many characters at a time.
  Source/bmalloc/bmalloc/BPlatform.h            |    7 +
  Source/bmalloc/bmalloc/CryptoRandom.cpp       |   60 +-
  Source/bmalloc/bmalloc/StaticRegion.cpp       |  426 +-
- Source/bmalloc/bmalloc/StaticRegion.h         |  101 +-
+ Source/bmalloc/bmalloc/StaticRegion.h         |  102 +-
  Source/bmalloc/bmalloc/bmalloc.cpp            |   17 +
  Source/bmalloc/bmalloc/bmalloc.h              |    5 +
  Source/cmake/WebKitCompilerFlags.cmake        |    4 +-
  Source/cmake/WebKitMacros.cmake               |   28 +-
  .../TestWebKitAPI/Tests/WTF/StringCommon.cpp  |   19 +-
  build-icu.ps1                                 |   49 +-
- 126 files changed, 9122 insertions(+), 580 deletions(-)
+ 126 files changed, 9123 insertions(+), 580 deletions(-)
  create mode 100644 JSTests/microbenchmarks/array-length-increment-large.js
  create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-long.js
  create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-short.js
@@ -13909,7 +13909,7 @@ index 77260b2296..bbe9ce4ee0 100644
                  return pointer;
              }
 diff --git a/Source/bmalloc/bmalloc/StaticRegion.h b/Source/bmalloc/bmalloc/StaticRegion.h
-index c87b01ecf0..d04b3b2aac 100644
+index c87b01ecf0..860441b75b 100644
 --- a/Source/bmalloc/bmalloc/StaticRegion.h
 +++ b/Source/bmalloc/bmalloc/StaticRegion.h
 @@ -7,12 +7,45 @@
@@ -13958,7 +13958,7 @@ index c87b01ecf0..d04b3b2aac 100644
  // Memory that is at the same address in every process. What a program is going to need that does not depend on how it is run is
  // made once, when the program is built, by the code that would otherwise make it each time the program starts; the memory it was
  // made in is written to the program's file, and mapped from there when the program runs. Pointers from one part of it to another
-@@ -39,12 +72,46 @@ public:
+@@ -39,12 +72,47 @@ public:
      static constexpr unsigned numberOfArenas = 8;
      static constexpr unsigned numberOfArenasInFile = 5;
  
@@ -13987,9 +13987,10 @@ index c87b01ecf0..d04b3b2aac 100644
 +#else
 +#if BOS(LINUX) && BCPU(ARM64)
 +    // ARM64 kernels give a process 512 GB of addresses (39-bit, as Android's and the Raspberry Pi's), 4 TB (42-bit, with 64 KB
-+    // pages) or more: 128 GB, with the arenas and the Structures' 4 GB after them, is below where the kernel puts a program's
-+    // loader (two thirds of the way up) and its other mappings (from the top down) on all of them.
-+    static constexpr uintptr_t baseAddress = 0x2000000000ULL;
++    // pages) or more: from 64 GB, the arenas and the Structures' 4 GB after them end at 100 GB, below where the kernel puts a
++    // program's loader (two thirds of the way up), its other mappings (from the top down) and, in the legacy layout (an
++    // unlimited stack), the first of them (a quarter of the way up: 128 GB) on all of them.
++    static constexpr uintptr_t baseAddress = 0x1000000000ULL;
 +#else
 +    static constexpr uintptr_t baseAddress = 0x200000000000ULL; // Beyond where mimalloc asks for memory, and far from where the kernel puts things.
 +#endif
@@ -14009,7 +14010,7 @@ index c87b01ecf0..d04b3b2aac 100644
  
      // ---- When the program is built. One thread does it.
  
-@@ -80,6 +147,7 @@ public:
+@@ -80,6 +148,7 @@ public:
      // ---- When it runs.
  
      BEXPORT static void mapBss(); // Before anything else here. Crashes if the addresses are taken.
@@ -14017,7 +14018,7 @@ index c87b01ecf0..d04b3b2aac 100644
      // What is where in Arena::Bss.
      static constexpr size_t offsetOfEmptyStringInBss = 0; // WTF::StringImpl::empty()
      static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
-@@ -88,10 +156,31 @@ public:
+@@ -88,10 +157,31 @@ public:
      static constexpr size_t offsetOfVTablesInBss = 256 * 1024;
      static constexpr size_t offsetOfVMInBss = 1 << 20;
      static constexpr size_t offsetOfGlobalObjectInBss = 2 << 20;
@@ -14049,7 +14050,7 @@ index c87b01ecf0..d04b3b2aac 100644
  
      // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
      BEXPORT static bool map(Arena, int fileDescriptor, off_t offsetInFile, size_t, size_t offsetInArena = 0, bool isCode = false);
-@@ -116,6 +205,10 @@ public:
+@@ -116,6 +206,10 @@ public:
  private:
      BEXPORT static void didFreeSlow(void*);
      BEXPORT static void* tryMallocSlow(size_t, size_t alignment);
