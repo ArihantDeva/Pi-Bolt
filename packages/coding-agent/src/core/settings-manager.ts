@@ -10,6 +10,7 @@ import { PIBOLT } from "../pi-bolt.ts";
 import { getFileRevision, normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import { getPackageIdentity, resolvePackageOverlay } from "./package-source.ts";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 import type {
 	CacheWarmingMode,
@@ -301,18 +302,8 @@ export class InMemorySettingsStorage implements SettingsStorage {
 }
 
 /**
- * Pi-Bolt and Pi share one agent directory (auth, models, sessions, settings), but Pi-Bolt never changes the packages Pi
- * loads. A list in `piBolt.packages` is Pi-Bolt's, read and written in place of `packages`, which Pi keeps using (it does not
- * read `piBolt`). Until Pi-Bolt changes its packages the first time, it reads `packages` as Pi does; that change makes
- * `piBolt.packages` from Pi's list and changes only it.
- */
-function hasOwnPackageList(settings: Settings): boolean {
-	return PIBOLT !== undefined && Array.isArray(settings.piBolt?.packages);
-}
-
-/**
  * OpenSec's extensions for Pi-Bolt are Bun builds, which Pi on Node cannot load; installers before Pi-Bolt 0.8.4 added them
- * to `packages`, so Pi stopped at them. Pi-Bolt moves them to its own list (made from `packages` if there is none).
+ * to `packages`, so Pi stopped at them. Move only those entries to Pi-Bolt's additive list.
  */
 const PIBOLT_ONLY_PACKAGE = /^npm:opensec-pi-(?:subagents|todo|fff)(?:@|$)/;
 
@@ -336,9 +327,15 @@ function withPiBoltOnlyPackagesMoved(settings: Record<string, unknown>): Record<
 	const piBolt = (typeof settings.piBolt === "object" && settings.piBolt !== null ? settings.piBolt : {}) as {
 		packages?: unknown;
 	};
-	const own: unknown[] = Array.isArray(piBolt.packages) ? piBolt.packages : [...packages];
-	const ownSources = new Set(own.map(sourceOfPackage));
-	const moved = packages.filter((entry) => isPiBoltOnlyPackage(entry) && !ownSources.has(sourceOfPackage(entry)));
+	const own: unknown[] = Array.isArray(piBolt.packages) ? piBolt.packages : [];
+	const identity = (entry: unknown) => {
+		const source = sourceOfPackage(entry);
+		return source === undefined
+			? undefined
+			: getPackageIdentity(source.startsWith("-") ? source.slice(1) : source, process.cwd());
+	};
+	const ownSources = new Set(own.map(identity));
+	const moved = packages.filter((entry) => isPiBoltOnlyPackage(entry) && !ownSources.has(identity(entry)));
 	return {
 		...settings,
 		packages: packages.filter((entry) => !isPiBoltOnlyPackage(entry)),
@@ -346,15 +343,12 @@ function withPiBoltOnlyPackagesMoved(settings: Record<string, unknown>): Record<
 	};
 }
 
-function runtimePackages(settings: Settings): Settings {
-	return hasOwnPackageList(settings) ? { ...settings, packages: [...(settings.piBolt?.packages ?? [])] } : settings;
-}
-
 export class SettingsManager {
 	private storage: SettingsStorage;
 	private globalSettings: Settings;
 	private projectSettings: Settings;
 	private settings: Settings;
+	private packageSettings: Settings = {};
 	private projectTrusted: boolean;
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
 	private modifiedNestedFields = new Map<keyof Settings, Set<string>>(); // Track global nested field modifications
@@ -384,7 +378,7 @@ export class SettingsManager {
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
 		this.settingsPaths = settingsPaths;
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = this.mergeSettings();
 	}
 
 	/** Create a SettingsManager that loads from files */
@@ -477,7 +471,7 @@ export class SettingsManager {
 				}
 			}
 		}
-		return runtimePackages(SettingsManager.migrateSettings(settings));
+		return SettingsManager.migrateSettings(settings);
 	}
 
 	private static tryLoadFromStorage(
@@ -554,15 +548,17 @@ export class SettingsManager {
 		return settings as Settings;
 	}
 
-	/** A copy of the effective settings: global and project settings merged, with overrides. */
+	/** Raw merged settings, not resolved package overlays. Never write a resolved list back to a raw list. */
 	getSettings(): Settings {
 		return structuredClone(this.settings);
 	}
 
+	/** Raw global declarations, including separate shared and Pi-Bolt package lists. */
 	getGlobalSettings(): Settings {
 		return structuredClone(this.globalSettings);
 	}
 
+	/** Raw trusted project declarations. Untrusted projects return empty settings. */
 	getProjectSettings(): Settings {
 		return structuredClone(this.projectSettings);
 	}
@@ -583,7 +579,7 @@ export class SettingsManager {
 		if (!trusted) {
 			this.projectSettings = {};
 			this.projectSettingsLoadError = null;
-			this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+			this.settings = this.mergeSettings();
 			return;
 		}
 
@@ -593,7 +589,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = this.mergeSettings();
 	}
 
 	async reload(): Promise<void> {
@@ -621,12 +617,13 @@ export class SettingsManager {
 			this.recordError("project", projectLoad.error);
 		}
 
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = this.mergeSettings();
 	}
 
 	/** Apply additional overrides on top of current settings */
 	applyOverrides(overrides: Partial<Settings>): void {
 		this.settings = deepMergeSettings(this.settings, overrides);
+		this.packageSettings = deepMergeSettings(this.packageSettings, overrides);
 	}
 
 	/** Mark a global field as modified during this session */
@@ -707,11 +704,6 @@ export class SettingsManager {
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
-				if (field === "packages" && PIBOLT !== undefined) {
-					// Pi-Bolt's own list changed (made from Pi's the first time); the one Pi uses stays as it is.
-					mergedSettings.piBolt = { ...currentFileSettings.piBolt, packages: value as PackageSource[] };
-					continue;
-				}
 				if (modifiedNestedFields.has(field) && typeof value === "object" && value !== null) {
 					const nestedModified = modifiedNestedFields.get(field)!;
 					const baseNested = (currentFileSettings[field] as Record<string, unknown>) ?? {};
@@ -731,7 +723,7 @@ export class SettingsManager {
 	}
 
 	private save(): void {
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = this.mergeSettings();
 
 		if (this.globalSettingsLoadError) {
 			return;
@@ -749,7 +741,7 @@ export class SettingsManager {
 	private saveProjectSettings(settings: Settings): void {
 		this.assertProjectTrustedForWrite();
 		this.projectSettings = structuredClone(settings);
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = this.mergeSettings();
 
 		if (this.projectSettingsLoadError) {
 			return;
@@ -1179,44 +1171,67 @@ export class SettingsManager {
 		return this.globalSettings.deviceId;
 	}
 
+	private getPackageSettingsScope(): SettingsScope {
+		return this.projectSettings.packages !== undefined ||
+			(PIBOLT !== undefined && Array.isArray(this.projectSettings.piBolt?.packages))
+			? "project"
+			: "global";
+	}
+
+	private mergeSettings(): Settings {
+		this.packageSettings = this.getPackageSettingsScope() === "project" ? this.projectSettings : this.globalSettings;
+		return deepMergeSettings(this.globalSettings, this.projectSettings);
+	}
+
+	/** Resolved runtime packages with project-list-over-global SDK precedence and non-persistent applyOverrides. */
 	getPackages(): PackageSource[] {
-		return [...(this.settings.packages ?? [])];
+		return this.resolvePackages(this.packageSettings, this.getPackageSettingsScope());
 	}
 
-	/**
-	 * The packages Pi itself loads from this scope's settings, for Pi-Bolt, which changes only its own list: removing a
-	 * package from Pi-Bolt's list leaves files Pi still uses. In Pi itself, none.
-	 */
-	getPackagesKeptForPi(scope: SettingsScope): PackageSource[] {
-		if (scope === "project" && !this.projectTrusted) return [];
-		let content: string | undefined;
-		if (this.storage.read) {
-			content = this.storage.read(scope);
+	/** Resolve only this file's overlay. Custom storage uses agent dir / cwd/.pi unless baseDir is supplied. */
+	getResolvedPackages(scope: SettingsScope, baseDir?: string): PackageSource[] {
+		const settings = scope === "project" ? this.projectSettings : this.globalSettings;
+		return this.resolvePackages(settings, scope, baseDir);
+	}
+
+	private resolvePackages(settings: Settings, scope: SettingsScope, baseDir?: string): PackageSource[] {
+		const shared = settings.packages ?? [];
+		baseDir ??= this.settingsPaths[scope]
+			? dirname(this.settingsPaths[scope]!)
+			: scope === "global"
+				? getAgentDir()
+				: join(process.cwd(), CONFIG_DIR_NAME);
+		const own = Array.isArray(settings.piBolt?.packages) ? settings.piBolt.packages : [];
+		return structuredClone(PIBOLT === undefined ? shared : resolvePackageOverlay(shared, own, baseDir));
+	}
+
+	/** Write raw shared declarations. The piBolt option explicitly selects the additive Pi-Bolt list. */
+	setPackages(packages: PackageSource[], options?: { piBolt?: boolean }): void {
+		if (options?.piBolt) {
+			if (PIBOLT === undefined) throw new Error("Pi-Bolt packages require a Pi-Bolt build");
+			this.globalSettings.piBolt = { ...this.globalSettings.piBolt, packages: structuredClone(packages) };
+			this.markModified("piBolt", "packages");
 		} else {
-			this.storage.withLock(scope, (current) => {
-				content = current;
-				return undefined;
-			});
+			this.globalSettings.packages = structuredClone(packages);
+			this.markModified("packages");
 		}
-		if (!content) return [];
-		try {
-			const settings = SettingsManager.migrateSettings(JSON.parse(stripBom(content)) as Record<string, unknown>);
-			return PIBOLT !== undefined ? [...(settings.packages ?? [])] : [];
-		} catch {
-			return [];
-		}
-	}
-
-	setPackages(packages: PackageSource[]): void {
-		this.globalSettings.packages = packages;
-		this.markModified("packages");
 		this.save();
 	}
 
-	setProjectPackages(packages: PackageSource[]): void {
-		this.updateProjectSettings("packages", (settings) => {
-			settings.packages = packages;
-		});
+	/** Write raw project declarations; never pass the resolved overlay here. */
+	setProjectPackages(packages: PackageSource[], options?: { piBolt?: boolean }): void {
+		if (options?.piBolt) {
+			if (PIBOLT === undefined) throw new Error("Pi-Bolt packages require a Pi-Bolt build");
+			this.assertProjectTrustedForWrite();
+			const settings = this.getProjectSettings();
+			settings.piBolt = { ...settings.piBolt, packages: structuredClone(packages) };
+			this.markProjectModified("piBolt", "packages");
+			this.saveProjectSettings(settings);
+		} else {
+			this.updateProjectSettings("packages", (settings) => {
+				settings.packages = structuredClone(packages);
+			});
+		}
 	}
 
 	getExtensionPaths(): string[] {

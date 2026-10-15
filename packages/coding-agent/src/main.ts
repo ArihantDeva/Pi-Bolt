@@ -68,7 +68,12 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
-import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
+import {
+	cleanupManagedInstall,
+	getPiBoltPackageFlagError,
+	handleConfigCommand,
+	handlePackageCommand,
+} from "./package-manager-cli.ts";
 import { PIBOLT } from "./pi-bolt.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -573,6 +578,12 @@ export interface MainOptions {
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	const packageFlagError = getPiBoltPackageFlagError(args);
+	if (packageFlagError) {
+		console.error(chalk.red(packageFlagError));
+		process.exitCode = 1;
+		return;
+	}
 	ttiTrace("main.entered");
 	resetTimings();
 	// Pi-Bolt reports to Herdr itself (extensions/herdr); keep pi-herdr's report of the same pane out of its way.

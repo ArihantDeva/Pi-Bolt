@@ -303,7 +303,7 @@ export const SettingsSchema = Type.Object(
 					packages: Type.Optional(
 						Type.Array(PackageSourceSchema, {
 							description:
-								"Pi-Bolt's own package sources, loaded by Pi-Bolt in place of packages; Pi keeps using packages.",
+								"Pi-Bolt package additions and same-identity replacements over this file's shared packages. Use -<source> strings to exclude inherited packages. An empty list inherits shared packages.",
 						}),
 					),
 				},

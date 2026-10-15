@@ -270,12 +270,27 @@ const SELF_UPDATE_NOTE_MARKDOWN_THEME: MarkdownTheme = {
 	underline: (text) => chalk.underline(text),
 };
 
+/** Checked before startup reads settings: even the historical safety migration is a write. */
+export function getPiBoltPackageFlagError(args: string[]): string | undefined {
+	const endOfOptions = args.indexOf("--");
+	const flags = args
+		.slice(0, endOfOptions === -1 ? args.length : endOfOptions)
+		.filter((arg) => arg === "--pi-bolt" || arg.startsWith("--pi-bolt="));
+	if (flags.length === 0) return undefined;
+	if (PIBOLT === undefined) return "--pi-bolt requires a Pi-Bolt build";
+	if (flags.some((flag) => flag !== "--pi-bolt")) return "--pi-bolt does not take a value";
+	if (!["install", "remove", "uninstall"].includes(args[0]))
+		return "--pi-bolt is only supported by install, remove, and uninstall";
+	return undefined;
+}
+
 interface PackageCommandOptions {
 	command: PackageCommand;
 	source?: string;
 	updateTarget?: UpdateTarget;
 	showExtensionsSkippedNote: boolean;
 	local: boolean;
+	piBolt: boolean;
 	force: boolean;
 	projectTrustOverride?: boolean;
 	help: boolean;
@@ -298,9 +313,9 @@ function reportSettingsErrors(settingsManager: SettingsManager, context: string)
 function getPackageCommandUsage(command: PackageCommand): string {
 	switch (command) {
 		case "install":
-			return `${COMMAND_NAME} install <source> [-l] [--approve|--no-approve]`;
+			return `${COMMAND_NAME} install <source> [-l]${PIBOLT ? " [--pi-bolt]" : ""} [--approve|--no-approve]`;
 		case "remove":
-			return `${COMMAND_NAME} remove <source> [-l] [--approve|--no-approve]`;
+			return `${COMMAND_NAME} remove <source> [-l]${PIBOLT ? " [--pi-bolt]" : ""} [--approve|--no-approve]`;
 		case "update":
 			return `${COMMAND_NAME} update [source|self|pi] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
@@ -335,7 +350,7 @@ Install a package and add it to settings.
 
 Options:
   -l, --local       Install project-locally (${CONFIG_DIR_NAME}/settings.json)
-  -a, --approve     Trust project-local files for this command
+${PIBOLT ? "  --pi-bolt        Write Pi-Bolt-only package declarations (installed files remain shared)\n" : ""}  -a, --approve     Trust project-local files for this command
   -na, --no-approve Ignore project-local files for this command
 
 Examples:
@@ -357,7 +372,7 @@ Alias: ${COMMAND_NAME} uninstall <source> [-l]
 
 Options:
   -l, --local       Remove from project settings (${CONFIG_DIR_NAME}/settings.json)
-  -a, --approve     Trust project-local files for this command
+${PIBOLT ? "  --pi-bolt        Remove or exclude only for Pi-Bolt (keep shared declarations/files)\n" : ""}  -a, --approve     Trust project-local files for this command
   -na, --no-approve Ignore project-local files for this command
 
 Examples:
@@ -418,6 +433,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	}
 
 	let local = false;
+	let piBolt = false;
 	let force = false;
 	let projectTrustOverride: boolean | undefined;
 	let help = false;
@@ -436,6 +452,12 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 		const arg = rest[index];
 		if (arg === "-h" || arg === "--help") {
 			help = true;
+			continue;
+		}
+
+		if (arg === "--pi-bolt") {
+			if (PIBOLT !== undefined && (command === "install" || command === "remove")) piBolt = true;
+			else invalidOption = invalidOption ?? arg;
 			continue;
 		}
 
@@ -595,6 +617,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 		updateTarget,
 		showExtensionsSkippedNote,
 		local,
+		piBolt,
 		force,
 		projectTrustOverride,
 		help,
@@ -876,6 +899,13 @@ export async function handleConfigCommand(
 		return false;
 	}
 
+	const flagError = getPiBoltPackageFlagError(args);
+	if (flagError) {
+		console.error(chalk.red(flagError));
+		process.exitCode = 1;
+		return true;
+	}
+
 	if (rest.includes("-h") || rest.includes("--help")) {
 		printConfigCommandHelp();
 		return true;
@@ -951,6 +981,13 @@ export async function handlePackageCommand(
 	const options = parsePackageCommand(args);
 	if (!options) {
 		return false;
+	}
+
+	const flagError = getPiBoltPackageFlagError(args);
+	if (flagError) {
+		console.error(chalk.red(flagError));
+		process.exitCode = 1;
+		return true;
 	}
 
 	if (options.help) {
@@ -1035,12 +1072,15 @@ export async function handlePackageCommand(
 	try {
 		switch (options.command) {
 			case "install":
-				await packageManager.installAndPersist(source!, { local: options.local });
+				await packageManager.installAndPersist(source!, { local: options.local, piBolt: options.piBolt });
 				console.log(chalk.green(`Installed ${source}`));
 				return true;
 
 			case "remove": {
-				const removed = await packageManager.removeAndPersist(source!, { local: options.local });
+				const removed = await packageManager.removeAndPersist(source!, {
+					local: options.local,
+					piBolt: options.piBolt,
+				});
 				if (!removed) {
 					console.error(chalk.red(`No matching package found for ${source}`));
 					process.exitCode = 1;
