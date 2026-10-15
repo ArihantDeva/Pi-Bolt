@@ -173,14 +173,16 @@ export class ToolExecutionComponent extends Container {
 		});
 	}
 
-	updateArgs(args: any): void {
+	/** Returns whether `args` are new arguments, which may change what this draws. */
+	updateArgs(args: any): boolean {
 		// Every message_update hands every tool call of the message its arguments again, and the providers parse
 		// streamed arguments only when they have grown by an eighth (parseStreamingJsonWhileStreaming), keeping the
 		// same object in between: the same object is the same arguments, and drawing them again is wasted work that
 		// grows with their size (the write and edit renderers go over the whole file content).
-		if (args === this.args) return;
+		if (args === this.args) return false;
 		this.args = args;
 		this.updateDisplay();
+		return true;
 	}
 
 	markExecutionStarted(): void {

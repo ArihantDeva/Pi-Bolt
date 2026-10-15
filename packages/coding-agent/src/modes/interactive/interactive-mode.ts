@@ -3608,6 +3608,11 @@ export class InteractiveMode {
 					this.streamingMessage = event.message;
 					this.streamingComponent.updateContent(this.streamingMessage, true);
 
+					// A tool call's argument delta changes only that call's arguments, and the providers parse them again
+					// only when they have grown by an eighth (parseStreamingJsonWhileStreaming): until then the call has
+					// the same arguments object and nothing on the screen changes. A large argument (a file passed to the
+					// write tool) streams in thousands of deltas, and a frame for each would draw the same screen.
+					let changed = event.assistantMessageEvent.type !== "toolcall_delta";
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
 							if (!this.pendingTools.has(content.id)) {
@@ -3627,15 +3632,14 @@ export class InteractiveMode {
 								component.setExpanded(this.toolOutputExpanded);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
+								changed = true;
 							} else {
 								const component = this.pendingTools.get(content.id);
-								if (component) {
-									component.updateArgs(content.arguments);
-								}
+								if (component?.updateArgs(content.arguments)) changed = true;
 							}
 						}
 					}
-					this.ui.requestRender();
+					if (changed) this.ui.requestRender();
 				}
 				break;
 
