@@ -115,11 +115,6 @@ jobs:
           jobs=4; [ "$(uname -s)" = Darwin ] && jobs=3
           scripts/build-runtime.sh "-j$jobs"
           .work/runtime/bun --version
-      - name: Tests
-        if: steps.wanted.outputs.yes
-        run: |
-          tests/aot/run.sh
-          tests/runtime/run.sh
       - name: Archive
         if: steps.wanted.outputs.yes
         run: |
@@ -133,6 +128,12 @@ jobs:
           path: .work/out/*
           if-no-files-found: error
           retention-days: 14
+      # (After the upload: the runtime is kept even when a test fails, for a look at it; the job still fails.)
+      - name: Tests
+        if: steps.wanted.outputs.yes
+        run: |
+          tests/aot/run.sh
+          tests/runtime/run.sh
 
   windows:
     name: Runtime for win32-x64
@@ -201,13 +202,6 @@ jobs:
           & scripts\build-runtime.ps1 -Jobs 4
           if ($LASTEXITCODE -ne 0) { exit 1 }
           & .work\runtime\bun.exe --version
-      - name: Tests
-        if: steps.wanted.outputs.yes
-        run: |
-          & tests\aot\run.ps1
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          & tests\runtime\run.ps1
-          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Archive
         if: steps.wanted.outputs.yes
         run: |
@@ -223,6 +217,14 @@ jobs:
           path: .work/out/*
           if-no-files-found: error
           retention-days: 14
+      # (After the upload: the runtime is kept even when a test fails, for a look at it; the job still fails.)
+      - name: Tests
+        if: steps.wanted.outputs.yes
+        run: |
+          & "$env:GITHUB_WORKSPACE\tests\aot\run.ps1"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "$env:GITHUB_WORKSPACE\tests\runtime\run.ps1"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
   draft:
     name: Attach to the draft of ${{ github.event.inputs.tag }}
