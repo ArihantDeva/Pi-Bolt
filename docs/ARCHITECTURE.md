@@ -233,9 +233,10 @@ The ARM64 code generation is the macOS port's; the Linux ARM64 port is about the
 Its parts of Pi-Bolt's [WebKit patch](../patches/webkit.patch) and [Bun patch](../patches/bun.patch) apply to Linux on ARM64 only.
 
 **Address space.** Many ARM64 kernels give a process 512 GB of addresses (39-bit: Android's, the Raspberry Pi 3's and 4's) or
-4 TB (42-bit, with 64 KB pages), where 0x200000000000 is out of reach. On Linux ARM64 the static region is at 128 GB
-(0x2000000000), with the Structures' 4 GB after it at 160 GB: below where the kernel puts a program's loader (two thirds of the way
-up) and its other mappings (from the top down), on every address size.
+4 TB (42-bit, with 64 KB pages), where 0x200000000000 is out of reach. On Linux ARM64 the static region is at 64 GB
+(0x1000000000), with the Structures' 4 GB after it at 96 GB: below where the kernel puts a program's loader (two thirds of the way
+up), its other mappings (from the top down) and, in the legacy layout of an unlimited stack, the first of them (a quarter of the
+way up: 128 GB on a 39-bit kernel), on every address size.
 
 **Page size.** ARM64 kernels use 4, 16 or 64 KB pages. The heap and the code image are laid out in 64 KB pages (as are the
 executable's segments), so one executable maps them on all three.

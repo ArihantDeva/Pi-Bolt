@@ -10,7 +10,8 @@ export default function () {
 		const [range, , , , , path] = line.trim().split(/\s+/);
 		if (!range) continue;
 		const [start, end] = range.split("-").map((hex) => BigInt(`0x${hex}`));
-		if (start === 0x2800000000n) structures = true;
+		// (The Structures: right after the static region, which is at 64 GB and 32 GB long.)
+		if (start === 0x1800000000n) structures = true;
 		if (path !== process.execPath || start < 0x100000000n) continue;
 		fromFile++;
 		if (end > highest) highest = end;

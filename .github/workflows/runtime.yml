@@ -7,7 +7,7 @@ name: runtime
 # a branch runtime/<name> builds its commit's runtimes as workflow artifacts only: all four, or the one the name is
 # (runtime/win32-x64).
 #
-#   gh workflow run runtime.yml -R opensec-git/Pi-Bolt -f tag=bolt-vX.Y.Z
+#   gh workflow run runtime.yml -R opensec-git/Pi-Bolt -f tag=bolt-vX.Y.Z [-f ref=<the commit the release is tagged on>]
 #
 # The runners are smaller than BUILDING.md asks for (4 cores and 16 GB; 3 cores and 7 GB on macOS): the build runs with swap
 # and fewer jobs, in about two to four hours. Each build job also runs tests/aot and tests/runtime on the runtime it made.
@@ -16,6 +16,10 @@ on:
     inputs:
       tag:
         description: "The bolt-vX.Y.Z whose draft release gets the runtimes (empty: workflow artifacts only)"
+        required: false
+        default: ""
+      ref:
+        description: "The commit, branch or tag to build (default: the branch it is run from)"
         required: false
         default: ""
       platforms:
@@ -58,6 +62,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.wanted.outputs.yes
         with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: steps.wanted.outputs.yes
@@ -110,11 +115,6 @@ jobs:
           jobs=4; [ "$(uname -s)" = Darwin ] && jobs=3
           scripts/build-runtime.sh "-j$jobs"
           .work/runtime/bun --version
-      - name: Tests
-        if: steps.wanted.outputs.yes
-        run: |
-          tests/aot/run.sh
-          tests/runtime/run.sh
       - name: Archive
         if: steps.wanted.outputs.yes
         run: |
@@ -128,6 +128,12 @@ jobs:
           path: .work/out/*
           if-no-files-found: error
           retention-days: 14
+      # (After the upload: the runtime is kept even when a test fails, for a look at it; the job still fails.)
+      - name: Tests
+        if: steps.wanted.outputs.yes
+        run: |
+          tests/aot/run.sh
+          tests/runtime/run.sh
 
   windows:
     name: Runtime for win32-x64
@@ -143,6 +149,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.wanted.outputs.yes
         with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: steps.wanted.outputs.yes
@@ -195,13 +202,6 @@ jobs:
           & scripts\build-runtime.ps1 -Jobs 4
           if ($LASTEXITCODE -ne 0) { exit 1 }
           & .work\runtime\bun.exe --version
-      - name: Tests
-        if: steps.wanted.outputs.yes
-        run: |
-          & tests\aot\run.ps1
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          & tests\runtime\run.ps1
-          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Archive
         if: steps.wanted.outputs.yes
         run: |
@@ -217,6 +217,14 @@ jobs:
           path: .work/out/*
           if-no-files-found: error
           retention-days: 14
+      # (After the upload: the runtime is kept even when a test fails, for a look at it; the job still fails.)
+      - name: Tests
+        if: steps.wanted.outputs.yes
+        run: |
+          & "$env:GITHUB_WORKSPACE\tests\aot\run.ps1"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "$env:GITHUB_WORKSPACE\tests\runtime\run.ps1"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
   draft:
     name: Attach to the draft of ${{ github.event.inputs.tag }}
@@ -228,6 +236,7 @@ jobs:
       contents: write
     env:
       TAG: ${{ github.event.inputs.tag }}
+      REF: ${{ github.event.inputs.ref }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -242,7 +251,8 @@ jobs:
             [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true ] ||
               { echo "::error::$TAG is published: its runtimes are not replaced"; exit 1; }
           else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "Pi-Bolt ${TAG#bolt-v}" --notes "" --target "$GITHUB_SHA"
+            # (Its tag, when pushed later, names the commit that was built.)
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "Pi-Bolt ${TAG#bolt-v}" --notes "" --target "${REF:-$GITHUB_SHA}"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber runtimes/*
-          { echo "### Runtimes attached to the draft of $TAG (from ${GITHUB_SHA:0:12})"; echo; (cd runtimes && sha256sum -- *) | sed 's/^/    /'; } >>"$GITHUB_STEP_SUMMARY"
+          { echo "### Runtimes attached to the draft of $TAG (built from ${REF:-$GITHUB_SHA})"; echo; (cd runtimes && sha256sum -- *) | sed 's/^/    /'; } >>"$GITHUB_STEP_SUMMARY"
