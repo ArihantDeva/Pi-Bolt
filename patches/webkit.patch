@@ -156,7 +156,7 @@ function, which compares many characters at a time.
  Source/bmalloc/CMakeLists.txt                 |    4 +
  Source/bmalloc/bmalloc/BPlatform.h            |    7 +
  Source/bmalloc/bmalloc/CryptoRandom.cpp       |   60 +-
- Source/bmalloc/bmalloc/StaticRegion.cpp       |  426 +-
+ Source/bmalloc/bmalloc/StaticRegion.cpp       |  431 +-
  Source/bmalloc/bmalloc/StaticRegion.h         |  102 +-
  Source/bmalloc/bmalloc/bmalloc.cpp            |   17 +
  Source/bmalloc/bmalloc/bmalloc.h              |    5 +
@@ -164,7 +164,7 @@ function, which compares many characters at a time.
  Source/cmake/WebKitMacros.cmake               |   28 +-
  .../TestWebKitAPI/Tests/WTF/StringCommon.cpp  |   19 +-
  build-icu.ps1                                 |   49 +-
- 126 files changed, 9123 insertions(+), 580 deletions(-)
+ 126 files changed, 9128 insertions(+), 580 deletions(-)
  create mode 100644 JSTests/microbenchmarks/array-length-increment-large.js
  create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-long.js
  create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-short.js
@@ -13358,7 +13358,7 @@ index 4724cad68f..8590e9b999 100644
  #endif
  
 diff --git a/Source/bmalloc/bmalloc/StaticRegion.cpp b/Source/bmalloc/bmalloc/StaticRegion.cpp
-index 77260b2296..bbe9ce4ee0 100644
+index 77260b2296..f34fc8e5d8 100644
 --- a/Source/bmalloc/bmalloc/StaticRegion.cpp
 +++ b/Source/bmalloc/bmalloc/StaticRegion.cpp
 @@ -7,37 +7,365 @@
@@ -13770,7 +13770,7 @@ index 77260b2296..bbe9ce4ee0 100644
      return reinterpret_cast<void*>(startOf(arena) + offset);
  }
  
-@@ -107,22 +448,72 @@ bool StaticRegion::isAllocatingMutable()
+@@ -107,22 +448,77 @@ bool StaticRegion::isAllocatingMutable()
      return t_isAllocatingMutable;
  }
  
@@ -13808,6 +13808,11 @@ index 77260b2296..bbe9ce4ee0 100644
 +            munmap(result, size);
 +            break;
 +        }
++#if BOS(LINUX)
++        // Small pages only: what is used here is spread thin (the offsets, then a block here and there), and where transparent
++        // huge pages are always on (as on many distributions), each page touched would make 2 MB resident: 11 MB more at startup.
++        madvise(result, size, MADV_NOHUGEPAGE);
++#endif
 +        s_bssMapped = size;
 +        return;
 +    }
@@ -13846,7 +13851,7 @@ index 77260b2296..bbe9ce4ee0 100644
      void* wanted = reinterpret_cast<void*>(startOf(arena) + offsetInArena);
      if (arena == Arena::Image) {
          void* result = mmap(wanted, size, isCode ? PROT_READ | PROT_EXEC : PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
-@@ -147,6 +538,7 @@ bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size
+@@ -147,6 +543,7 @@ bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size
          return false;
      }
      return true;
@@ -13854,7 +13859,7 @@ index 77260b2296..bbe9ce4ee0 100644
  }
  
  // In Arena::MutableMalloc, what is asked for is preceded by how much was asked for: it may be given back, or be found too small,
-@@ -160,7 +552,7 @@ static constexpr size_t unit = 8;
+@@ -160,7 +557,7 @@ static constexpr size_t unit = 8;
  
  static bool isInImmutableMalloc(const void* pointer)
  {
@@ -13863,7 +13868,7 @@ index 77260b2296..bbe9ce4ee0 100644
  }
  
  static uint32_t& sizeOfImmutable(const void* pointer)
-@@ -288,6 +680,9 @@ static void* mallocImmutable(size_t size, size_t alignment)
+@@ -288,6 +685,9 @@ static void* mallocImmutable(size_t size, size_t alignment)
              }
              pushFreeImmutable(block + units * unit, found - units);
              sizeOfImmutable(block) = static_cast<uint32_t>(size);
@@ -13873,7 +13878,7 @@ index 77260b2296..bbe9ce4ee0 100644
              return block;
          }
      }
-@@ -317,6 +712,9 @@ void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
+@@ -317,6 +717,9 @@ void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
                  memcpy(rest - sizeOfHeader, &sizeOfRest, sizeof(sizeOfRest));
                  pushFree(mutableOnes, found - index, rest);
              }
@@ -13883,7 +13888,7 @@ index 77260b2296..bbe9ce4ee0 100644
              return block;
          }
      }
-@@ -347,16 +745,22 @@ void* StaticRegion::reallocate(void* pointer, size_t newSize)
+@@ -347,16 +750,22 @@ void* StaticRegion::reallocate(void* pointer, size_t newSize)
              size_t newUnits = unitsFor(newSize);
              // (Where it is has to do for what it is going to be, too.)
              bool isWhereItMayBe = newSize % 16 || !(reinterpret_cast<uintptr_t>(pointer) & 15);
