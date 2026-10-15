@@ -1,9 +1,19 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../src/config.ts";
 import { DefaultPackageManager } from "../src/core/package-manager.ts";
+import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import {
 	InMemorySettingsStorage,
 	type PackageSource,
@@ -604,6 +614,228 @@ describe("Pi-Bolt additive package inheritance", () => {
 		}
 		expect(readSettings(projectFile).piBolt?.packages).toEqual(projectOwn);
 		expect(readSettings().packages).toEqual(["npm:tools"]);
+	});
+	// #28: the first explicit override must retain the inherited resource policy.
+	test.each([
+		{ local: false, autoload: true },
+		{ local: true, autoload: true },
+		{ local: false, autoload: false },
+		{ local: true, autoload: false },
+	])("first explicit override preserves inherited filters ($local, $autoload)", async ({ local, autoload }) => {
+		const shared = localPackage("shared");
+		const filtered = { source: shared, extensions: [], skills: [], themes: [], prompts: [], autoload };
+		writeSettings(local ? {} : { packages: [filtered] }, local ? { packages: [filtered] } : undefined);
+		const { settings, packages } = manager();
+		await packages.installAndPersist(shared, { local, piBolt: true });
+		await settings.flush();
+		const file = local ? projectFile : globalFile;
+		const baseDir = local ? join(cwd, CONFIG_DIR_NAME) : agentDir;
+		expect(readSettings(file)).toEqual({
+			packages: [filtered],
+			piBolt: { packages: [{ ...filtered, source: relative(baseDir, shared) }] },
+		});
+		expect((await packages.resolve()).extensions.map((entry) => entry.enabled)).toEqual(
+			autoload ? [false, false] : [],
+		);
+	});
+
+	// #28: an already-completed external write must protect shared files without requiring reload.
+	test.each([
+		{ local: false, piBolt: false },
+		{ local: false, piBolt: true },
+		{ local: true, piBolt: false },
+		{ local: true, piBolt: true },
+	])("removal sees current declaration ownership ($local, $piBolt)", async ({ local, piBolt }) => {
+		const source = "git:github.com/example/tools";
+		const baseDir = local ? join(cwd, CONFIG_DIR_NAME) : agentDir;
+		const installed = join(baseDir, "git", "github.com", "example", "tools");
+		mkdirSync(installed, { recursive: true });
+		const initial = { packages: piBolt ? [] : [source], piBolt: { packages: piBolt ? [source] : [] } };
+		writeSettings(local ? {} : initial, local ? initial : undefined);
+		const { settings, packages } = manager();
+		const file = local ? projectFile : globalFile;
+		writeFileSync(file, JSON.stringify({ packages: [source], piBolt: { packages: [source] }, theme: "light" }));
+		settings.setTheme("dark");
+		expect(await packages.removeAndPersist(source, { local, piBolt })).toBe(true);
+		await settings.flush();
+		expect(existsSync(installed)).toBe(true);
+		expect(readSettings(file).packages).toEqual(piBolt ? [source] : []);
+		expect(readSettings(file).piBolt?.packages).toEqual(piBolt ? [`-${source}`] : [source]);
+		await settings.reload();
+		expect(settings.getResolvedPackages(local ? "project" : "global")).toEqual(piBolt ? [] : [source]);
+		expect(settings.getTheme()).toBe(local ? "light" : "dark");
+	});
+
+	// #28: queued local declarations and storage without read() must both participate in removal.
+	test("removal preserves pending package writes with custom storage", async () => {
+		const source = "git:github.com/example/tools";
+		const installed = join(agentDir, "git", "github.com", "example", "tools");
+		mkdirSync(installed, { recursive: true });
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () => JSON.stringify({ piBolt: { packages: [source] } }));
+		const settings = SettingsManager.fromStorage(storage);
+		const packages = new DefaultPackageManager({ cwd, agentDir, settingsManager: settings });
+		settings.setPackages([source]);
+		expect(await packages.removeAndPersist(source, { piBolt: true })).toBe(true);
+		await settings.flush();
+		expect(existsSync(installed)).toBe(true);
+		expect(SettingsManager.fromStorage(storage).getPackages()).toEqual([]);
+		expect(SettingsManager.fromStorage(storage).getGlobalSettings().packages).toEqual([source]);
+	});
+
+	// #28: synchronous declaration edits must retain local changes whose writes are still queued.
+	test("synchronous exclusion preserves later queued shared declarations", async () => {
+		const source = "npm:tools";
+		writeSettings({ piBolt: { packages: [source] } });
+		const { settings, packages } = manager();
+		settings.setPackages(["npm:unrelated"]);
+		settings.setPackages([source]);
+		await Promise.resolve();
+		expect(packages.removeSourceFromSettings(source, { piBolt: true })).toBe(true);
+		await settings.flush();
+		expect(readSettings().packages).toEqual([source]);
+		expect(readSettings().piBolt?.packages).toEqual([`-${source}`]);
+	});
+
+	// #28: a generated relative path must not collide with the new exclusion syntax.
+	test.each([false, true])("explicit install preserves dash-prefixed local additions (local=%s)", async (local) => {
+		const baseDir = local ? join(cwd, CONFIG_DIR_NAME) : agentDir;
+		const name = relative(root, baseDir);
+		const shared = localPackage(join(name, "tools"));
+		const own = localPackage(join(name, "-tools"));
+		expect(own).toBe(join(baseDir, "-tools"));
+		writeSettings(local ? {} : { packages: [shared] }, local ? { packages: [shared] } : undefined);
+		const { settings, packages } = manager();
+		await packages.installAndPersist(own, { local, piBolt: true });
+		await settings.flush();
+		expect(readSettings(local ? projectFile : globalFile).piBolt?.packages).toEqual(["./-tools"]);
+		expect((await packages.resolve()).extensions.filter((entry) => entry.enabled)).toHaveLength(4);
+		await packages.removeAndPersist(own, { local, piBolt: true });
+		await settings.flush();
+		expect(readSettings(local ? projectFile : globalFile).piBolt?.packages).toEqual([]);
+		expect((await packages.resolve()).extensions.filter((entry) => entry.enabled)).toHaveLength(2);
+	});
+
+	// #28: project precedence selects the last identity, even when the shared list contains multiple versions.
+	test("project selector edits the winning shared declaration and reports its filter state", async () => {
+		const installed = installedNpm("selector-tools", true);
+		writeFileSync(
+			join(installed, "package.json"),
+			JSON.stringify({
+				name: "selector-tools",
+				version: "2.0.0",
+				pi: { extensions: ["extensions/a.ts"] },
+			}),
+		);
+		writeSettings({}, { packages: ["npm:selector-tools@1.0.0", "npm:selector-tools@2.0.0"] });
+		const { settings, packages } = manager();
+		const global = await manager(false).packages.resolve();
+		const project = await packages.resolve();
+		const selector = new ConfigSelectorComponent(
+			{ global, project },
+			settings,
+			cwd,
+			agentDir,
+			() => {},
+			() => {},
+			() => {},
+			24,
+			"project",
+		);
+		for (const enabled of [false, true, true]) {
+			selector.getResourceList().handleInput(" ");
+			await settings.flush();
+			expect(readSettings(projectFile).packages?.[0]).toBe("npm:selector-tools@1.0.0");
+			expect((await packages.resolve()).extensions.map((entry) => entry.enabled)).toEqual([enabled]);
+		}
+		expect(readSettings(projectFile).packages).toEqual(["npm:selector-tools@1.0.0", "npm:selector-tools@2.0.0"]);
+	});
+
+	// #28: conflict advice must lead to a working exclusion without changing Pi's shared declarations.
+	test("tool conflict recovery excludes only the selected Pi-Bolt package", async () => {
+		const sources = [localPackage("tools-a"), localPackage("tools-b")];
+		for (const source of sources) {
+			writeFileSync(
+				join(source, "extensions", "a.ts"),
+				`export default (pi) => {
+				pi.registerTool({ name: "example_tool", label: "Example", description: "Example tool",
+					parameters: { type: "object", properties: {} }, execute: async () => ({ content: [] }) });
+			};`,
+			);
+		}
+		writeSettings({ packages: sources });
+		const { settings } = manager();
+		const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager: settings, noContextFiles: true });
+		await loader.reload();
+		const conflict = loader
+			.getExtensions()
+			.errors.find((entry) => entry.error.includes('Tool "example_tool" conflicts'));
+		expect(conflict?.error).toContain("pi-bolt remove --pi-bolt <source>");
+		expect(conflict?.error).not.toContain("a package list of its own");
+		await handlePackageCommand(["remove", "--pi-bolt", sources[1]]);
+		expect(process.exitCode).toBeUndefined();
+		expect(readSettings().packages).toEqual(sources);
+		expect(readSettings().piBolt?.packages).toEqual([`-${sources[1]}`]);
+		await loader.reload();
+		expect(loader.getExtensions().errors).toEqual([]);
+		expect(loader.getExtensions().extensions.filter((extension) => extension.tools.has("example_tool"))).toHaveLength(
+			1,
+		);
+	});
+
+	// #28: unreadable settings cannot authorise deletion of files another runtime may still need.
+	test("removal aborts before deleting files when current declarations cannot be read", async () => {
+		const source = "git:github.com/example/tools";
+		const installed = join(agentDir, "git", "github.com", "example", "tools");
+		mkdirSync(installed, { recursive: true });
+		writeSettings({ piBolt: { packages: [source] } });
+		const { packages } = manager();
+		writeFileSync(globalFile, "{");
+		await expect(packages.removeAndPersist(source, { piBolt: true })).rejects.toThrow();
+		expect(existsSync(installed)).toBe(true);
+		expect(readFileSync(globalFile, "utf8")).toBe("{");
+	});
+
+	// #28: failed filesystem inspection must not be mistaken for deleted settings.
+	test.skipIf(process.platform === "win32")(
+		"removal preserves shared files when settings have a symlink loop",
+		async () => {
+			const source = "git:github.com/example/tools";
+			const installed = join(agentDir, "git", "github.com", "example", "tools");
+			mkdirSync(installed, { recursive: true });
+			writeSettings({ packages: [source], piBolt: { packages: [source] } });
+			const { packages } = manager();
+			rmSync(globalFile);
+			symlinkSync("settings.json", globalFile);
+			await expect(packages.removeAndPersist(source, { piBolt: true })).rejects.toMatchObject({ code: "ELOOP" });
+			expect(existsSync(installed)).toBe(true);
+		},
+	);
+
+	// #28: a preceding unrelated write must not hide the latest queued package list from synchronous edits.
+	test("synchronous removal retains pending additions after another write completes", async () => {
+		writeSettings({ packages: ["npm:tools"] });
+		const { settings, packages } = manager();
+		settings.setTheme("dark");
+		settings.setPackages(["npm:tools", "npm:retained"]);
+		await Promise.resolve();
+		expect(packages.removeSourceFromSettings("npm:tools")).toBe(true);
+		await settings.flush();
+		expect(readSettings().packages).toEqual(["npm:retained"]);
+	});
+
+	// #28: flushing pending writes must not let removal outlive project trust.
+	test("project removal rechecks trust after reading current declarations", async () => {
+		const source = "git:github.com/example/tools";
+		const installed = join(cwd, CONFIG_DIR_NAME, "git", "github.com", "example", "tools");
+		mkdirSync(installed, { recursive: true });
+		writeSettings({}, { piBolt: { packages: [source] } });
+		const { settings, packages } = manager();
+		const removal = packages.removeAndPersist(source, { local: true, piBolt: true });
+		settings.setProjectTrusted(false);
+		await expect(removal).rejects.toThrow("not trusted");
+		expect(existsSync(installed)).toBe(true);
+		expect(readSettings(projectFile).piBolt?.packages).toEqual([source]);
 	});
 });
 

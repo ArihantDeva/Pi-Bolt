@@ -233,7 +233,13 @@ export class FileSettingsStorage implements SettingsStorage {
 		const revision = getFileRevision(path);
 		if (revision === undefined) {
 			settingsFileReads.delete(path);
-			return undefined;
+			// A failed stat is not necessarily an absent file (for example, EACCES or a symlink loop).
+			try {
+				return readFileSync(path, "utf-8");
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+				throw error;
+			}
 		}
 		const cached = settingsFileReads.get(path);
 		if (cached?.revision === revision) {
@@ -1192,6 +1198,30 @@ export class SettingsManager {
 	getResolvedPackages(scope: SettingsScope, baseDir?: string): PackageSource[] {
 		const settings = scope === "project" ? this.projectSettings : this.globalSettings;
 		return this.resolvePackages(settings, scope, baseDir);
+	}
+
+	/** Flush queued writes and read current package declarations without resetting unrelated runtime settings. */
+	async getCurrentPackageSettings(scope: SettingsScope): Promise<Pick<Settings, "packages" | "piBolt">> {
+		await this.flush();
+		if (scope === "project" && !this.projectTrusted) return {};
+		let content: string | undefined;
+		if (this.storage.read) content = this.storage.read(scope);
+		else
+			this.storage.withLock(scope, (current) => {
+				content = current;
+				return undefined;
+			});
+		// An unreadable declaration file must abort removal, not authorise deletion of shared files.
+		const persisted: Settings = content ? JSON.parse(stripBom(content)) : {};
+		const current = scope === "project" ? this.projectSettings : this.globalSettings;
+		const modified = scope === "project" ? this.modifiedProjectFields : this.modifiedFields;
+		const nested = scope === "project" ? this.modifiedProjectNestedFields : this.modifiedNestedFields;
+		return structuredClone({
+			packages: modified.has("packages") ? current.packages : persisted.packages,
+			piBolt: {
+				packages: nested.get("piBolt")?.has("packages") ? current.piBolt?.packages : persisted.piBolt?.packages,
+			},
+		});
 	}
 
 	private resolvePackages(settings: Settings, scope: SettingsScope, baseDir?: string): PackageSource[] {

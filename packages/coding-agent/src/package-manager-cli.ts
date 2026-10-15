@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import lockfile from "proper-lockfile";
+import { parseArgs } from "./cli/args.ts";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
@@ -272,6 +273,13 @@ const SELF_UPDATE_NOTE_MARKDOWN_THEME: MarkdownTheme = {
 
 /** Checked before startup reads settings: even the historical safety migration is a write. */
 export function getPiBoltPackageFlagError(args: string[]): string | undefined {
+	if (!["install", "remove", "uninstall", "update", "list", "config"].includes(args[0])) {
+		// Startup options can consume dash-prefixed values, including a literal "--".
+		if (!parseArgs(args).unknownFlags.has("pi-bolt")) return undefined;
+		if (PIBOLT === undefined) return "--pi-bolt requires a Pi-Bolt build";
+		return "--pi-bolt is only supported by install, remove, and uninstall";
+	}
+
 	const endOfOptions = args.indexOf("--");
 	const flags = args
 		.slice(0, endOfOptions === -1 ? args.length : endOfOptions)

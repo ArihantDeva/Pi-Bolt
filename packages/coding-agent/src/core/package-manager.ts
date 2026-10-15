@@ -52,7 +52,7 @@ import { stripBom } from "../utils/text.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { getPackageIdentity } from "./package-source.ts";
 import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
-import type { PackageSource, SettingsManager } from "./settings-manager.ts";
+import type { PackageSource, Settings, SettingsManager } from "./settings-manager.ts";
 import { BUILTIN_PATH_PREFIX } from "./source-info.ts";
 
 /** How package installs run: argv-style, plus environment for the package manager process. */
@@ -867,17 +867,22 @@ export class DefaultPackageManager implements PackageManager {
 			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
 		const ownPackages = Array.isArray(currentSettings.piBolt?.packages) ? currentSettings.piBolt.packages : [];
 		const currentPackages = (options?.piBolt ? ownPackages : currentSettings.packages) ?? [];
-		const normalizedSource = this.normalizePackageSourceForSettings(source, scope);
+		let normalizedSource = this.normalizePackageSourceForSettings(source, scope);
 		if (options?.piBolt) {
+			// Relative local additions must not be interpreted as exclusion modifiers.
+			if (normalizedSource.startsWith("-")) normalizedSource = `./${normalizedSource}`;
 			const matches = (entry: PackageSource) =>
 				this.packageSourcesMatch(
 					typeof entry === "string" && entry.startsWith("-") ? entry.slice(1) : entry,
 					source,
 					scope,
 				);
-			const existing = currentPackages.findLast(
-				(entry) => matches(entry) && !(typeof entry === "string" && entry.startsWith("-")),
-			);
+			const shared = currentSettings.packages ?? [];
+			const matchesShared = (entry: PackageSource) => this.packageSourcesMatch(entry, source, scope);
+			const existing =
+				currentPackages.findLast(
+					(entry) => matches(entry) && !(typeof entry === "string" && entry.startsWith("-")),
+				) ?? (scope === "project" ? shared.findLast(matchesShared) : shared.find(matchesShared));
 			const nextPackages = currentPackages.filter((entry) => !matches(entry));
 			const index = currentPackages.findIndex(matches);
 			nextPackages.splice(
@@ -916,10 +921,19 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	removeSourceFromSettings(source: string, options?: PackageMutationOptions): boolean {
+		const settings = options?.local
+			? this.settingsManager.getProjectSettings()
+			: this.settingsManager.getGlobalSettings();
+		return this.removeSourceFromPackageSettings(source, settings, options);
+	}
+
+	private removeSourceFromPackageSettings(
+		source: string,
+		currentSettings: Pick<Settings, "packages" | "piBolt">,
+		options?: PackageMutationOptions,
+	): boolean {
 		this.assertPackageMutationOptions(options);
 		const scope: SourceScope = options?.local ? "project" : "user";
-		const currentSettings =
-			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
 		const ownPackages = Array.isArray(currentSettings.piBolt?.packages) ? currentSettings.piBolt.packages : [];
 		const currentPackages = (options?.piBolt ? ownPackages : currentSettings.packages) ?? [];
 		const nextPackages = currentPackages.filter(
@@ -1141,7 +1155,12 @@ export class DefaultPackageManager implements PackageManager {
 		await this.withProgress("remove", source, `Removing ${source}...`, async () => {
 			// Both runtimes share installed files. Keep anything the other raw list still declares.
 			const settings =
-				scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
+				PIBOLT !== undefined
+					? await this.settingsManager.getCurrentPackageSettings(scope === "project" ? "project" : "global")
+					: scope === "project"
+						? this.settingsManager.getProjectSettings()
+						: this.settingsManager.getGlobalSettings();
+			this.assertProjectTrustedForScope(scope);
 			const ownPackages = Array.isArray(settings.piBolt?.packages) ? settings.piBolt.packages : [];
 			const retained = options?.piBolt ? settings.packages : PIBOLT !== undefined ? ownPackages : [];
 			if (
@@ -1170,7 +1189,9 @@ export class DefaultPackageManager implements PackageManager {
 
 	async removeAndPersist(source: string, options?: PackageMutationOptions): Promise<boolean> {
 		await this.remove(source, options);
-		return this.removeSourceFromSettings(source, options);
+		if (PIBOLT === undefined) return this.removeSourceFromSettings(source, options);
+		const settings = await this.settingsManager.getCurrentPackageSettings(options?.local ? "project" : "global");
+		return this.removeSourceFromPackageSettings(source, settings, options);
 	}
 
 	async update(source?: string): Promise<void> {

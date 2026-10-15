@@ -710,7 +710,7 @@ class ResourceList implements Component, Focusable {
 				typeof pkg === "string" ? (piBolt && pkg.startsWith("-") ? pkg.slice(1) : pkg) : pkg.source,
 				"project",
 			);
-		let pkgIndex = piBolt ? packages.findLastIndex(matches) : packages.findIndex(matches);
+		let pkgIndex = PIBOLT !== undefined ? packages.findLastIndex(matches) : packages.findIndex(matches);
 		const existing = packages[pkgIndex];
 		// Keep the exclusion beneath a new delta, so returning to inherit restores the global fallback.
 		if (piBolt && typeof existing === "string" && existing.startsWith("-")) pkgIndex = -1;
@@ -866,16 +866,18 @@ class ResourceList implements Component, Focusable {
 	}
 
 	private findMatchingPackageSource(item: ResourceItem, targetScope: SettingsScope): PackageSource | undefined {
-		return this.settingsManager
-			.getResolvedPackages(targetScope === "project" ? "project" : "global", this.getTopLevelBaseDir(targetScope))
-			.find((pkg) =>
-				this.packageSourceStringMatches(
-					item.metadata.source,
-					this.getItemScope(item),
-					typeof pkg === "string" ? pkg : pkg.source,
-					targetScope,
-				),
+		const packages = this.settingsManager.getResolvedPackages(
+			targetScope === "project" ? "project" : "global",
+			this.getTopLevelBaseDir(targetScope),
+		);
+		const matches = (pkg: PackageSource) =>
+			this.packageSourceStringMatches(
+				item.metadata.source,
+				this.getItemScope(item),
+				typeof pkg === "string" ? pkg : pkg.source,
+				targetScope,
 			);
+		return PIBOLT !== undefined && targetScope === "project" ? packages.findLast(matches) : packages.find(matches);
 	}
 
 	private getPatternEntryTarget(entry: string): string {

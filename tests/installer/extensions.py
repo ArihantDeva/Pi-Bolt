@@ -17,6 +17,11 @@ PACKAGES = ("opensec-pi-subagents", "opensec-pi-todo", "opensec-pi-fff")
 
 # Regression for #28: optional Bun extensions must not enter the shared package list.
 class ExtensionInstallTests(unittest.TestCase):
+    # Regression for #28: source checkouts must still support direct installer execution.
+    @unittest.skipIf(os.name == "nt", "POSIX executable permissions")
+    def test_installer_is_executable(self):
+        self.assertTrue(os.access(ROOT / "install.sh", os.X_OK))
+
     def run_offer(self, integrity="same", install_status=0, choice="yes"):
         with tempfile.TemporaryDirectory(prefix="installer-extensions-") as directory:
             root = Path(directory)
