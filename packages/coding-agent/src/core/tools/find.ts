@@ -1,10 +1,13 @@
+import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
+import { PIBOLT } from "../../pi-bolt.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { nativeFind } from "./native-search.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -152,6 +155,38 @@ const defaultFindOperations: FindOperations = {
 export interface FindToolOptions {
 	/** Custom operations for find. Default: local filesystem plus fd */
 	operations?: FindOperations;
+	/** Search in-process instead of with fd (native-search.ts). Default: in Pi-Bolt builds, without custom operations. */
+	native?: boolean;
+}
+
+/** The tool's result for the paths found (by fd, or in-process), relative to the search folder: cut to size, with notices. */
+function formatFindResults(
+	relativized: string[],
+	effectiveLimit: number,
+): { content: Array<{ type: "text"; text: string }>; details: FindToolDetails | undefined } {
+	const resultLimitReached = relativized.length >= effectiveLimit;
+	const rawOutput = relativized.join("\n");
+	const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+	let resultOutput = truncation.content;
+	const details: FindToolDetails = {};
+	const notices: string[] = [];
+	if (resultLimitReached) {
+		notices.push(
+			`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
+		);
+		details.resultLimitReached = effectiveLimit;
+	}
+	if (truncation.truncated) {
+		notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+		details.truncation = truncationDetails(truncation);
+	}
+	if (notices.length > 0) {
+		resultOutput += `\n\n[${notices.join(". ")}]`;
+	}
+	return {
+		content: [{ type: "text", text: resultOutput }],
+		details: Object.keys(details).length > 0 ? details : undefined,
+	};
 }
 
 export function createFindToolDefinition(
@@ -159,6 +194,7 @@ export function createFindToolDefinition(
 	options?: FindToolOptions,
 ): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
 	const customOps = options?.operations;
+	const native = !customOps && (options?.native ?? PIBOLT !== undefined);
 	return {
 		name: "find",
 		label: "find",
@@ -251,6 +287,42 @@ export function createFindToolDefinition(
 									content: [{ type: "text", text: resultOutput }],
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
+							);
+							return;
+						}
+
+						// Pi-Bolt: in-process (native-search.ts), with fd's rules and output.
+						if (native) {
+							let isDirectory = false;
+							try {
+								isDirectory = (await stat(searchPath)).isDirectory();
+							} catch {
+								settle(() => reject(new Error(`Path not found: ${searchPath}`)));
+								return;
+							}
+							if (!isDirectory) {
+								settle(() => reject(new Error(`The search path '${searchPath}' is not a directory.`)));
+								return;
+							}
+							const globPattern =
+								process.platform === "win32"
+									? windowsGlobSeparators(pattern).replace(/^(?:\.\/)+(?=.)/, "")
+									: pattern;
+							const found = await nativeFind({
+								root: searchPath,
+								pattern: globPattern,
+								limit: effectiveLimit,
+								signal,
+							});
+							settle(() =>
+								resolve(
+									found.length === 0
+										? {
+												content: [{ type: "text", text: "No files found matching pattern" }],
+												details: undefined,
+											}
+										: formatFindResults(found, effectiveLimit),
+								),
 							);
 							return;
 						}
@@ -368,31 +440,7 @@ export function createFindToolDefinition(
 								relativized.push(relativizeFindResultPath(line, searchPath));
 							}
 
-							const resultLimitReached = relativized.length >= effectiveLimit;
-							const rawOutput = relativized.join("\n");
-							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-							let resultOutput = truncation.content;
-							const details: FindToolDetails = {};
-							const notices: string[] = [];
-							if (resultLimitReached) {
-								notices.push(
-									`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-								);
-								details.resultLimitReached = effectiveLimit;
-							}
-							if (truncation.truncated) {
-								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-								details.truncation = truncationDetails(truncation);
-							}
-							if (notices.length > 0) {
-								resultOutput += `\n\n[${notices.join(". ")}]`;
-							}
-							settle(() =>
-								resolve({
-									content: [{ type: "text", text: resultOutput }],
-									details: Object.keys(details).length > 0 ? details : undefined,
-								}),
-							);
+							settle(() => resolve(formatFindResults(relativized, effectiveLimit)));
 						});
 					} catch (e) {
 						if (signal?.aborted) {

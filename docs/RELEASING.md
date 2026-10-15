@@ -48,6 +48,20 @@ gh release upload bolt-vX.Y.Z -R opensec-git/Pi-Bolt dist/X.Y.Z/SHA256SUMS.sig
 same tag: the draft's files are replaced (a signature of the old `SHA256SUMS` is dropped), and a published release is left as it is.
 `release` can also be run with `dry_run` (from the Actions tab, with the tag): it builds and tests everything and makes no draft.
 
+### A pre-release first
+
+A release can be staged before it is made the latest: `publish` with `-f prerelease=true` publishes it as a GitHub pre-release.
+Only the beta channel takes it (`pi-bolt update --channel beta`, or `PIBOLT_CHANNEL=beta` for the installers); its builds go to
+npm under the dist-tag `beta`, and the `pi-bolt` package, the installers and the site are left as they are. Running `publish`
+again for the same tag without it makes the release the latest and publishes the `pi-bolt` package.
+
+```bash
+gh workflow run publish.yml -R opensec-git/Pi-Bolt -f tag=bolt-vX.Y.Z -f prerelease=true
+gh workflow run publish.yml -R opensec-git/Pi-Bolt -f tag=bolt-vX.Y.Z      # later: the latest release
+```
+
+A pre-release is a version like any other: one that needs a fix is followed by the next version, not replaced.
+
 Old-distribution and old-CPU checks (`tests/compat/run.sh`: CentOS 7, Debian 9, Amazon Linux 2, emulated Haswell to Nehalem)
 need bubblewrap and qemu-user, which GitHub's runners do not allow; run them on a Linux machine before a release that changes
 the engine or the build. On Windows, the same for older CPUs is Intel SDE (`-snb`: no AVX2, the bytecode is used; `-hsw`).
@@ -57,6 +71,9 @@ the engine or the build. On Windows, the same for older CPUs is Intel SDE (`-snb
 - The archives: `pi-bolt-linux-x64`, `-baseline` and `-jit`, `pi-bolt-linux-arm64` and `-jit`, and `pi-bolt-darwin-arm64` and
   `-jit` (`.tar.xz` and `.tar.gz`); `pi-bolt-win32-x64` and `-jit` (`.zip`); the runtimes `pi-bolt-runtime-linux-x64.tar.gz`,
   `pi-bolt-runtime-linux-arm64.tar.gz`, `pi-bolt-runtime-darwin-arm64.tar.gz` and `pi-bolt-runtime-win32-x64.zip`.
+- The compile kits `pi-bolt-kit-linux-x64.tar.gz`, `pi-bolt-kit-linux-arm64.tar.gz` and `pi-bolt-kit-darwin-arm64.tar.gz`: the
+  files of Pi each platform's default build read, its compile command and the training profile (`scripts/make-kit.mjs`, made
+  by `scripts/build-pi.sh --kit` in `package-release.sh`). `pi-bolt compile` builds with them and the runtimes.
 - `extensions.txt`: the optional extensions the installers offer (OpenSec's `opensec-pi-subagents`, `opensec-pi-todo` and `opensec-pi-fff`), each
   with its version and npm integrity. The installers install those versions and only if the registry's tarball has that
   integrity; a release without the file pins none, and they offer nothing. Update it in the repository when either has a new

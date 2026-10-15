@@ -260,9 +260,16 @@ export function planPlugins(options) {
 	for (const source of sources) {
 		for (const path of discoverExtensionsInDir(source.root)) addEntry(path, source.origin, source.root);
 	}
+	const passedOver = [];
 	for (const raw of configured) {
+		// A pattern (`-path`, `!path`, `+path`, a glob) or `builtin:<name>` filters what Pi loads; it names no extension to copy.
+		if (/^[!+-]/.test(raw) || /[*?]/.test(raw) || raw.startsWith("builtin:")) continue;
 		const path = resolve(raw.startsWith("~") ? join(homedir(), raw.slice(1)) : raw);
-		if (existsSync(path) && statSync(path).isDirectory()) {
+		if (!existsSync(path)) {
+			passedOver.push({ path, reason: "in the extensions setting, but not found" });
+			continue;
+		}
+		if (statSync(path).isDirectory()) {
 			const declared = resolveExtensionEntries(path);
 			for (const entry of declared ?? discoverExtensionsInDir(path)) addEntry(entry, "configured", path);
 			continue;
@@ -309,7 +316,7 @@ export function planPlugins(options) {
 		});
 	}
 
-	const skipped = roots.flatMap((root) => describeSkipped(root.root, seen));
+	const skipped = [...passedOver, ...roots.flatMap((root) => describeSkipped(root.root, seen))];
 
 	const hoisted = join(agentDir, "npm", "node_modules");
 	for (const source of packages) {

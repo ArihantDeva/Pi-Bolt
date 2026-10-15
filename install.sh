@@ -10,6 +10,8 @@
 #
 # Environment:
 #   PIBOLT_VERSION   a release tag such as bolt-v0.2.0 (default: the latest release)
+#   PIBOLT_CHANNEL   stable (the latest release; the default) or beta (the newest release, pre-releases included), for this
+#                    installation and its updates (`pi-bolt update --channel` changes it)
 #   PIBOLT_VARIANT   on Linux x86-64, x64, x64-baseline or x64-jit (default: x64 on CPUs with AVX2, x64-baseline otherwise);
 #                    on Linux ARM64 and in Termux, arm64 or arm64-jit (default arm64); on macOS arm64 or arm64-jit (Apple
 #                    silicon; default arm64)
@@ -35,6 +37,7 @@ ESC=$(printf '\033')
 CR=$(printf '\r')
 ETX=$(printf '\003')
 REPO="https://github.com/opensec-git/Pi-Bolt"
+API="https://api.github.com/repos/opensec-git/Pi-Bolt"
 NPM_REGISTRY="${PIBOLT_NPM_REGISTRY:-https://registry.npmjs.org}"
 
 main() {
@@ -47,6 +50,17 @@ main() {
 	if [ -n "$TERMUX" ]; then BIN_DIR="${PIBOLT_BIN_DIR:-$PREFIX/bin}"; else BIN_DIR="${PIBOLT_BIN_DIR:-$HOME/.local/bin}"; fi
 	LAUNCHER="${PIBOLT_LAUNCHER:-0}"
 	setup_style
+	case "${PIBOLT_CHANNEL:-}" in
+	"" | stable) ;;
+	beta)
+		# (The newest release is looked up once, and everything is downloaded from that tag.)
+		if [ "$VERSION" = latest ] && [ -z "${PIBOLT_DOWNLOAD_BASE:-}" ]; then
+			tag=$(newest_release) && [ -n "$tag" ] || fail "could not find the newest release ($API/releases): try again, or set PIBOLT_VERSION"
+			VERSION="bolt-v$tag"
+		fi
+		;;
+	*) fail "PIBOLT_CHANNEL must be stable or beta" ;;
+	esac
 
 	check_file="$(mktemp)"
 	preflight >"$check_file" 2>&1 &
@@ -109,6 +123,11 @@ main() {
 	esac
 
 	install_release
+	# The channel this installation's updates take (Pi-Bolt reads <install>/channel; stable, the default, is no file).
+	case "${PIBOLT_CHANNEL:-}" in
+	beta) printf 'beta\n' >"$INSTALL/channel" ;;
+	stable) rm -f "$INSTALL/channel" ;;
+	esac
 	mkdir -p "$BIN_DIR"
 	ln -sfn "$INSTALL/$NAME/$(command_of_build)" "$BIN_DIR/pi-bolt"
 	# Pi-Bolt keeps the packages only it runs (OpenSec's extensions) out of Pi's list, which it does as it starts: once now, so
@@ -279,6 +298,14 @@ resolve_version() {
 	if [ "$VERSION" != latest ]; then printf '%s' "${VERSION#bolt-v}"; return; fi
 	command -v curl >/dev/null 2>&1 || return 0
 	net_curl -fsSIL -o /dev/null -w '%{url_effective}' "$REPO/releases/latest" | sed -n 's#.*/tag/bolt-v##p'
+}
+
+# The newest release, pre-releases included (the beta channel), as a version: the highest bolt-vX.Y.Z tag GitHub lists (it
+# lists no drafts to anyone without write access).
+newest_release() {
+	net_curl -fsSL -H 'Accept: application/vnd.github+json' "$API/releases?per_page=30" |
+		sed -n 's/^ *"tag_name": *"bolt-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' |
+		sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1
 }
 
 mb() { awk -v b="$1" 'BEGIN { printf "%.1f", b / 1048576 }'; }
@@ -713,7 +740,16 @@ install_release() {
 	"$TMP/$NAME/pi" --version >/dev/null 2>&1 || fail "the downloaded executable does not run on this system"
 	mkdir -p "$INSTALL"
 	rm -rf "$INSTALL/$NAME.old"
-	if [ -d "$INSTALL/$NAME" ]; then mv "$INSTALL/$NAME" "$INSTALL/$NAME.old"; fi
+	# The build this replaces is kept as $NAME.previous, for `pi-bolt update --rollback`; the same build installed again
+	# (the same pi-bolt.txt) is not, and the one kept before stays.
+	if [ -d "$INSTALL/$NAME" ]; then
+		if [ "$LAUNCHER" != 1 ] && ! cmp -s "$INSTALL/$NAME/pi-bolt.txt" "$TMP/$NAME/pi-bolt.txt"; then
+			rm -rf "$INSTALL/$NAME.previous"
+			mv "$INSTALL/$NAME" "$INSTALL/$NAME.previous"
+		else
+			mv "$INSTALL/$NAME" "$INSTALL/$NAME.old"
+		fi
+	fi
 	mv "$TMP/$NAME" "$INSTALL/$NAME"
 	rm -rf "$INSTALL/$NAME.old" "$TMP"
 	trap - EXIT INT TERM
@@ -724,9 +760,11 @@ install_release() {
 }
 
 uninstall() {
+	# (The builds kept for a rollback too: pi-bolt-<platform>-<variant>.previous.)
 	for dir in "$INSTALL"/pi-bolt-linux-* "$INSTALL"/pi-bolt-darwin-*; do
 		[ -d "$dir" ] && rm -rf "$dir"
 	done
+	rm -rf "$INSTALL/cache" "$INSTALL/compile.json" "$INSTALL/channel"
 	target=$(readlink "$BIN_DIR/pi-bolt" 2>/dev/null || true)
 	case "$target" in
 	"$INSTALL"/*) rm -f "$BIN_DIR/pi-bolt" ;;

@@ -17,12 +17,19 @@ name: publish
 #
 # Run it from pi-bolt with the tag (the workflow and its checks are pi-bolt's, the files published are the tag's):
 #   gh workflow run publish.yml -R opensec-git/Pi-Bolt -f tag=bolt-vX.Y.Z
+# A release is staged first with -f prerelease=true: a GitHub pre-release, which only the beta channel takes
+# (`pi-bolt update --channel beta`), with its builds on npm but not the pi-bolt package, and the site left as it is. Run it again
+# for the same tag without it to make the release the latest.
 on:
   workflow_dispatch:
     inputs:
       tag:
         description: "The signed draft to publish (bolt-vX.Y.Z)"
         required: true
+      prerelease:
+        description: "Stage it as a pre-release (the beta channel) instead of making it the latest"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,6 +41,7 @@ concurrency:
 
 env:
   TAG: ${{ github.event.inputs.tag }}
+  PRERELEASE: ${{ github.event.inputs.prerelease == 'true' }}
 
 jobs:
   verify:
@@ -101,15 +109,22 @@ jobs:
         with:
           fetch-depth: 0
       - name: Publish the release
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+        run: |
+          if [ "$PRERELEASE" = true ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
       - name: install.sh, install.ps1 and the site
+        if: env.PRERELEASE != 'true'
         run: |
           git config user.name "OpenSec"
           git config user.email "323596076+opensec-intelligence@users.noreply.github.com"
           scripts/publish-installer.sh origin
       - name: The installers are served
+        if: env.PRERELEASE != 'true'
         run: |
           for installer in install.sh install.ps1; do
             served=""
@@ -156,8 +171,11 @@ jobs:
       - name: The builds (pi-bolt-PLATFORM-VARIANT)
         env:
           PIBOLT_NPM_EXISTING_ONLY: "1"
-        run: scripts/publish-npm-builds.sh "dist/$VERSION" -- --provenance
+        # (A pre-release's builds under the dist-tag beta: the installers download a build by its version, never by a tag.)
+        run: scripts/publish-npm-builds.sh "dist/$VERSION" -- --provenance $([ "$PRERELEASE" = true ] && echo --tag beta)
       - name: The pi-bolt package
+        # (Not for a pre-release: `npm install -g pi-bolt` takes the latest release.)
+        if: env.PRERELEASE != 'true'
         working-directory: npm
         # (A run again for the same release, to put the site and installers up again, finds it published: npm refuses that.)
         run: |

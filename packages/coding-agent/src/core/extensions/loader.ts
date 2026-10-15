@@ -22,6 +22,7 @@ import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
+import { compiledExtensionFor } from "./compiled.ts";
 import { extensionDisplayName, withJitHint } from "./jit-hint.ts";
 import type {
 	EntryRenderer,
@@ -680,11 +681,14 @@ async function loadExtension(
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
 	cacheToken?: ExtensionCacheToken,
-): Promise<{ extension: Extension | null; error: string | null }> {
+): Promise<{ extension: Extension | null; error: string | null; warning?: string }> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
 
 	try {
-		const factory = await loadExtensionModule(resolvedPath, cacheToken);
+		// Pi-Bolt: an extension `pi-bolt compile` built in, while its files are as they were then (core/extensions/compiled.ts).
+		const compiled = PIBOLT ? compiledExtensionFor(resolvedPath) : undefined;
+		const factory =
+			compiled && "factory" in compiled ? compiled.factory : await loadExtensionModule(resolvedPath, cacheToken);
 		time(`${extensionPath} module import`, "extensions");
 		if (!factory) {
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
@@ -692,6 +696,10 @@ async function loadExtension(
 
 		const extension = await initializeExtension(factory, extensionPath, resolvedPath, cwd, eventBus, runtime);
 
+		if (compiled && "changed" in compiled) {
+			const warning = `changed since it was compiled in, so it was loaded from its files: run \`pi-bolt compile\` to compile it in again`;
+			return { extension, error: null, warning };
+		}
 		return { extension, error: null };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
@@ -737,13 +745,14 @@ async function loadExtensionsInternal(
 	for (const extPath of paths) {
 		// Pi-Bolt's built-in Herdr extension takes the place of Herdr's Pi integration.
 		if (PIBOLT && isHerdrPiIntegration(resolvePath(extPath, resolvedCwd))) continue;
-		const { extension, error } = await loadExtension(
+		const { extension, error, warning } = await loadExtension(
 			extPath,
 			resolvedCwd,
 			resolvedEventBus,
 			resolvedRuntime,
 			cacheToken,
 		);
+		if (warning) warnings.push({ path: extPath, warning });
 
 		if (error) {
 			errors.push({ path: extPath, error });

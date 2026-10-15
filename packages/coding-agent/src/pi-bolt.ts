@@ -6,6 +6,7 @@
  * was built for, scripts/runtime-stamp.sh, when known). In every other build it is undefined and nothing here changes what Pi
  * does.
  */
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -73,6 +74,42 @@ MCowBQYDK2VwAyEAoLboJqtKaoISPqffk03vHZr+1sRBG3uIRIWeKOew+aY=
 -----END PUBLIC KEY-----
 `;
 export const PIBOLT_LATEST_RELEASE_API = "https://api.github.com/repos/opensec-git/Pi-Bolt/releases/latest";
+/** The releases, newest first, pre-releases among them (drafts are not shown to anyone without write access). */
+export const PIBOLT_RELEASES_API = "https://api.github.com/repos/opensec-git/Pi-Bolt/releases?per_page=30";
+
+/**
+ * Which releases `pi-bolt update` takes: `stable`, the latest release; or `beta`, the newest one, pre-releases included (a
+ * release is staged as a GitHub pre-release before it is made the latest). Kept in <install>/channel; PIBOLT_CHANNEL, as the
+ * installers read it, overrides it.
+ */
+export type PiBoltChannel = "stable" | "beta";
+
+export function isPiBoltChannel(value: unknown): value is PiBoltChannel {
+	return value === "stable" || value === "beta";
+}
+
+export function piBoltChannel(): PiBoltChannel {
+	const fromEnv = process.env.PIBOLT_CHANNEL?.trim();
+	if (isPiBoltChannel(fromEnv)) return fromEnv;
+	const installDir = piBoltInstallDir();
+	if (!installDir) return "stable";
+	try {
+		const saved = readFileSync(join(installDir, "channel"), "utf8").trim();
+		return isPiBoltChannel(saved) ? saved : "stable";
+	} catch {
+		return "stable";
+	}
+}
+
+/** Saves the channel for this installation (stable is the default, kept as no file). False if it is not in one. */
+export function setPiBoltChannel(channel: PiBoltChannel): boolean {
+	const installDir = piBoltInstallDir();
+	if (!installDir) return false;
+	const file = join(installDir, "channel");
+	if (channel === "stable") rmSync(file, { force: true });
+	else writeFileSync(file, `${channel}\n`);
+	return true;
+}
 
 export function parsePiBoltBuild(build: string | undefined): PiBoltBuild | undefined {
 	if (!build) return undefined;
