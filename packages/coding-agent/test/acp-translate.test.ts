@@ -5,7 +5,6 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { OutputAccumulator } from "../src/core/tools/output-accumulator.ts";
 import { truncationDetails } from "../src/core/tools/truncate.ts";
-import { AcpConnection } from "../src/extensions/acp/connection.ts";
 import { literalConfigValue, mcpServerName, toMcpServerConfig } from "../src/extensions/acp/extension.ts";
 import {
 	bashExitCode,
@@ -20,6 +19,7 @@ import {
 	toolCallInfo,
 	toolResultContent,
 } from "../src/extensions/acp/translate.ts";
+import { JsonRpcConnection } from "../src/extensions/json-rpc.ts";
 
 const cwd = join("/", "work", "project");
 const file = join(cwd, "src", "main.ts");
@@ -116,6 +116,21 @@ describe("history", () => {
 		expect(call).toMatchObject({ status: "completed", locations: [{ path: file }] });
 	});
 
+	it("replays a compaction summary only for clients that show compactions", () => {
+		const compacted = [
+			{ role: "compactionSummary", summary: "Earlier: set things up.", tokensBefore: 5000, timestamp: 0 },
+			...messages,
+		] as AgentMessage[];
+		const kinds = (updates: { sessionUpdate: string }[]) => updates.map((update) => update.sessionUpdate);
+		expect(kinds(replayMessages(compacted, cwd))).toEqual(kinds(replayMessages(messages, cwd)));
+		expect(replayMessages(compacted, cwd, { compaction: true })[0]).toEqual({
+			sessionUpdate: "compaction_update",
+			compactionId: "compaction_msg_0",
+			status: "completed",
+			summary: [{ type: "text", text: "Earlier: set things up." }],
+		});
+	});
+
 	it("maps the last assistant stop reason", () => {
 		expect(stopReasonOf(messages, false)).toBe("max_tokens");
 		expect(stopReasonOf(messages, true)).toBe("cancelled");
@@ -136,10 +151,10 @@ describe("editor MCP servers", () => {
 	});
 });
 
-describe("AcpConnection", () => {
+describe("JsonRpcConnection", () => {
 	const connect = () => {
 		const sent: Array<{ id: number | null }> = [];
-		const connection = new AcpConnection({
+		const connection = new JsonRpcConnection({
 			write: (line) => sent.push(JSON.parse(line)),
 			onRequest: async (method) => {
 				if (method === "boom") throw new Error("broken");
