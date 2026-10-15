@@ -1,15 +1,16 @@
 name: release
 
 # A bolt-vX.Y.Z tag (pushed, or created by the tag workflow, which runs this one) builds the release on GitHub's runners: the
-# Linux x86-64 archives (x64, baseline, jit), the macOS ones (arm64, jit) and the Windows ones (x64, jit), each tested, then a
+# Linux x86-64 archives (x64, baseline, jit), the Linux ARM64 ones (arm64, jit), the macOS ones (arm64, jit) and the Windows ones
+# (x64, jit), each tested, then a
 # draft GitHub release with every archive, extensions.txt, SHA256SUMS and RUNTIME_STAMP. Nothing is signed or published here:
 # with the repository variable AUTO_RELEASE set to true, the draft is handed to the publish workflow, which signs and publishes
 # it; otherwise publish is run by hand (docs/RELEASING.md).
 #
 # The runtime: when the engine (patches/, sources.json, the runtime build scripts) is the latest release's, its runtime archives
-# are used again. When it changed, build the runtimes by hand (scripts/build-runtime.sh on Linux and on a Mac,
-# scripts\build-runtime.ps1 on Windows) and upload pi-bolt-runtime-linux-x64.tar.gz, pi-bolt-runtime-darwin-arm64.tar.gz and
-# pi-bolt-runtime-win32-x64.zip to a draft release of the tag before this runs.
+# are used again. When it changed, build the runtimes by hand (scripts/build-runtime.sh on Linux x86-64, on Linux ARM64 and on
+# a Mac, scripts\build-runtime.ps1 on Windows) and upload pi-bolt-runtime-linux-x64.tar.gz, pi-bolt-runtime-linux-arm64.tar.gz,
+# pi-bolt-runtime-darwin-arm64.tar.gz and pi-bolt-runtime-win32-x64.zip to a draft release of the tag before this runs.
 on:
   push:
     tags: ["bolt-v*"]
@@ -50,6 +51,7 @@ jobs:
       # it is set), checked again where it is used: the build jobs run code from dependencies, with a token that may write to the
       # draft.
       runtime_sha_linux: ${{ steps.check.outputs.runtime_sha_linux }}
+      runtime_sha_linux_arm64: ${{ steps.check.outputs.runtime_sha_linux_arm64 }}
       runtime_sha_darwin: ${{ steps.check.outputs.runtime_sha_darwin }}
       runtime_sha_win32: ${{ steps.check.outputs.runtime_sha_win32 }}
     steps:
@@ -89,19 +91,20 @@ jobs:
             echo "the engine is $previous's: its runtime is used again"
           elif assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null) &&
                printf '%s\n' "$assets" | grep -qx 'pi-bolt-runtime-linux-x64.tar.gz' &&
+               printf '%s\n' "$assets" | grep -qx 'pi-bolt-runtime-linux-arm64.tar.gz' &&
                printf '%s\n' "$assets" | grep -qx 'pi-bolt-runtime-darwin-arm64.tar.gz' &&
                printf '%s\n' "$assets" | grep -qx 'pi-bolt-runtime-win32-x64.zip'; then
             runtime_from=$TAG
             echo "the engine changed: using the runtimes uploaded to the draft of $TAG"
             mkdir -p .work/draft
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir .work/draft --pattern 'pi-bolt-runtime-*'
-            for platform in linux:linux-x64.tar.gz darwin:darwin-arm64.tar.gz win32:win32-x64.zip; do
+            for platform in linux:linux-x64.tar.gz linux_arm64:linux-arm64.tar.gz darwin:darwin-arm64.tar.gz win32:win32-x64.zip; do
               sum=$(sha256sum ".work/draft/pi-bolt-runtime-${platform#*:}" | cut -c1-64)
               echo "runtime_sha_${platform%%:*}=$sum" >> "$GITHUB_OUTPUT"
               echo "pi-bolt-runtime-${platform#*:}: $sum" | tee -a "$GITHUB_STEP_SUMMARY"
             done
           else
-            echo "::error title=Runtime needed::The engine changed since $previous (runtime stamp ${released:-not signed}, now $stamp). Build the runtimes (scripts/build-runtime.sh on Linux and on a Mac, scripts\\build-runtime.ps1 on Windows), upload pi-bolt-runtime-linux-x64.tar.gz, pi-bolt-runtime-darwin-arm64.tar.gz and pi-bolt-runtime-win32-x64.zip to a draft release of $TAG, and run this workflow again."
+            echo "::error title=Runtime needed::The engine changed since $previous (runtime stamp ${released:-not signed}, now $stamp). Build the runtimes (scripts/build-runtime.sh on Linux x86-64, on Linux ARM64 and on a Mac, scripts\\build-runtime.ps1 on Windows), upload pi-bolt-runtime-linux-x64.tar.gz, pi-bolt-runtime-linux-arm64.tar.gz, pi-bolt-runtime-darwin-arm64.tar.gz and pi-bolt-runtime-win32-x64.zip to a draft release of $TAG, and run this workflow again."
             exit 1
           fi
           { echo "version=$version"; echo "stamp=$stamp"; echo "runtime_from=$runtime_from"; } >> "$GITHUB_OUTPUT"
@@ -118,6 +121,9 @@ jobs:
           - name: Linux x86-64
             runner: ubuntu-24.04
             platform: linux-x64
+          - name: Linux ARM64
+            runner: ubuntu-24.04-arm
+            platform: linux-arm64
           - name: macOS Apple silicon
             runner: macos-15
             platform: darwin-arm64
@@ -128,7 +134,7 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       RUNTIME_FROM: ${{ needs.prepare.outputs.runtime_from }}
-      RUNTIME_SHA: ${{ matrix.platform == 'linux-x64' && needs.prepare.outputs.runtime_sha_linux || needs.prepare.outputs.runtime_sha_darwin }}
+      RUNTIME_SHA: ${{ matrix.platform == 'linux-x64' && needs.prepare.outputs.runtime_sha_linux || matrix.platform == 'linux-arm64' && needs.prepare.outputs.runtime_sha_linux_arm64 || needs.prepare.outputs.runtime_sha_darwin }}
     steps:
       # (No token kept in .git: what the build and the tests run, dependencies included, gets none. GH_TOKEN is given to the
       # one step that downloads.)
@@ -147,8 +153,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq tmux xz-utils
-          # The x64 build's code uses what the building CPU has (AVX2, LZCNT, BMI1: what JSC's x86 back end can use).
-          for flag in avx2 bmi1 abm; do grep -qw "$flag" /proc/cpuinfo || { echo "this runner's CPU has no $flag"; exit 1; }; done
+          # The x64 build's code uses what the building CPU has (AVX2, LZCNT, BMI1: what JSC's x86 back end can use). (The arm64
+          # build's is for any ARMv8.0 CPU.)
+          if [ "$(uname -m)" = x86_64 ]; then
+            for flag in avx2 bmi1 abm; do grep -qw "$flag" /proc/cpuinfo || { echo "this runner's CPU has no $flag"; exit 1; }; done
+          fi
       - name: Tools (macOS)
         if: runner.os == 'macOS'
         run: brew install bash tmux xz

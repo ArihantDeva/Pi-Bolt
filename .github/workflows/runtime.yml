@@ -1,0 +1,237 @@
+name: runtime
+
+# Builds the Pi-Bolt runtime (patched WebKit and Bun: scripts/build-runtime.sh, scripts\build-runtime.ps1) of every platform on
+# GitHub's runners, each on its own: Linux x86-64 and ARM64, macOS on Apple silicon, Windows x64. It is what a release needs when
+# the engine changed (docs/RELEASING.md, "When the engine changed"): run it from pi-bolt with the release's tag, and it attaches
+# pi-bolt-runtime-<platform>.tar.gz (Windows: .zip) to that tag's draft release, which the release workflow then uses. A push to
+# a branch runtime/<name> builds its commit's runtimes as workflow artifacts only.
+#
+#   gh workflow run runtime.yml -R opensec-git/Pi-Bolt -f tag=bolt-vX.Y.Z
+#
+# The runners are smaller than BUILDING.md asks for (4 cores and 16 GB; 3 cores and 7 GB on macOS): the build runs with swap
+# and fewer jobs, in about two to four hours. Each build job also runs tests/aot and tests/runtime on the runtime it made.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The bolt-vX.Y.Z whose draft release gets the runtimes (empty: workflow artifacts only)"
+        required: false
+        default: ""
+      platforms:
+        description: "Which runtimes (comma separated)"
+        required: false
+        default: "linux-x64,linux-arm64,darwin-arm64,win32-x64"
+  push:
+    branches: ["runtime/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-${{ github.ref }}-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  PLATFORMS: ${{ github.event.inputs.platforms || 'linux-x64,linux-arm64,darwin-arm64,win32-x64' }}
+
+jobs:
+  unix:
+    name: Runtime for ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+          - platform: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    steps:
+      - name: Wanted
+        id: wanted
+        run: case ",$PLATFORMS," in *",${{ matrix.platform }},"*) echo "yes=true" >>"$GITHUB_OUTPUT" ;; esac
+      # (No token kept in .git: what the build runs, dependencies included, gets none.)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.wanted.outputs.yes
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.wanted.outputs.yes
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.wanted.outputs.yes
+        with:
+          bun-version: "1.4.2"
+      - name: Room and tools (Linux)
+        if: steps.wanted.outputs.yes && runner.os == 'Linux'
+        run: |
+          # Disk for the sources and the build (about 40 GB), and swap for the link: the runner has 16 GB of memory.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo swapoff -a || true
+          sudo fallocate -l 16G /swapfile.pibolt && sudo chmod 600 /swapfile.pibolt && sudo mkswap /swapfile.pibolt >/dev/null && sudo swapon /swapfile.pibolt
+          df -h / && free -g
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build golang nasm ruby xz-utils dpkg lsb-release software-properties-common >/dev/null
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh" && sudo bash "$RUNNER_TEMP/llvm.sh" 23 all >/dev/null
+          echo "/usr/lib/llvm-23/bin" >>"$GITHUB_PATH"
+          # CMake 3.30, as Bun's build pins it.
+          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v3.30.5/cmake-3.30.5-linux-$(uname -m).tar.gz" | sudo tar -xz -C /opt
+          echo "/opt/cmake-3.30.5-linux-$(uname -m)/bin" >>"$GITHUB_PATH"
+          command -v rustup >/dev/null || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path && echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"; }
+      - name: Tools (macOS)
+        if: steps.wanted.outputs.yes && runner.os == 'macOS'
+        run: |
+          # LLVM 23: Homebrew's llvm while it is 23, llvm@23 after.
+          if brew info llvm@23 >/dev/null 2>&1; then llvm=llvm@23; else llvm=llvm; fi
+          brew install "$llvm" cmake ninja bash xz >/dev/null
+          echo "$(brew --prefix "$llvm")/bin" >>"$GITHUB_PATH"
+          "$(brew --prefix "$llvm")/bin/clang" --version | head -1
+          command -v rustup >/dev/null || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path && echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"; }
+          df -h / && sysctl -n hw.memsize hw.ncpu
+      - name: Sources
+        if: steps.wanted.outputs.yes
+        run: |
+          scripts/fetch-sources.sh
+          # The Rust toolchain Bun's build pins (only its own target: rust-toolchain.toml would add a dozen).
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' .work/bun/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal -c rust-src -c llvm-tools
+          echo "RUSTUP_TOOLCHAIN=$channel" >>"$GITHUB_ENV"
+      - name: Sysroot (Linux)
+        if: steps.wanted.outputs.yes && runner.os == 'Linux'
+        run: scripts/toolchain/make-sysroot.sh
+      - name: Runtime
+        if: steps.wanted.outputs.yes
+        run: |
+          jobs=4; [ "$(uname -s)" = Darwin ] && jobs=3
+          scripts/build-runtime.sh "-j$jobs"
+          .work/runtime/bun --version
+      - name: Tests
+        if: steps.wanted.outputs.yes
+        run: |
+          tests/aot/run.sh
+          tests/runtime/run.sh
+      - name: Archive
+        if: steps.wanted.outputs.yes
+        run: |
+          scripts/package-release.sh --runtime-only
+          mkdir -p .work/out && mv dist/*/pi-bolt-runtime-*.tar.gz .work/out/
+          shasum -a 256 .work/out/* | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.wanted.outputs.yes
+        with:
+          name: runtime-${{ matrix.platform }}
+          path: .work/out/*
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Runtime for win32-x64
+    runs-on: windows-2025
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Wanted
+        id: wanted
+        run: if (",$env:PLATFORMS," -like '*,win32-x64,*') { Add-Content -Encoding utf8 $env:GITHUB_OUTPUT 'yes=true' }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.wanted.outputs.yes
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.wanted.outputs.yes
+        with:
+          bun-version: "1.4.2"
+      - name: Tools
+        if: steps.wanted.outputs.yes
+        run: |
+          # LLVM 23 (clang-cl, lld-link), NASM; the image has Visual Studio 2022 with the C++ workload and its Clang tools, Go,
+          # Ruby, Python and Git for Windows (perl).
+          choco install -y --no-progress nasm
+          $llvm = (Invoke-RestMethod 'https://api.github.com/repos/llvm/llvm-project/releases?per_page=30' | Where-Object { $_.tag_name -match '^llvmorg-23\.1\.\d+$' } | Select-Object -First 1)
+          $asset = $llvm.assets | Where-Object { $_.name -match '^LLVM-23\.1\.\d+-win64\.exe$' } | Select-Object -First 1
+          Invoke-WebRequest $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\llvm.exe"
+          Start-Process -Wait -FilePath "$env:RUNNER_TEMP\llvm.exe" -ArgumentList '/S', '/D=C:\LLVM23'
+          Add-Content -Encoding utf8 $env:GITHUB_PATH 'C:\LLVM23\bin'
+          Add-Content -Encoding utf8 $env:GITHUB_PATH 'C:\Program Files\NASM'
+          # The scripts run Python 3 as `py -3`.
+          if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
+            $shim = Join-Path $env:RUNNER_TEMP 'py-shim'
+            New-Item -ItemType Directory -Force $shim | Out-Null
+            Set-Content -Encoding ascii (Join-Path $shim 'py.cmd') "@if `"%~1`"==`"-3`" (python %2 %3 %4 %5 %6 %7 %8 %9) else (python %*)"
+            Add-Content -Encoding utf8 $env:GITHUB_PATH $shim
+          }
+          Get-PSDrive C, D | Format-Table Name, Used, Free
+      - name: Sources
+        if: steps.wanted.outputs.yes
+        run: |
+          & scripts\fetch-sources.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $channel = (Select-String -Path .work\bun\rust-toolchain.toml -Pattern '^channel = "(.*)"').Matches[0].Groups[1].Value
+          & rustup toolchain install $channel --profile minimal -c rust-src -c llvm-tools
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Add-Content -Encoding utf8 $env:GITHUB_ENV "RUSTUP_TOOLCHAIN=$channel"
+      - name: Runtime
+        if: steps.wanted.outputs.yes
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation | Out-Null
+          & scripts\build-runtime.ps1 -Jobs 4
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & .work\runtime\bun.exe --version
+      - name: Tests
+        if: steps.wanted.outputs.yes
+        run: |
+          & tests\aot\run.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & tests\runtime\run.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Archive
+        if: steps.wanted.outputs.yes
+        run: |
+          & scripts\package-release.ps1 -RuntimeOnly
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          New-Item -ItemType Directory -Force .work\out | Out-Null
+          Move-Item dist\*\pi-bolt-runtime-win32-x64.zip .work\out\
+          Get-FileHash .work\out\* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path -Leaf $_.Path)" } | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.wanted.outputs.yes
+        with:
+          name: runtime-win32-x64
+          path: .work/out/*
+          if-no-files-found: error
+          retention-days: 14
+
+  draft:
+    name: Attach to the draft of ${{ github.event.inputs.tag }}
+    needs: [unix, windows]
+    if: ${{ github.event.inputs.tag != '' && github.ref == 'refs/heads/pi-bolt' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: runtime-*
+          path: runtimes
+          merge-multiple: true
+      - name: Draft
+        run: |
+          printf '%s' "$TAG" | grep -Eq '^bolt-v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "not a release tag: $TAG"; exit 1; }
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true ] ||
+              { echo "::error::$TAG is published: its runtimes are not replaced"; exit 1; }
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "Pi-Bolt ${TAG#bolt-v}" --notes "" --target "$GITHUB_SHA"
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber runtimes/*
+          { echo "### Runtimes attached to the draft of $TAG (from ${GITHUB_SHA:0:12})"; echo; (cd runtimes && sha256sum -- *) | sed 's/^/    /'; } >>"$GITHUB_STEP_SUMMARY"
