@@ -115,7 +115,7 @@ stale and rewrote in turn.
  src/jsc/bindings/ZigException.cpp             |   14 +-
  src/jsc/bindings/ZigGlobalObject.cpp          |   77 ++
  src/jsc/bindings/ZigSourceProvider.cpp        | 1199 ++++++++++++++++-
- src/jsc/bindings/c-bindings.cpp               |  188 +++
+ src/jsc/bindings/c-bindings.cpp               |  204 ++-
  src/jsc/bindings/sliceAnsi.cpp                |   30 +-
  src/jsc/bindings/stripANSI.cpp                |   42 +-
  .../webcore/SerializedScriptValue.cpp         |    9 +
@@ -177,7 +177,7 @@ stale and rewrote in turn.
  test/napi/napi-app/binding.gyp                |   10 +
  ...eue_async_work_in_finalizer_experimental.c |   87 ++
  test/napi/napi.test.ts                        |   81 ++
- 131 files changed, 6501 insertions(+), 911 deletions(-)
+ 131 files changed, 6513 insertions(+), 915 deletions(-)
  create mode 100644 patches/libuv/win-thread-stack-reservation.patch
  create mode 100644 patches/mimalloc/page-commit-on-demand-default.patch
  create mode 100644 test/js/node/process/fd-nonblock-fixture.js
@@ -5683,7 +5683,7 @@ index fbfaa2ffb6..5198ef8b28 100644
      memcpySpan(std::span { regionEnds, JSC::BytecodeLinkEncoder::numberOfRegions }, std::span<const uint32_t> { result.regionEnds });
      *namedHotFunctions = result.namedHotFunctions;
 diff --git a/src/jsc/bindings/c-bindings.cpp b/src/jsc/bindings/c-bindings.cpp
-index a3fd0268c0..2c8a6587be 100644
+index a3fd0268c0..acdd2f0ed7 100644
 --- a/src/jsc/bindings/c-bindings.cpp
 +++ b/src/jsc/bindings/c-bindings.cpp
 @@ -21,6 +21,7 @@
@@ -5755,7 +5755,44 @@ index a3fd0268c0..2c8a6587be 100644
  
      return open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
  }
-@@ -1182,6 +1227,10 @@ struct BlobHeader {
+@@ -1082,6 +1127,14 @@ extern "C" void Bun__sendPendingSignalIfNecessary()
+     Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid, sig);
+ }
+ 
++#if OS(LINUX) && CPU(ARM64) && !OS(ANDROID)
++// (Android: SIGSYS stays the runtime's, which returns ENOSYS for a call the system call filter refused, below.)
++extern "C" bool Bun__filteredCallsReturnENOSYS();
++#define PIBOLT_FORWARDS_SIGNAL(SIG) (SIG != SIGSYS || !Bun__filteredCallsReturnENOSYS())
++#else
++#define PIBOLT_FORWARDS_SIGNAL(SIG) true
++#endif
++
+ extern "C" void Bun__registerSignalsForForwarding()
+ {
+     Bun__pendingSignalToSend = 0;
+@@ -1099,8 +1152,8 @@ extern "C" void Bun__registerSignalsForForwarding()
+         Bun__forwardSignalFromParentToChildAndRestorePreviousAction(Bun__currentSyncPID, sig);
+     };
+ 
+-#define REGISTER_SIGNAL(SIG)                                 \
+-    if (sigaction(SIG, &sa, &previous_actions[SIG]) == -1) { \
++#define REGISTER_SIGNAL(SIG)                                                               \
++    if (PIBOLT_FORWARDS_SIGNAL(SIG) && sigaction(SIG, &sa, &previous_actions[SIG]) == -1) { \
+     }
+ 
+     FOR_EACH_SIGNAL(REGISTER_SIGNAL)
+@@ -1112,8 +1165,8 @@ extern "C" void Bun__unregisterSignalsForForwarding()
+ {
+     Bun__currentSyncPID = 0;
+ 
+-#define UNREGISTER_SIGNAL(SIG)                                \
+-    if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
++#define UNREGISTER_SIGNAL(SIG)                                                              \
++    if (PIBOLT_FORWARDS_SIGNAL(SIG) && sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
+     }
+ 
+     FOR_EACH_SIGNAL(UNREGISTER_SIGNAL)
+@@ -1182,6 +1235,10 @@ struct BlobHeader {
  
  #if OS(DARWIN)
  
@@ -5766,7 +5803,7 @@ index a3fd0268c0..2c8a6587be 100644
  extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
  
  extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
-@@ -1189,6 +1238,93 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
+@@ -1189,6 +1246,93 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
      return &BUN_COMPILED.size;
  }
  
@@ -5860,7 +5897,7 @@ index a3fd0268c0..2c8a6587be 100644
  #else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach
  
  extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };
-@@ -1252,3 +1388,55 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
+@@ -1252,3 +1396,55 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
  }
  
  #endif

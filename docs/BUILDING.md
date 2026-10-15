@@ -97,7 +97,7 @@ docker exec -w /work/repo pibolt-arm64 scripts/prepare-pi.sh
 docker exec -w /work/repo pibolt-arm64 scripts/package-release.sh   # linux-arm64 and linux-arm64-jit, the runtime
 ```
 
-On ARM64 Linux the static region is at 128 GB (0x2000000000) rather than at 32 TB: many ARM64 kernels give a process 512 GB of
+On ARM64 Linux the static region is at 64 GB (0x1000000000) rather than at 32 TB: many ARM64 kernels give a process 512 GB of
 addresses (39-bit, as Android's and the Raspberry Pi's) or 4 TB (64 KB pages). The heap and the code image are laid out in 64 KB
 pages, the largest page size of ARM64 kernels, so one executable runs with 4, 16 and 64 KB pages. The executable's loader path
 (PT_INTERP) has room for a longer one, which the installer writes in Termux ([README](../README.md#android-termux)).
