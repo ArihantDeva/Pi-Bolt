@@ -4,14 +4,19 @@
 # replaces this script with the native executable (exec), so the launcher costs no startup time.
 set -eu
 
-VERSION=0.8.7
+VERSION=0.8.8
 HOME_DIR="${PIBOLT_HOME:-$HOME/.pi-bolt}"
 
 if [ "$(uname -s)" = Darwin ]; then PLATFORM=darwin; else PLATFORM=linux; fi
 VARIANT="${PIBOLT_VARIANT:-}"
 if [ -z "$VARIANT" ]; then
 	if [ "$PLATFORM" = darwin ]; then VARIANT=arm64
-	elif grep -qw avx2 /proc/cpuinfo 2>/dev/null; then VARIANT=x64; else VARIANT=x64-baseline; fi
+	else
+		case "$(uname -m)" in
+		aarch64 | arm64) VARIANT=arm64 ;;
+		*) if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then VARIANT=x64; else VARIANT=x64-baseline; fi ;;
+		esac
+	fi
 fi
 DIR="$HOME_DIR/npm/$VERSION/pi-bolt-$PLATFORM-$VARIANT"
 
@@ -30,5 +35,6 @@ if [ ! -x "$DIR/pi" ]; then
 		done
 	fi
 fi
-# (So that `pi-bolt update` knows to say: update the package.)
+# (So that `pi-bolt update` knows to say: update the package. In Termux, through the launcher install.sh wrote beside pi.)
+if [ -x "$DIR/pi-termux" ]; then PIBOLT_NPM=1 exec "$DIR/pi-termux" "$@"; fi
 PIBOLT_NPM=1 exec "$DIR/pi" "$@"

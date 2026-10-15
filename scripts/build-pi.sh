@@ -8,8 +8,9 @@
 #                     JIT-compiled) or off (least memory; the default)
 #   --cpu native|baseline
 #                     native: code for this CPU's instruction set (AVX2 class); on a CPU without it the executable falls back to
-#                     bytecode. baseline: code for any x86-64 CPU Bun runs on (Nehalem). Default: native. (x86-64 only: on
-#                     ARM64 the code is for every CPU with what Apple's M1 has.)
+#                     bytecode. baseline: code for any x86-64 CPU Bun runs on (Nehalem). Default: native. On Linux ARM64 the
+#                     default is baseline, code for any ARMv8.0 CPU (native: the extensions this CPU has, such as LSE and
+#                     JSCVT); on macOS there is only native, for every CPU with what Apple's M1 has.
 #   --profile DIR     the training profile (bytecode order + regular expressions). Default: profiles/pi-<version> if there is one
 #   --plugins FILE    compile Pi extensions into the executable: FILE is a manifest module whose default export is the list of
 #                     extension factories (see docs/PLUGINS.md and examples/plugins/plugins.ts). Its folder is built along with it.
@@ -35,7 +36,7 @@
 #              compiler prints, e.g. with BUN_JSC_verboseAOTCompilation=1)
 source "$(dirname "$0")/lib/common.sh"
 
-PI_DIR="$PIBOLT_PI"; OUT=""; JIT=off; CPU=native; PROFILE=""; PLUGINS=""; PLUGIN_WORKERS=(); KEEP_BYTECODE=""; STABLE=""
+PI_DIR="$PIBOLT_PI"; OUT=""; JIT=off; CPU=""; PROFILE=""; PLUGINS=""; PLUGIN_WORKERS=(); KEEP_BYTECODE=""; STABLE=""
 FROM_INSTALLED=""; PLUGINS_ONLY=""; PLUGINS_EXCLUDE=""; PLUGINS_AGENT_DIR=""; PLUGINS_NO_PACKAGES=""
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -59,9 +60,10 @@ while [ $# -gt 0 ]; do
 	shift
 done
 [ "$JIT" = on ] || [ "$JIT" = off ] || die "--jit takes on or off"
+[ -n "$CPU" ] || { [ "$PIBOLT_PLATFORM" = linux-arm64 ] && CPU=baseline; } || CPU=native
 [ "$CPU" = native ] || [ "$CPU" = baseline ] || die "--cpu takes native or baseline"
-# (On ARM64 there is one build: every Apple silicon CPU has what the compiler uses, and the executable checks it at launch.)
-[ "$CPU" = native ] || [ "$PIBOLT_ARCH" = x64 ] || die "--cpu baseline is for x86-64 only"
+# (On macOS there is one build: every Apple silicon CPU has what the compiler uses, and the executable checks it at launch.)
+[ "$CPU" = native ] || [ "$PIBOLT_OS" = linux ] || die "--cpu baseline is for Linux only"
 [ -z "$FROM_INSTALLED" ] || [ -z "$PLUGINS" ] || die "--plugins-from-installed and --plugins are two ways to say the same thing: use one"
 if [ -z "$FROM_INSTALLED" ]; then
 	[ -z "$PLUGINS_ONLY" ] || die "--plugins-only needs --plugins-from-installed"
@@ -82,7 +84,8 @@ for package in "$(dirname "$AGENT")"/*/; do
 	[ -z "$stale" ] || die "Pi's sources changed since it was built ($stale): build it again (scripts/prepare-pi.sh, or npm run build:offline in $(dirname "$(dirname "$AGENT")"))"
 done
 PIBOLT_VERSION="$(cat "$PIBOLT_ROOT/VERSION")"
-CPU_VARIANT=$PIBOLT_ARCH; [ "$CPU" = baseline ] && CPU_VARIANT=$PIBOLT_ARCH-baseline; [ "$JIT" = on ] && CPU_VARIANT=$PIBOLT_ARCH-jit
+# (Named as the archives are: on ARM64, baseline is the build.)
+CPU_VARIANT=$PIBOLT_ARCH; [ "$CPU" = baseline ] && [ "$PIBOLT_ARCH" = x64 ] && CPU_VARIANT=$PIBOLT_ARCH-baseline; [ "$JIT" = on ] && CPU_VARIANT=$PIBOLT_ARCH-jit
 OUT="$(abspath "${OUT:-$PIBOLT_ROOT/out/pi-bolt}")"
 PROFILE="$(abspath "${PROFILE:-$PIBOLT_ROOT/profiles/pi-$VERSION}")"
 

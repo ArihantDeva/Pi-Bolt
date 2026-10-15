@@ -1,9 +1,10 @@
 # Builds and packages the Windows part of a release: Pi's executable, the runtime, and their SHA256SUMS, in dist\<version>\.
 # Windows' scripts/package-release.sh.
 #
-# Usage: scripts\package-release.ps1 [-Pi DIR] [-NoBuild] [-WithOpenSec]
+# Usage: scripts\package-release.ps1 [-Pi DIR] [-NoBuild] [-RuntimeOnly] [-WithOpenSec]
 #   -Pi DIR     the built Pi tree (default: this repository)
 #   -NoBuild    package the builds already in out\pi-bolt and out\pi-bolt-jit instead of building them
+#   -RuntimeOnly  only the runtime's archive (.github/workflows/runtime.yml), no Pi and no SHA256SUMS
 #   -WithOpenSec  compile in OpenSec's extensions (plugins\opensec; `-builtin:<name>` in the extensions setting turns one off).
 #               Releases are built without: the installers offer them, and compiled in they cost every `-p` +66 ms
 #               (bench/results/2026-10-10-opensec-compiled). With it, retrain the profile with them first
@@ -19,6 +20,7 @@
 param(
 	[string]$Pi = '',
 	[switch]$NoBuild,
+	[switch]$RuntimeOnly,
 	[switch]$WithOpenSec
 )
 $ErrorActionPreference = 'Stop'
@@ -34,7 +36,7 @@ if (-not $Pi) { $Pi = if ($env:PIBOLT_PI) { $env:PIBOLT_PI } else { $Root } }
 $Pi = (Resolve-Path $Pi).Path
 $Out = Join-Path $Root 'out\pi-bolt'
 $OutJit = Join-Path $Root 'out\pi-bolt-jit'
-if (-not $NoBuild) {
+if (-not $NoBuild -and -not $RuntimeOnly) {
 	# With -WithOpenSec, OpenSec's extensions compiled in (plugins\opensec: the versions extensions.txt pins, by their lockfile's
 	# integrity).
 	$withPlugins = @{}
@@ -57,22 +59,24 @@ if (-not $NoBuild) {
 	if ($LASTEXITCODE -eq 3) { exit 3 }
 	if ($LASTEXITCODE -ne 0) { Die 'the JIT build failed' }
 }
-foreach ($dir in $Out, $OutJit) {
+foreach ($dir in $(if ($RuntimeOnly) { @() } else { @($Out, $OutJit) })) {
 	if (-not (Test-Path (Join-Path $dir 'pi.exe'))) { Die "$dir\pi.exe not found: build it, or run without -NoBuild" }
 	# A build with plugins compiled in (its pi-bolt.txt says which) is packaged only when that was asked for.
 	$compiledIn = Select-String -LiteralPath (Join-Path $dir 'pi-bolt.txt') -Pattern '^plugins: ' -ErrorAction SilentlyContinue
 	if ($compiledIn -and -not $WithOpenSec) { Die "$dir has $($compiledIn.Line): rebuild it without, or pass -WithOpenSec" }
 	if ($WithOpenSec -and -not $compiledIn) { Die "$dir has no plugins compiled in: rebuild it, or run without -WithOpenSec" }
 }
-$exe = Join-Path $Out 'pi.exe'
-[Environment]::SetEnvironmentVariable('BUN_STATIC_HEAP_VERBOSE', '1')
-# (What it says on stderr is what is looked for; Windows PowerShell makes each such line an error, which 'Stop' would end the
-# script at.)
-$ErrorActionPreference = 'Continue'
-$check = (& $exe --version 2>&1 | Out-String)
-$ErrorActionPreference = 'Stop'
-[Environment]::SetEnvironmentVariable('BUN_STATIC_HEAP_VERBOSE', $null)
-if ($check -notmatch 'image registered: true') { Die "$exe does not use its compiled code" }
+if (-not $RuntimeOnly) {
+	$exe = Join-Path $Out 'pi.exe'
+	[Environment]::SetEnvironmentVariable('BUN_STATIC_HEAP_VERBOSE', '1')
+	# (What it says on stderr is what is looked for; Windows PowerShell makes each such line an error, which 'Stop' would end the
+	# script at.)
+	$ErrorActionPreference = 'Continue'
+	$check = (& $exe --version 2>&1 | Out-String)
+	$ErrorActionPreference = 'Stop'
+	[Environment]::SetEnvironmentVariable('BUN_STATIC_HEAP_VERBOSE', $null)
+	if ($check -notmatch 'image registered: true') { Die "$exe does not use its compiled code" }
+}
 
 $Dist = Join-Path $Root "dist\$Version"
 if (Test-Path $Dist) {
@@ -93,7 +97,7 @@ function New-Zip($dir, $zip) {
 	[IO.Compression.ZipFile]::CreateFromDirectory($dir, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
 }
 try {
-	foreach ($build in @(@{ Name = 'pi-bolt-win32-x64'; Dir = $Out }, @{ Name = 'pi-bolt-win32-x64-jit'; Dir = $OutJit })) {
+	foreach ($build in $(if ($RuntimeOnly) { @() } else { @(@{ Name = 'pi-bolt-win32-x64'; Dir = $Out }, @{ Name = 'pi-bolt-win32-x64-jit'; Dir = $OutJit }) })) {
 		$name = $build.Name
 		$dir = Join-Path $Stage $name
 		Copy-Item -Recurse $build.Dir $dir
@@ -113,6 +117,7 @@ try {
 } finally {
 	Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
 }
+if ($RuntimeOnly) { exit 0 }
 
 # The extensions the installers offer, pinned (extensions.txt), with LF line ends as everywhere else.
 [IO.File]::WriteAllText((Join-Path $Dist 'extensions.txt'), ((Get-Content (Join-Path $Root 'extensions.txt')) -join "`n") + "`n")

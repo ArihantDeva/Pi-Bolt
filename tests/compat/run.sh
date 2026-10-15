@@ -3,16 +3,18 @@
 #   - in the userland of an old distribution (its glibc, shell and tools), fetched from Docker Hub and entered with bubblewrap:
 #     CentOS 7 (glibc 2.17, the oldest supported), Debian 9, Amazon Linux 2;
 #   - on emulated CPUs (qemu-user): Intel Haswell and Skylake, which run the compiled code of the main build; Sandy Bridge and
-#     Nehalem, which have no AVX2 and run the baseline build, and the main one from bytecode.
+#     Nehalem, which have no AVX2 and run the baseline build, and the main one from bytecode. On ARM64: Cortex-A53 and -A72
+#     (ARMv8.0: a Raspberry Pi 3 and 4) and Neoverse N1 (Graviton 2, Ampere Altra), which all run the compiled code.
 # Each runs bench/stress.py's concurrent scenario (large tool work), whose tool results and requests must equal the reference's:
 # a stock-Bun build of Pi in the same userland, or the main build on this CPU.
 #
 # Usage: tests/compat/run.sh [--builds DIR] [--stable PI] [--only userlands|cpus]
-#   --builds DIR   where the unpacked release archives are (pi-bolt-linux-x64/, -baseline/, -jit/). Default: out/, with the
-#                  names build-pi.sh gives them (pi-bolt, pi-bolt-baseline, pi-bolt-jit)
+#   --builds DIR   where the unpacked release archives are (pi-bolt-linux-x64/, -baseline/, -jit/; on ARM64
+#                  pi-bolt-linux-arm64/, -jit/). Default: out/, with the names build-pi.sh gives them (pi-bolt, pi-bolt-baseline,
+#                  pi-bolt-jit)
 #   --stable PI    the stock-Bun build (scripts/build-pi.sh --stable). Default: out/pi-stable/pi
-# Needs: bwrap and curl for the userlands (unprivileged user namespaces), qemu-x86_64-static for the CPUs. What is missing is
-# skipped, and said.
+# Needs: bwrap and curl for the userlands (unprivileged user namespaces), qemu-x86_64-static (on ARM64 qemu-aarch64-static) for
+# the CPUs. What is missing is skipped, and said.
 source "$(dirname "$0")/../../scripts/lib/common.sh"
 set +e
 
@@ -27,11 +29,13 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+# (On ARM64 the main build is for any ARMv8.0 CPU: there is no baseline build.)
 if [ -n "$BUILDS" ]; then
-	MAIN="$BUILDS/pi-bolt-linux-x64"; BASELINE="$BUILDS/pi-bolt-linux-x64-baseline"; JIT="$BUILDS/pi-bolt-linux-x64-jit"
+	MAIN="$BUILDS/pi-bolt-$PIBOLT_PLATFORM"; BASELINE="$BUILDS/pi-bolt-linux-x64-baseline"; JIT="$BUILDS/pi-bolt-$PIBOLT_PLATFORM-jit"
 else
 	MAIN="$PIBOLT_ROOT/out/pi-bolt"; BASELINE="$PIBOLT_ROOT/out/pi-bolt-baseline"; JIT="$PIBOLT_ROOT/out/pi-bolt-jit"
 fi
+[ "$PIBOLT_ARCH" = x64 ] || BASELINE=""
 [ -x "$MAIN/pi" ] || die "no build at $MAIN (scripts/package-release.sh, or --builds)"
 STRESS="$PIBOLT_ROOT/bench/stress.py"
 ROOTS="$PIBOLT_WORK/compat"
@@ -47,7 +51,8 @@ fetch() {
 		-H "Accept: application/vnd.docker.distribution.manifest.v2+json" "https://registry-1.docker.io/v2/library/$image/manifests/$tag") || return 1
 	digest=$(python3 -c 'import json, sys
 m = json.load(sys.stdin)
-print(next((x["digest"] for x in m.get("manifests", []) if x["platform"]["architecture"] == "amd64" and x["platform"]["os"] == "linux"), ""))' <<<"$manifest")
+print(next((x["digest"] for x in m.get("manifests", []) if x["platform"]["architecture"] == sys.argv[1] and x["platform"]["os"] == "linux"), ""))' \
+		"$([ "$PIBOLT_ARCH" = x64 ] && echo amd64 || echo arm64)" <<<"$manifest")
 	if [ -n "$digest" ]; then
 		manifest=$(curl -fsSL -H "Authorization: Bearer $token" -H "Accept: application/vnd.docker.distribution.manifest.v2+json" -H "Accept: application/vnd.oci.image.manifest.v1+json" \
 			"https://registry-1.docker.io/v2/library/$image/manifests/$digest") || return 1
@@ -81,24 +86,35 @@ if [ "$ONLY" != cpus ]; then
 			read -r image tag <<<"$userland"
 			root="$ROOTS/$image-$tag"
 			fetch "$image" "$tag" "$root" || { echo "SKIP $image $tag: could not fetch it"; continue; }
-			enter="bwrap --bind $root / --dev /dev --proc /proc --bind /tmp /tmp --ro-bind $MAIN /pi/main --ro-bind $BASELINE /pi/baseline --ro-bind $JIT /pi/jit --ro-bind $(dirname "$STABLE") /pi/stable --setenv PATH /usr/local/bin:/usr/bin:/bin --setenv HOME $home --die-with-parent"
+			enter="bwrap --bind $root / --dev /dev --proc /proc --bind /tmp /tmp --ro-bind $MAIN /pi/main --ro-bind $JIT /pi/jit --ro-bind $(dirname "$STABLE") /pi/stable --setenv PATH /usr/local/bin:/usr/bin:/bin --setenv HOME $home --die-with-parent"
+			builds=(--build "main=$enter /pi/main/pi" --build "jit=$enter /pi/jit/pi")
+			if [ -n "$BASELINE" ]; then
+				enter="$enter --ro-bind $BASELINE /pi/baseline"
+				builds=(--build "main=$enter /pi/main/pi" --build "baseline=$enter /pi/baseline/pi" --build "jit=$enter /pi/jit/pi")
+			fi
 			glibc=$($enter /bin/sh -c 'ldd --version 2>&1 | head -1' | grep -o '[0-9.]*$')
-			python3 "$STRESS" --reference "stable=$enter /pi/stable/pi" --build "main=$enter /pi/main/pi" --build "baseline=$enter /pi/baseline/pi" --build "jit=$enter /pi/jit/pi" \
-				--only concurrent,faults,signals --concurrency 6 2>&1 | report "$image $tag (glibc $glibc): the three builds"
+			python3 "$STRESS" --reference "stable=$enter /pi/stable/pi" "${builds[@]}" \
+				--only concurrent,faults,signals --concurrency 6 2>&1 | report "$image $tag (glibc $glibc): every build"
 		done
 		rm -rf "$home"
 	fi
 fi
 
 if [ "$ONLY" != userlands ]; then
-	qemu=$(command -v qemu-x86_64-static || command -v qemu-x86_64)
-	if [ -z "$qemu" ]; then
-		echo "SKIP CPUs: no qemu-x86_64-static"
+	if [ "$PIBOLT_ARCH" = x64 ]; then
+		qemu=$(command -v qemu-x86_64-static || command -v qemu-x86_64)
+		cpus="Haswell Skylake-Client SandyBridge Nehalem"
 	else
-		for cpu in Haswell Skylake-Client SandyBridge Nehalem; do
+		qemu=$(command -v qemu-aarch64-static || command -v qemu-aarch64)
+		cpus="cortex-a53 cortex-a72 neoverse-n1"
+	fi
+	if [ -z "$qemu" ]; then
+		echo "SKIP CPUs: no qemu-$(uname -m)-static"
+	else
+		for cpu in $cpus; do
 			used=$(BUN_STATIC_HEAP_VERBOSE=1 "$qemu" -cpu "$cpu" "$MAIN/pi" --version 2>&1 | grep -c "image registered: true")
 			case "$cpu" in
-			Haswell | Skylake-Client) want=1; what="runs its compiled code" ;;
+			Haswell | Skylake-Client | cortex-* | neoverse-*) want=1; what="runs its compiled code" ;;
 			*) want=0; what="falls back to bytecode" ;;
 			esac
 			if [ "$used" = "$want" ]; then
@@ -107,8 +123,13 @@ if [ "$ONLY" != userlands ]; then
 				echo "FAIL $cpu: the main build should be one that $what"
 				status=1
 			fi
-			python3 "$STRESS" --reference "here=$MAIN/pi" --build "main=$qemu -cpu $cpu $MAIN/pi" --build "baseline=$qemu -cpu $cpu $BASELINE/pi" --only concurrent --concurrency 2 2>&1 |
-				report "$cpu: the main and baseline builds"
+			if [ -n "$BASELINE" ]; then
+				python3 "$STRESS" --reference "here=$MAIN/pi" --build "main=$qemu -cpu $cpu $MAIN/pi" --build "baseline=$qemu -cpu $cpu $BASELINE/pi" --only concurrent --concurrency 2 2>&1 |
+					report "$cpu: the main and baseline builds"
+			else
+				python3 "$STRESS" --reference "here=$MAIN/pi" --build "main=$qemu -cpu $cpu $MAIN/pi" --only concurrent --concurrency 2 2>&1 |
+					report "$cpu: the build"
+			fi
 		done
 	fi
 fi
