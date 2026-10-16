@@ -1037,6 +1037,16 @@ setup_termux() {
 			answer=$(head -n 1 </dev/tty || true)
 			case "$answer" in n | N | no | NO) fail "Pi-Bolt needs Termux's glibc: install it with the command above, then run this again" ;; esac
 		fi
+		# (A package list fetched before glibc-repo was added, or never, does not have it: fetched again first.)
+		apt-get update >/dev/null 2>&1 || true
+		if ! apt-cache show glibc-repo >/dev/null 2>&1; then
+			# Termux from Google Play installs from termux.net, which has no glibc packages.
+			if [ "${TERMUX_APK_RELEASE:-}" = GOOGLE_PLAY_STORE ] ||
+				grep -qs 'termux\.net' "$PREFIX/etc/apt/sources.list" "$PREFIX"/etc/apt/sources.list.d/*.list; then
+				fail "Termux from Google Play has no glibc packages, which Pi-Bolt needs. Install Termux from F-Droid (https://f-droid.org/packages/com.termux/) or from GitHub (https://github.com/termux/termux-app/releases), then run this again"
+			fi
+			fail "Termux's package repository has no glibc-repo: choose another mirror with termux-change-repo, then run this again"
+		fi
 		{ pkg install -y glibc-repo && pkg install -y glibc; } || fail "could not install Termux's glibc"
 		[ -e "$LOADER" ] || fail "Termux's glibc is installed, but $LOADER is not there"
 		printf '\n'

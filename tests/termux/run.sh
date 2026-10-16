@@ -76,6 +76,26 @@ for _ in $(seq 50); do curl -fs "http://127.0.0.1:$port/SHA256SUMS" >/dev/null &
 
 # The installer, in a POSIX shell as Termux's (dash). (Without the LD_PRELOAD: the tools it runs are this system's, glibc's.)
 INSTALL="$HOME/.pi-bolt"
+
+# Where Termux's repository has no glibc-repo (Termux from Google Play, whose termux.net leaves the glibc packages out; or a
+# mirror without it), the installer says what to do instead of failing in pkg. (Termux's apt and pkg stand in as scripts.)
+rm "$PREFIX/glibc/lib/ld-linux-aarch64.so.1"
+printf '#!/bin/sh\nexit 0\n' >"$PREFIX/bin/apt-get"
+printf '#!/bin/sh\necho "N: Unable to locate package $3" >&2\nexit 100\n' >"$PREFIX/bin/apt-cache"
+printf '#!/bin/sh\necho "pkg $*" >>"%s/pkg-calls"\nexit 100\n' "$WORK" >"$PREFIX/bin/pkg"
+chmod 755 "$PREFIX/bin/apt-get" "$PREFIX/bin/apt-cache" "$PREFIX/bin/pkg"
+mkdir -p "$PREFIX/etc/apt"
+for repo in "https://termux.net stable main|Google Play" "https://mirror.example.org/termux/termux-main stable main|termux-change-repo"; do
+	printf 'deb %s\n' "${repo%|*}" >"$PREFIX/etc/apt/sources.list"
+	want=${repo#*|}
+	what="without glibc-repo in Termux's repository, install.sh says so ($want)"
+	out=$(PIBOLT_VERSION=bolt-v0.5.99 PIBOLT_DOWNLOAD_BASE="http://127.0.0.1:$port" PIBOLT_YES=1 PIBOLT_EXTENSIONS=no PIBOLT_NO_START=1 \
+		/bin/sh "$ROOT/install.sh" </dev/null 2>&1)
+	if [ $? -ne 0 ] && grep -qF "$want" <<<"$out" && [ ! -e "$WORK/pkg-calls" ]; then pass "$what"; else fail "$what" "$out"; fi
+done
+rm -f "$PREFIX/bin/apt-get" "$PREFIX/bin/apt-cache" "$PREFIX/bin/pkg" "$PREFIX/etc/apt/sources.list"
+ln -sf /lib/ld-linux-aarch64.so.1 "$PREFIX/glibc/lib/ld-linux-aarch64.so.1"
+
 out=$(PIBOLT_VERSION=bolt-v0.5.99 PIBOLT_DOWNLOAD_BASE="http://127.0.0.1:$port" PIBOLT_YES=1 PIBOLT_EXTENSIONS=no PIBOLT_NO_START=1 \
 	/bin/sh "$ROOT/install.sh" </dev/null 2>&1)
 if [ -x "$INSTALL/$NAME/pi-termux" ] && [ "$(readlink "$PREFIX/bin/pi-bolt")" = "$INSTALL/$NAME/pi-termux" ]; then
