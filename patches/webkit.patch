@@ -65,7 +65,7 @@ function, which compares many characters at a time.
  Source/JavaScriptCore/aot/AOTLowerArith.cpp   |   64 +-
  .../JavaScriptCore/aot/AOTLowerBuiltins.cpp   |   13 +-
  Source/JavaScriptCore/aot/AOTLowerCalls.cpp   |    9 +-
- Source/JavaScriptCore/aot/AOTLowerCore.cpp    |  173 +-
+ Source/JavaScriptCore/aot/AOTLowerCore.cpp    |  174 +-
  Source/JavaScriptCore/aot/AOTLowerGuards.cpp  |   75 +-
  Source/JavaScriptCore/aot/AOTLowerMisc.cpp    |    2 +-
  Source/JavaScriptCore/aot/AOTLowering.h       |    1 +
@@ -93,6 +93,8 @@ function, which compares many characters at a time.
  Source/JavaScriptCore/dfg/DFGOperations.cpp   |   45 +-
  Source/JavaScriptCore/ffi/FFICallHost.cpp     |    4 +-
  Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp |   38 +
+ Source/JavaScriptCore/ftl/FTLOutput.cpp       |   32 +-
+ Source/JavaScriptCore/ftl/FTLOutput.h         |    8 +
  Source/JavaScriptCore/heap/StaticHeap.cpp     |  432 +-
  Source/JavaScriptCore/heap/StaticHeap.h       |   62 +-
  .../heap/StructureAlignedMemoryAllocator.cpp  |    6 +-
@@ -164,7 +166,7 @@ function, which compares many characters at a time.
  Source/cmake/WebKitMacros.cmake               |   28 +-
  .../TestWebKitAPI/Tests/WTF/StringCommon.cpp  |   19 +-
  build-icu.ps1                                 |   49 +-
- 126 files changed, 9132 insertions(+), 580 deletions(-)
+ 128 files changed, 9157 insertions(+), 596 deletions(-)
  create mode 100644 JSTests/microbenchmarks/array-length-increment-large.js
  create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-long.js
  create mode 100644 JSTests/microbenchmarks/string-index-of-one-char-short.js
@@ -2721,10 +2723,18 @@ index 26a637003c..4c9b5bd479 100644
              if (!isSubtype(typeOfCallee, TCell)) {
                  LBasicBlock isCellCase = m_out.newBlock();
 diff --git a/Source/JavaScriptCore/aot/AOTLowerCore.cpp b/Source/JavaScriptCore/aot/AOTLowerCore.cpp
-index 9c341c2ac9..2dffb741d1 100644
+index 9c341c2ac9..49f865f1d8 100644
 --- a/Source/JavaScriptCore/aot/AOTLowerCore.cpp
 +++ b/Source/JavaScriptCore/aot/AOTLowerCore.cpp
-@@ -499,6 +499,70 @@ static bool mayLookAtStack(Stub stub)
+@@ -170,6 +170,7 @@ Lowering::Lowering(Graph& graph, Procedure& proc)
+     : Emitter(proc)
+     , m_graph(graph)
+ {
++    m_out.m_foldedConstants = &m_graph.wideIntegerConstants;
+ }
+ 
+ // See Lowering::scratchWord().
+@@ -499,6 +500,70 @@ static bool mayLookAtStack(Stub stub)
      }
  }
  
@@ -2795,7 +2805,7 @@ index 9c341c2ac9..2dffb741d1 100644
  bool Lowering::isLiveAfterNextNode(Node* node) const
  {
      if (m_nodeIndex >= m_block->nodes.size() || m_block->nodes[m_nodeIndex] != node)
-@@ -535,7 +599,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
+@@ -535,7 +600,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
      // The first thing that the stub is given stays where it is, if the stub can be got into with it there (acceptsOperandInAnyRegister()).
      std::optional<uint32_t> valueOfT9;
      for (auto& immediate : immediates) {
@@ -2804,7 +2814,7 @@ index 9c341c2ac9..2dffb741d1 100644
              valueOfT9 = immediate.value;
      }
      bool operandStaysWhereItIs = !type.isTuple() && !arguments.isEmpty() && arguments[0].reg.isGPR() && acceptsOperandInAnyRegister(stub, valueOfT9) && arguments[0].reg.gpr() == defaultOperandRegister(stub)
-@@ -573,7 +637,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
+@@ -573,7 +638,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
      if (slotArgument)
          patchpoint->append(ConstrainedValue(m_data, ValueRep::SomeRegister));
      for (auto& immediate : immediates) {
@@ -2813,7 +2823,7 @@ index 9c341c2ac9..2dffb741d1 100644
              writtenOnTheWay.add(immediate.reg, IgnoreVectors);
      }
      // (What is worked out on the way is worked out before anything is looked at. It used to be that nothing was anywhere but in a register of its own.)
-@@ -582,31 +646,35 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
+@@ -582,31 +647,35 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
      patchpoint->clobberLate(writtenOnTheWay);
      if (operandStaysWhereItIs) {
          RegisterSet mayNotHoldIt;
@@ -2858,7 +2868,7 @@ index 9c341c2ac9..2dffb741d1 100644
      case StubClobbers::Nothing:
          break;
      }
-@@ -615,7 +683,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
+@@ -615,7 +684,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
      else if (type.isTuple()) {
          // Whoever asked for several results says where they are.
      } else if (type != Void)
@@ -2867,7 +2877,7 @@ index 9c341c2ac9..2dffb741d1 100644
      unsigned whichIsOperand = type == Void ? 0 : 1;
      patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, stub, immediates, slotArgument, slotsOfFrame, operandStaysWhereItIs, secondStaysWhereItIsToo, resultUsesAssignedRegister, whichIsOperand, valueOfT9, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
          AllowMacroScratchRegisterUsage allowScratch(jit);
-@@ -624,7 +692,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
+@@ -624,7 +693,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
          for (auto& [reg, slot] : slotsOfFrame)
              jit.addPtr(CCallHelpers::TrustedImm32(slot->offsetFromFP()), GPRInfo::callFrameRegister, reg);
          for (auto& immediate : immediates) {
@@ -2876,7 +2886,7 @@ index 9c341c2ac9..2dffb741d1 100644
                  jit.move(CCallHelpers::TrustedImm32(immediate.value), immediate.reg);
          }
          if (resultUsesAssignedRegister)
-@@ -671,8 +739,10 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
+@@ -671,8 +740,10 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
      if (second)
          patchpoint->append(ConstrainedValue(second, ValueRep::reg(GPRInfo::argumentGPR2)));
      RegisterSet temporaries;
@@ -2889,7 +2899,7 @@ index 9c341c2ac9..2dffb741d1 100644
      patchpoint->clobber(RegisterSet::macroClobberedGPRs());
      patchpoint->clobber(temporaries);
      if (returnsValue)
-@@ -681,8 +751,11 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
+@@ -681,8 +752,11 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
      patchpoint->setGenerator([graph = &m_graph, valueOfT9, site, returnsValue, firstStaysWhereItIs](CCallHelpers& jit, const StackmapGenerationParams& params) {
          AllowMacroScratchRegisterUsage allowScratch(jit);
          bool isLeaf = hasNoFrame(*graph, params.proc().code());
@@ -2902,7 +2912,7 @@ index 9c341c2ac9..2dffb741d1 100644
          Stub stub = returnsValue ? (isLeaf ? Stub::ColdOperationValueOfLeaf : Stub::ColdOperationValue) : (isLeaf ? Stub::ColdOperationVoidOfLeaf : Stub::ColdOperationVoid);
          if (firstStaysWhereItIs)
              graph->stubCalls.callWithOperandIn(jit, stub, valueOfT9, params[returnsValue ? 1 : 0].gpr(), site);
-@@ -716,12 +789,24 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
+@@ -716,12 +790,24 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
              placed.append({ arguments[i], FPRInfo::toArgumentRegister(nextFPR++) });
              continue;
          }
@@ -2929,7 +2939,7 @@ index 9c341c2ac9..2dffb741d1 100644
  
      Stub stub;
      if (!throws)
-@@ -734,7 +819,7 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
+@@ -734,7 +820,7 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
          stub = withGlobalObject ? Stub::OperationValueWithGlobalObject : Stub::OperationValue;
  
      Vector<StubImmediate, 2> immediates;
@@ -2938,7 +2948,7 @@ index 9c341c2ac9..2dffb741d1 100644
      PatchpointValue* result = callStub(stub, type, placed, immediates, StubClobbers::CallerSavedRegisters, node);
      return type == Void ? nullptr : result;
  }
-@@ -800,10 +885,49 @@ LValue Lowering::doubleToInt32(LValue value)
+@@ -800,10 +886,49 @@ LValue Lowering::doubleToInt32(LValue value)
          patchpoint->effects = Effects::none();
          return patchpoint;
      }
@@ -2988,7 +2998,7 @@ index 9c341c2ac9..2dffb741d1 100644
  LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
  {
      if (from == to)
-@@ -818,13 +942,7 @@ LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
+@@ -818,13 +943,7 @@ LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
              return m_out.select(m_out.equal(m_out.signExt32To64(narrow), value), boxInt32(narrow), boxDouble(m_out.intToDouble(value)));
          }
          case Rep::Double:
@@ -3003,7 +3013,7 @@ index 9c341c2ac9..2dffb741d1 100644
          case Rep::Boolean:
              return boxBoolean(value);
          case Rep::JSValue:
-@@ -1213,7 +1331,8 @@ void Lowering::lowerBlock(BasicBlock* block)
+@@ -1213,7 +1332,8 @@ void Lowering::lowerBlock(BasicBlock* block)
          lowerEntry();
  
      Node* terminal = block->terminal();
@@ -9166,6 +9176,97 @@ index b894755248..2b1d40c454 100644
          }
          patchpoint->effects.terminal = true;
          if (actualAllocator.isConstant())
+diff --git a/Source/JavaScriptCore/ftl/FTLOutput.cpp b/Source/JavaScriptCore/ftl/FTLOutput.cpp
+index 780086933c..e342c6c136 100644
+--- a/Source/JavaScriptCore/ftl/FTLOutput.cpp
++++ b/Source/JavaScriptCore/ftl/FTLOutput.cpp
+@@ -151,12 +151,18 @@ LValue Output::extract(LValue value, unsigned index)
+     return m_block->appendNew<ExtractValue>(m_proc, origin(), m_proc.typeAtOffset(value->type(), index), value, index);
+ }
+ 
++LValue Output::appendFolded(Value* result)
++{
++    m_block->append(result);
++    if (m_foldedConstants && result->hasInt64())
++        m_foldedConstants->add(result->asInt64());
++    return result;
++}
++
+ LValue Output::add(LValue left, LValue right)
+ {
+-    if (Value* result = left->addConstant(m_proc, right)) {
+-        m_block->append(result);
+-        return result;
+-    }
++    if (Value* result = left->addConstant(m_proc, right))
++        return appendFolded(result);
+     return m_block->appendNew<B3::Value>(m_proc, B3::Add, origin(), left, right);
+ }
+ 
+@@ -248,30 +254,24 @@ LValue Output::bitXor(LValue left, LValue right)
+ LValue Output::shl(LValue left, LValue right)
+ {
+     right = castToInt32(right);
+-    if (Value* result = left->shlConstant(m_proc, right)) {
+-        m_block->append(result);
+-        return result;
+-    }
++    if (Value* result = left->shlConstant(m_proc, right))
++        return appendFolded(result);
+     return m_block->appendNew<B3::Value>(m_proc, B3::Shl, origin(), left, right);
+ }
+ 
+ LValue Output::aShr(LValue left, LValue right)
+ {
+     right = castToInt32(right);
+-    if (Value* result = left->sShrConstant(m_proc, right)) {
+-        m_block->append(result);
+-        return result;
+-    }
++    if (Value* result = left->sShrConstant(m_proc, right))
++        return appendFolded(result);
+     return m_block->appendNew<B3::Value>(m_proc, B3::SShr, origin(), left, right);
+ }
+ 
+ LValue Output::lShr(LValue left, LValue right)
+ {
+     right = castToInt32(right);
+-    if (Value* result = left->zShrConstant(m_proc, right)) {
+-        m_block->append(result);
+-        return result;
+-    }
++    if (Value* result = left->zShrConstant(m_proc, right))
++        return appendFolded(result);
+     return m_block->appendNew<B3::Value>(m_proc, B3::ZShr, origin(), left, right);
+ }
+ 
+diff --git a/Source/JavaScriptCore/ftl/FTLOutput.h b/Source/JavaScriptCore/ftl/FTLOutput.h
+index ccc850004c..0b99e7c526 100644
+--- a/Source/JavaScriptCore/ftl/FTLOutput.h
++++ b/Source/JavaScriptCore/ftl/FTLOutput.h
+@@ -47,6 +47,7 @@
+ #include "FTLWeightedTarget.h"
+ #include "HeapCell.h"
+ #include "JITCompilation.h"
++#include <wtf/HashSet.h>
+ #include <wtf/OrderMaker.h>
+ #include <wtf/StringPrintStream.h>
+ 
+@@ -479,7 +480,14 @@ public:
+ 
+     double m_frequency { 1 };
+ 
++    // Where the 64-bit constants that add() and the shifts fold from constant operands are recorded, when set: numbers, made
++    // from numbers (the operands stay in the procedure). The AOT compiler's check for addresses in its code takes them as such.
++    using FoldedConstants = UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>>;
++    FoldedConstants* m_foldedConstants { nullptr };
++
+ private:
++    LValue appendFolded(B3::Value*);
++
+     OrderMaker<LBasicBlock> m_blockOrder;
+ };
+ 
 diff --git a/Source/JavaScriptCore/heap/StaticHeap.cpp b/Source/JavaScriptCore/heap/StaticHeap.cpp
 index 96edcf1624..aa49ed28a7 100644
 --- a/Source/JavaScriptCore/heap/StaticHeap.cpp
