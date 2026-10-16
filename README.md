@@ -19,20 +19,20 @@
 <h1 align="center">Pi-Bolt</h1>
 
 <p align="center"><b>The <a href="https://github.com/earendil-works/pi">Pi</a> coding agent, compiled ahead of time to native code.</b><br>
-One executable for Linux x86-64, macOS on Apple silicon and Windows x64. No JIT, no Node.js or Bun required.</p>
+One executable for Linux x86-64 and ARM64, macOS on Apple silicon and Windows x64. No JIT, no Node.js or Bun required.</p>
 
 Pi-Bolt is the Pi you already use, with the same commands, sessions, settings, providers and extensions. Every function is
 compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. It starts two to three
-times sooner than Pi on Bun, uses a quarter to a third of its CPU over a session, and handles long answers and large files six
-to seventy-five times more cheaply.
+times sooner than Pi on Bun and uses about a third of its CPU over a session; against Pi on Node it streams long answers and
+writes large files 18 to 100 times more cheaply.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-hero-dark.svg">
-  <img alt="Pi-Bolt 0.8.5 vs Pi on Bun 1.4.2 vs Pi on Node 24: ready to type 38 / 116 / 296 ms; CPU per session 193 / 746 / 1,093 ms; CPU while streaming 204 / 382 / 475 ms; memory after a long session 134 / 253 / 536 MB" src="docs/images/bench-hero-light.svg">
+  <img alt="Pi-Bolt 0.9.2 vs Pi on Bun 1.4.2 vs Pi on Node 24: ready to type 38 / 84 / 277 ms; CPU per session 142 / 383 / 790 ms; CPU for a 60,000-character answer 1.6 / 1.7 / 28.9 s; memory after 40 prompts 101 / 164 / 520 MB" src="docs/images/bench-hero-light.svg">
 </picture>
 
-<sub>AMD EPYC 7B13, Linux. Pi-Bolt 0.8.5 against Pi 1.1.0 as released on stock Bun 1.4.2 and Node 24; medians of interleaved runs,
-lower is better. See [Benchmarks](#benchmarks).</sub>
+<sub>GitHub's Linux x86-64 runner, one CPU. Pi-Bolt 0.9.2 against Pi 1.2.0 on stock Bun 1.4.2 and Node 24; lower is better. See
+[Benchmarks](#benchmarks).</sub>
 
 > [!NOTE]
 > Pi-Bolt is an independent fork of [Pi](https://github.com/earendil-works/pi), not affiliated with Pi's authors or with Oven.
@@ -131,82 +131,22 @@ uninstalls it.
 
 ## Benchmarks
 
-Pi-Bolt 0.8.5 against Pi 1.1.0 as released, on stock Bun 1.4.2 and on Node, against two other fast Pi builds,
-[PiG](https://github.com/MichaelKinsy/PiG) 0.4.1, the Go port of Pi (based on Pi 1.0.3), and
-[oh-my-pi](https://github.com/can1357/oh-my-pi) 18.8.7, a fork of Pi on Bun, and against
-[OpenCode](https://github.com/anomalyco/opencode) 2.0. Runs are interleaved on the same machine; medians, lower is better.
+Pi-Bolt 0.9.2 against Pi 1.2.0 on stock Bun 1.4.2 and on Node 24, on GitHub's Linux x86-64 runner, one CPU each; lower is
+better.
 
-**Linux x86-64** (AMD EPYC 7B13)
-
-| Benchmark | Pi-Bolt | PiG | oh-my-pi | OpenCode 2.0 | Pi on Bun | Pi on Node 24 |
-|---|---:|---:|---:|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.6 s** | 77.5 s | 3.3 s | 2.4 s | 24.0 s | 32.5 s |
-| CPU, streaming a 60,000-character answer | 2.6 s | 16.7 s | **2.2 s** | 8.6 s | 40.2 s | 38.7 s |
-| Memory after a 4.2M-token session | **134 MB** | 349 MB | – | 273 MB¹ | 253 MB | 536 MB |
-| Memory of a session in tmux | **22 MB** | 48 MB | 334 MB | –² | 84 MB | 185 MB |
-| CPU, interactive session (5 prompts) | **193 ms** | 2,458 ms | 2,800 ms | 8,593 ms | 746 ms | 1,093 ms |
-| CPU, one prompt (`pi -p`) | **61 ms** | 227 ms | 1,524 ms | 2,220 ms | 283 ms | 550 ms |
-| Peak memory, one prompt (`pi -p`) | 123 MB | **55 MB** | 505 MB | 346 MB | 147 MB | 135 MB |
-| Ready to type | 38 ms | **31 ms** | 890 ms | 1,687 ms | 116 ms | 296 ms |
-
-**macOS** (Apple M5)
-
-| Benchmark | Pi-Bolt | PiG | oh-my-pi | OpenCode 2.0 | Pi on Bun | Pi on Node 26 |
-|---|---:|---:|---:|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.4 s** | 56.8 s | 2.5 s | 1.7 s | 22.6 s | 28.1 s |
-| CPU, streaming a 60,000-character answer | 6.5 s | 16.5 s | **5.1 s** | 13.6 s | 37.9 s | 37.6 s |
-| Memory after a 4.2M-token session | **38 MB** | 330 MB | – | 260 MB¹ | 92 MB | 1,581 MB |
-| Memory of a session in tmux | **24 MB** | 55 MB | 330 MB | –² | 65 MB | 162 MB |
-| CPU, interactive session (5 prompts) | **139 ms** | 2,367 ms | 2,374 ms | 6,493 ms | 561 ms | 937 ms |
-| CPU, one prompt (`pi -p`) | **49 ms** | 230 ms | 1,030 ms | 1,548 ms | 221 ms | 512 ms |
-| Peak memory, one prompt (`pi -p`) | 70 MB | **50 MB** | 419 MB | 379 MB | 120 MB | 138 MB |
-| Ready to type | 41 ms | **39 ms** | 612 ms | 1,489 ms | 100 ms | 348 ms |
-
-PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with a little less CPU.
-Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files fastest.
-oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–). OpenCode 2.0.27 (`@opencode/cli`)
-runs with its own server in the same process tree (`--standalone`), in a separate run next to Pi-Bolt on the same machines.
-¹ The process started, without OpenCode's server process: its memory is higher. ² OpenCode did not finish its answers in tmux.
-
-**Windows x64** (Intel Core i5-1335U laptop; Pi-Bolt 0.8.5, Pi 1.1.0 as released)
-
-| Benchmark | Pi-Bolt | Pi on Bun 1.4.2 | Pi on Node 24 |
+| Benchmark | Pi-Bolt | Pi on Bun | Pi on Node 24 |
 |---|---:|---:|---:|
-| Writing a 200 KB file through a tool call | **0.5 s** | 38.1 s | 26.6 s |
-| CPU, streaming a 60,000-character answer | **6.9 s** | 41.1 s | 32.6 s |
-| Memory after a 4.2M-token session | **122 MB** | 248 MB | 413 MB |
-| Memory of a session in a terminal (ConPTY) | **32 MB** | 97 MB | 60 MB |
-| CPU, interactive session (5 prompts) | **278 ms** | 805 ms | 1,125 ms |
-| CPU, one prompt (`pi -p`) | **92 ms** | 329 ms | 544 ms |
-| Ready to type | **105 ms** | 177 ms | 311 ms |
+| Ready to type | **38 ms** | 84 ms | 277 ms |
+| CPU, one prompt (`pi -p`) | **51 ms** | 128 ms | 385 ms |
+| CPU, interactive session | **142 ms** | 383 ms | 790 ms |
+| CPU, streaming a 60,000-character answer | **1.6 s** | 1.7 s | 28.9 s |
+| CPU, writing a 400 KB file through a tool call | **1.5 s** | 1.9 s | 150 s |
+| Peak memory, one prompt (`pi -p`) | **107 MB** | 114 MB | 138 MB |
+| Memory of a session in tmux | **24 MB** | 77 MB | 212 MB |
+| Memory after 40 prompts | **101 MB** | 164 MB | 520 MB |
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-long-dark.svg">
-  <img alt="Long answers and large files on Linux, Pi-Bolt 0.8.5 vs Pi on Bun 1.4.2 vs Pi on Node 24: CPU streaming a 20,000-character answer 0.6 / 8.0 / 6.3 s; a 60,000-character answer 2.6 / 40.2 / 38.7 s; share of a core while streaming 5 / 80 / 77%; writing a 200 KB file through a tool call 0.6 / 24.0 / 32.5 s" src="docs/images/bench-long-light.svg">
-</picture>
-
-<details>
-<summary>More charts: time, CPU and memory on Linux</summary>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-speed-dark.svg">
-  <img alt="Time on Linux, Pi-Bolt 0.8.5 vs Pi on Bun 1.4.2 vs Pi on Node 24: ready to type 38 / 116 / 296 ms; pi --version 11 / 72 / 222 ms; one prompt 60 / 154 / 390 ms; time per prompt in a 4.2M-token session 435 / 691 / 841 ms" src="docs/images/bench-speed-light.svg">
-</picture>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-cpu-dark.svg">
-  <img alt="CPU time on Linux, Pi-Bolt 0.8.5 vs Pi on Bun 1.4.2 vs Pi on Node 24: interactive session 193 / 746 / 1,093 ms; one prompt 61 / 283 / 550 ms; pi --version 11 / 131 / 281 ms; per prompt in a 4.2M-token session 180 / 488 / 685 ms" src="docs/images/bench-cpu-light.svg">
-</picture>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-memory-dark.svg">
-  <img alt="Memory and streaming on Linux, Pi-Bolt 0.8.5 vs Pi on Bun 1.4.2 vs Pi on Node 24: peak memory 150 / 217 / 213 MB; own memory in tmux 22 / 84 / 185 MB; own memory after a 4.2M-token session 134 / 253 / 536 MB; CPU while replies stream 204 / 382 / 475 ms" src="docs/images/bench-memory-light.svg">
-</picture>
-
-</details>
-
-Method, raw data and the macOS and Windows charts: [docs/BENCHMARKS.md](docs/BENCHMARKS.md). (Memory on Windows is the private
-working set.)
+Against 0.8.5, 0.9.2 streams long answers and large files with 16–37% less CPU, and starts with up to a quarter less memory.
+Linux ARM64, macOS, Windows, other Pi builds (PiG, oh-my-pi, OpenCode) and the method: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Plugins
 

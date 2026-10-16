@@ -4,15 +4,17 @@ Pi-Bolt compared with the same Pi release on stock Bun and on Node.js. Every fig
 [`bench/`](../bench), and the raw results are in [`bench/results/`](../bench/results). The charts are drawn from those files by
 [`bench/report.py`](../bench/report.py).
 
-**Versions.** Pi-Bolt 0.8.5 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
+**Versions.** [0.9.2 on GitHub's runners](#092-on-githubs-runners) is the latest: Pi-Bolt 0.9.2 (Pi 1.2.0) on GitHub's Linux
+x86-64 and ARM64 runners. The sections after it are earlier measurements: Pi-Bolt 0.8.5 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
 its release archive; [against PiG and oh-my-pi](#against-pig-and-oh-my-pi) in the same runs. [With a real model](#with-a-real-model) is an earlier measurement, of Pi-Bolt 0.6.1.
 
-**These are measurements, not guarantees.** Each set of results comes from one machine: an AMD EPYC 7B13 server for Linux and an
-M5 MacBook Air for macOS. On other hardware the milliseconds will differ, and so can the load, the terminal and the disk. What
+**These are measurements, not guarantees.** Each set of results comes from one machine: for 0.8.5, an AMD EPYC 7B13 server for
+Linux and an M5 MacBook Air for macOS. On other hardware the milliseconds will differ, and so can the load, the terminal and the disk. What
 carries over is the comparison, because every run interleaves the runtimes on the same machine: Pi-Bolt starts three times
 sooner than Pi on Bun and uses about a quarter of its CPU over an interactive session. The ratio varies by scenario: see
 each table.
 
+- [0.9.2 on GitHub's runners](#092-on-githubs-runners)
 - [0.7.3 against 0.7.2](#073-against-072)
 - [Results](#results)
 - [macOS on Apple silicon](#macos-on-apple-silicon)
@@ -30,6 +32,49 @@ each table.
   - [Why is a run-time plugin's loop slow on the default build?](#why-is-a-run-time-plugins-loop-slow-on-the-default-build)
 - [Reproduce](#reproduce)
 - [Correctness](#correctness)
+
+## 0.9.2 on GitHub's runners
+
+Pi-Bolt 0.9.2 and 0.8.5 (0.8.8 on ARM64, the first ARM64 release), from their release archives, against Pi 1.2.0 on stock Bun
+1.4.2 (this repository's Pi) and Pi 1.2.0 as released on npm on Node 22 and Node 24. GitHub's `ubuntu-24.04` and
+`ubuntu-24.04-arm` runners, one CPU each, interleaved. Times to start, prompts and sessions are medians of 11 runs; long
+answers, files, tmux and the 40-prompt session are one run each. The tools' printed results:
+[`bench/results/2026-10-16-linux-0.9.2`](../bench/results/2026-10-16-linux-0.9.2).
+
+**Linux x86-64**
+
+| Benchmark | 0.9.2 | 0.8.5 | Bun | Node 22 | Node 24 |
+|---|---:|---:|---:|---:|---:|
+| `pi --version` | 10 ms | 11 ms | 24 ms | 178 ms | 192 ms |
+| Ready to type | 38 ms | 36 ms | 84 ms | 259 ms | 277 ms |
+| CPU, one prompt (`pi -p`) | 51 ms | 49 ms | 128 ms | 369 ms | 385 ms |
+| CPU, interactive session | 142 ms | 138 ms | 383 ms | 790 ms | 790 ms |
+| CPU, streaming a 60,000-character answer | 1.56 s | 1.97 s | 1.69 s | 32.6 s | 28.9 s |
+| CPU, a 400 KB file through a tool call | 1.53 s | 1.82 s | 1.87 s | 178 s | 150 s |
+| Pi's CPU in tmux, a 50 KB file through a tool call | 0.92 s | 1.27 s | 1.06 s | 11.8 s | 10.4 s |
+| Peak memory, `pi --version` | 46 MB | 59 MB | 46 MB | 98 MB | 107 MB |
+| Peak memory, one prompt | 107 MB | 117 MB | 114 MB | 127 MB | 138 MB |
+| Own memory of a session in tmux | 24 MB | 40 MB | 77 MB | 143 MB | 212 MB |
+| Own memory after 40 prompts | 101 MB | 95 MB | 164 MB | 418 MB | 520 MB |
+
+**Linux ARM64**
+
+| Benchmark | 0.9.2 | 0.8.8 | Bun | Node 22 | Node 24 |
+|---|---:|---:|---:|---:|---:|
+| `pi --version` | 10 ms | 10 ms | 26 ms | 246 ms | 271 ms |
+| Ready to type | 43 ms | 44 ms | 120 ms | 349 ms | 391 ms |
+| CPU, one prompt (`pi -p`) | 61 ms | 62 ms | 186 ms | 545 ms | 547 ms |
+| CPU, interactive session | 196 ms | 197 ms | 557 ms | 1,155 ms | 1,108 ms |
+| CPU, streaming a 60,000-character answer | 3.05 s | 4.79 s | 2.98 s | 38.0 s | 36.5 s |
+| CPU, a 400 KB file through a tool call | 2.56 s | 3.51 s | 2.60 s | 250 s | 221 s |
+| Pi's CPU in tmux, a 50 KB file through a tool call | 1.06 s | 2.44 s | 1.39 s | 17.3 s | 15.6 s |
+| Peak memory, one prompt | 108 MB | 108 MB | 122 MB | 160 MB | 174 MB |
+| Own memory of a session in tmux | 26 MB | 28 MB | 82 MB | 158 MB | 214 MB |
+| Own memory after 40 prompts | 90 MB | 149 MB | 169 MB | 482 MB | 572 MB |
+
+The Bun build is this repository's Pi, with Pi-Bolt's terminal changes; the Node builds are Pi as released, so the gap on long
+answers and large files is mostly Pi's own redrawing there. On x86-64 the runner has transparent huge pages always on, where
+0.9.2's smaller static-heap footprint shows (`pi --version` 46 against 59 MB), at a few percent of CPU on short commands.
 
 ## 0.7.3 against 0.7.2
 
