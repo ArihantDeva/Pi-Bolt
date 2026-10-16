@@ -14416,3 +14416,309 @@ index de16575461..dd18e3f63b 100644
 -- 
 2.54.0 (Apple Git-157)
 
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dylan Conway <dylan.conway567@gmail.com>
+Date: Wed, 30 Sep 2026 14:55:47 -0700
+Subject: [PATCH] [JSC] removeEntry() and clearAll() keep the realm's
+ [[LoadedModules]] in step with the registry (#748)
+
+* [JSC] A module load left in flight by removeEntry() or clearAll() writes only to its own registry entry
+
+* A load by name has its registry entry from loadModule() on and no longer looks it up by key
+
+* A module load asks the registry for its entry once: hostLoadImportedModule() opens, loadEntry() loads, and the realm's [[LoadedModules]] is gone
+
+* provideFetch() is the fetch of an entry that is still waiting for one
+
+* moduleLoadTopSettled names its entry once
+
+* An entry whose fetch failed leaves the registry when it fails, in setFetchError(), for every kind of load
+
+* Put the loader back as it is on main and drop the realm's [[LoadedModules]]: hostLoadImportedModule() asks the registry
+
+* Keep the realm's [[LoadedModules]] as it is on main, and do not add a module to it that the registry no longer holds
+
+* removeEntry() takes a module out of the realm's [[LoadedModules]] under whatever specifier it was asked for
+---
+ Source/JavaScriptCore/runtime/JSModuleLoader.cpp | 10 ++++++++++
+ Source/JavaScriptCore/runtime/JSModuleLoader.h   |  3 ++-
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/Source/JavaScriptCore/runtime/JSModuleLoader.cpp b/Source/JavaScriptCore/runtime/JSModuleLoader.cpp
+index 5a050d840a722..ef4f008c26d6a 100644
+--- a/Source/JavaScriptCore/runtime/JSModuleLoader.cpp
++++ b/Source/JavaScriptCore/runtime/JSModuleLoader.cpp
+@@ -1060,7 +1060,17 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+     // 1. If result is a normal completion, then
++#if USE(BUN_JSC_ADDITIONS)
++    // hostLoadImportedModule() relies on the realm's [[LoadedModules]] holding only what the registry holds. removeEntry()
++    // and clearAll() take a module out of both, and a load of it that was in flight then must not put it back into one.
++    auto isRegistered = [&](AbstractModuleRecord* record) {
++        ModuleRegistryEntry* entry = getRegisteredMayBeNull(record->moduleKey(), moduleRequest.type());
++        return entry && entry->record() == record;
++    };
++    if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result); resultRecord && (!referrer.isRealm() || isRegistered(*resultRecord))) {
++#else
+     if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result)) {
++#endif
+         JSCell* owner = nullptr;
+ 
+         auto& loadedModules = [&] -> ModuleMap<AbstractModuleRecord::LoadedModuleRequest> & {
+diff --git a/Source/JavaScriptCore/runtime/JSModuleLoader.h b/Source/JavaScriptCore/runtime/JSModuleLoader.h
+index c7790bd4e3bbe..cd79f6a000baa 100644
+--- a/Source/JavaScriptCore/runtime/JSModuleLoader.h
++++ b/Source/JavaScriptCore/runtime/JSModuleLoader.h
+@@ -217,7 +217,8 @@ class JSModuleLoader final : public JSCell {
+         auto* impl = key.impl();
+         Locker locker { cellLock() }; // visitChildren iterates these
+         forgetPrelinkedRecordsWithKey(impl);
+-        m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
++        // Keyed by the specifier that was asked for, which resolve() may have turned into another key.
++        m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl || entry.value.m_module->moduleKey().impl() == impl; });
+         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
+         return m_moduleMap.removeIf([&](auto& entry) {
+             if (entry.key.first != impl)
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jarred Sumner <jarred@jarredsumner.com>
+Date: Wed, 14 Oct 2026 19:32:55 +0000
+Subject: [PATCH] WTF: see the cgroup v2 limits where a cgroup v1 hierarchy
+ exists beside it
+
+`uv_get_constrained_cpu` and `uv_get_constrained_memory` took the host for
+cgroup v2 only if the first line of /proc/self/cgroup is "0::/". The kernel
+lists cgroup v1 hierarchies first, so with one of them, even one without
+controllers, both looked for the cgroup v1 files, found none and reported no
+limit:
+
+    1:name=systemd:/
+    0::/system.slice/a.service
+
+A controller is in one hierarchy. It is read from cgroup v2 if there is a "0::/"
+line and no cgroup v1 line names the controller. Hosts with only cgroup v2, with
+only cgroup v1, and with systemd's hybrid layout get the same answers as before.
+---
+ Source/WTF/wtf/uv_get_constrained_memory.cpp | 38 ++++++++++++++++----
+ 1 file changed, 32 insertions(+), 6 deletions(-)
+
+diff --git a/Source/WTF/wtf/uv_get_constrained_memory.cpp b/Source/WTF/wtf/uv_get_constrained_memory.cpp
+index 89a00523d4e42..24cb73b811344 100644
+--- a/Source/WTF/wtf/uv_get_constrained_memory.cpp
++++ b/Source/WTF/wtf/uv_get_constrained_memory.cpp
+@@ -115,6 +115,27 @@ static uint64_t uv__read_uint64(const char* filename)
+     return rc;
+ }
+ 
++/* Finds the line of the cgroup v2 hierarchy, "0::/path", in the contents of
++ * /proc/self/cgroup. It is the only line where nothing but cgroup v2 is
++ * mounted, and the last one where cgroup v1 hierarchies exist beside it:
++ *
++ *   1:name=systemd:/
++ *   0::/system.slice/a.service
++ *
++ * Returns NULL if there is none. */
++static char* uv__find_cgroup2_line(char buf[1024])
++{
++    char* line = buf;
++    while (line != NULL && *line != '\0') {
++        if (strncmp(line, "0::/", 4) == 0)
++            return line;
++        line = strchr(line, '\n');
++        if (line != NULL)
++            line++;
++    }
++    return NULL;
++}
++
+ /* Given a buffer with the contents of a cgroup1 /proc/self/cgroups,
+  * finds the location and length of the memory controller mount path.
+  * This disregards the leading / for easy concatenation of paths.
+@@ -233,12 +254,14 @@ static uint64_t uv__get_cgroup_constrained_memory(char buf[1024])
+ {
+     uint64_t high;
+     uint64_t max;
++    int n;
+ 
+-    /* In the case of cgroupv2, we'll only have a single entry. */
+-    if (strncmp(buf, "0::/", 4))
+-        uv__get_cgroup1_memory_limits(buf, &high, &max);
++    /* A controller is in one hierarchy: in cgroup v2 unless a cgroup v1 line names it. */
++    char* cgroup2 = uv__find_cgroup2_line(buf);
++    if (cgroup2 != NULL && uv__cgroup1_find_memory_controller(buf, &n) == NULL)
++        uv__get_cgroup2_memory_limits(cgroup2, &high, &max);
+     else
+-        uv__get_cgroup2_memory_limits(buf, &high, &max);
++        uv__get_cgroup1_memory_limits(buf, &high, &max);
+ 
+     if (high == 0 || max == 0)
+         return 0;
+@@ -373,12 +396,15 @@ static int uv__get_cgroup2_constrained_cpu(char buf[1024])
+ int uv_get_constrained_cpu()
+ {
+     char buf[1024];
++    int n;
+ 
+     if (uv__slurp("/proc/self/cgroup", buf, sizeof(buf)))
+         return 0;
+ 
+-    if (strncmp(buf, "0::/", 4) == 0)
+-        return uv__get_cgroup2_constrained_cpu(buf);
++    /* See uv__get_cgroup_constrained_memory. */
++    char* cgroup2 = uv__find_cgroup2_line(buf);
++    if (cgroup2 != NULL && uv__cgroup1_find_cpu_controller(buf, &n) == NULL)
++        return uv__get_cgroup2_constrained_cpu(cgroup2);
+     return uv__get_cgroup1_constrained_cpu(buf);
+ }
+ 
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jarred Sumner <jarred@jarredsumner.com>
+Date: Wed, 14 Oct 2026 20:41:45 +0000
+Subject: [PATCH] WTF: one function finds a cgroup v1 controller, also where it
+ is mounted with others
+
+The one for memory compared the whole list of controllers with "memory", so it
+did not find it in "3:cpu,cpuacct,memory:/a". With a "0::/" line in the file the
+limit was then looked for in cgroup v2, where it is not, and no longer in
+/sys/fs/cgroup/memory. The one for cpu looks at each name in the list. It takes
+the name of the controller now and is used for both.
+---
+ Source/WTF/wtf/uv_get_constrained_memory.cpp | 86 +++++++-------------
+ 1 file changed, 31 insertions(+), 55 deletions(-)
+
+diff --git a/Source/WTF/wtf/uv_get_constrained_memory.cpp b/Source/WTF/wtf/uv_get_constrained_memory.cpp
+index 24cb73b811344..48fa7bbf856b6 100644
+--- a/Source/WTF/wtf/uv_get_constrained_memory.cpp
++++ b/Source/WTF/wtf/uv_get_constrained_memory.cpp
+@@ -136,30 +136,37 @@ static char* uv__find_cgroup2_line(char buf[1024])
+     return NULL;
+ }
+ 
+-/* Given a buffer with the contents of a cgroup1 /proc/self/cgroups,
+- * finds the location and length of the memory controller mount path.
+- * This disregards the leading / for easy concatenation of paths.
+- * Returns NULL if the memory controller wasn't found. */
+-static char* uv__cgroup1_find_memory_controller(char buf[1024],
+-    int* n)
++/* Find the cgroup v1 line whose controller list contains `name` as a whole
++ * token: "cpu" may appear as "cpu", "cpu,cpuacct", or "cpuacct,cpu". Returns
++ * a pointer to the path component (after the leading "/") and its length, or
++ * NULL if no cgroup v1 hierarchy has the controller. */
++static char* uv__cgroup1_find_controller(char buf[1024], const char* name, int* n)
+ {
+-    char* p;
++    int name_len = (int)strlen(name);
++    char* line = buf;
++    while (line != NULL && *line != '\0') {
++        char* ctl = strchr(line, ':');
++        if (ctl == NULL) return NULL;
++        ctl++;
++        char* path = strchr(ctl, ':');
++        if (path == NULL) return NULL;
+ 
+-    /* Seek to the memory controller line. */
+-    p = strchr(buf, ':');
+-    while (p != NULL && strncmp(p, ":memory:", 8)) {
+-        p = strchr(p, '\n');
+-        if (p != NULL)
+-            p = strchr(p, ':');
+-    }
++        char* tok = ctl;
++        while (tok < path) {
++            int len = (int)strcspn(tok, ",:");
++            if (len == name_len && strncmp(tok, name, len) == 0) {
++                path++; /* skip ":" */
++                if (*path == '/') path++;
++                *n = (int)strcspn(path, "\n");
++                return path;
++            }
++            tok += len + 1;
++        }
+ 
+-    if (p != NULL) {
+-        /* Determine the length of the mount path. */
+-        p = p + strlen(":memory:/");
+-        *n = (int)strcspn(p, "\n");
++        line = strchr(path, '\n');
++        if (line != NULL) line++;
+     }
+-
+-    return p;
++    return NULL;
+ }
+ 
+ static void uv__get_cgroup1_memory_limits(char buf[1024], uint64_t* high,
+@@ -171,7 +178,7 @@ static void uv__get_cgroup1_memory_limits(char buf[1024], uint64_t* high,
+     uint64_t cgroup1_max;
+ 
+     /* Find out where the controller is mounted. */
+-    p = uv__cgroup1_find_memory_controller(buf, &n);
++    p = uv__cgroup1_find_controller(buf, "memory", &n);
+     if (p != NULL) {
+         snprintf(filename, sizeof(filename),
+             "/sys/fs/cgroup/memory/%.*s/memory.soft_limit_in_bytes", n, p);
+@@ -258,7 +265,7 @@ static uint64_t uv__get_cgroup_constrained_memory(char buf[1024])
+ 
+     /* A controller is in one hierarchy: in cgroup v2 unless a cgroup v1 line names it. */
+     char* cgroup2 = uv__find_cgroup2_line(buf);
+-    if (cgroup2 != NULL && uv__cgroup1_find_memory_controller(buf, &n) == NULL)
++    if (cgroup2 != NULL && uv__cgroup1_find_controller(buf, "memory", &n) == NULL)
+         uv__get_cgroup2_memory_limits(cgroup2, &high, &max);
+     else
+         uv__get_cgroup1_memory_limits(buf, &high, &max);
+@@ -288,37 +295,6 @@ uint64_t uv_get_constrained_memory()
+     return uv__get_cgroup_constrained_memory(buf);
+ }
+ 
+-/* Find the cgroup v1 line whose controller list contains "cpu" as a whole
+- * token (it may appear as "cpu", "cpu,cpuacct", or "cpuacct,cpu"). Returns
+- * a pointer to the path component (after the leading "/") and its length. */
+-static char* uv__cgroup1_find_cpu_controller(char buf[1024], int* n)
+-{
+-    char* line = buf;
+-    while (line != NULL && *line != '\0') {
+-        char* ctl = strchr(line, ':');
+-        if (ctl == NULL) return NULL;
+-        ctl++;
+-        char* path = strchr(ctl, ':');
+-        if (path == NULL) return NULL;
+-
+-        char* tok = ctl;
+-        while (tok < path) {
+-            int len = (int)strcspn(tok, ",:");
+-            if (len == 3 && strncmp(tok, "cpu", 3) == 0) {
+-                path++; /* skip ":" */
+-                if (*path == '/') path++;
+-                *n = (int)strcspn(path, "\n");
+-                return path;
+-            }
+-            tok += len + 1;
+-        }
+-
+-        line = strchr(path, '\n');
+-        if (line != NULL) line++;
+-    }
+-    return NULL;
+-}
+-
+ static int uv__get_cgroup1_constrained_cpu(char buf[1024])
+ {
+     char filename[4097];
+@@ -327,7 +303,7 @@ static int uv__get_cgroup1_constrained_cpu(char buf[1024])
+     long long period;
+     int n = 0;
+ 
+-    char* p = uv__cgroup1_find_cpu_controller(buf, &n);
++    char* p = uv__cgroup1_find_controller(buf, "cpu", &n);
+     if (p == NULL) {
+         p = (char*)"";
+         n = 0;
+@@ -403,7 +379,7 @@ int uv_get_constrained_cpu()
+ 
+     /* See uv__get_cgroup_constrained_memory. */
+     char* cgroup2 = uv__find_cgroup2_line(buf);
+-    if (cgroup2 != NULL && uv__cgroup1_find_cpu_controller(buf, &n) == NULL)
++    if (cgroup2 != NULL && uv__cgroup1_find_controller(buf, "cpu", &n) == NULL)
+         return uv__get_cgroup2_constrained_cpu(cgroup2);
+     return uv__get_cgroup1_constrained_cpu(buf);
+ }
