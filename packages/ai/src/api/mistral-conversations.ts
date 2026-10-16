@@ -17,7 +17,7 @@ import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { parseStreamingJson, parseStreamingJsonWhileStreaming } from "../utils/json-parse.ts";
+import { parseStreamingJson, parseStreamingJsonWhileStreaming, parseToolCallArguments } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
@@ -771,7 +771,7 @@ async function consumeChatStream(
 		const block = output.content[index];
 		if (block.type !== "toolCall") continue;
 		const toolBlock = block as ToolCall & { partialArgs?: string };
-		toolBlock.arguments = parseStreamingJson<ToolCall["arguments"]>(toolBlock.partialArgs);
+		Object.assign(toolBlock, parseToolCallArguments(toolBlock.partialArgs));
 		// Finalize in-place and strip the scratch buffer so replay only
 		// carries parsed arguments.
 		delete toolBlock.partialArgs;

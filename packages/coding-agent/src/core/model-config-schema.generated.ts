@@ -611,6 +611,12 @@ export function modelsConfigSchema(): object {
 											"Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter.",
 										default: false,
 									},
+									supportsMidConvoEffort: {
+										type: "boolean",
+										description:
+											"Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages and openai-responses APIs.",
+										default: false,
+									},
 									supportsMaxOutputTokens: {
 										type: "boolean",
 										description:
@@ -651,12 +657,6 @@ export function modelsConfigSchema(): object {
 										type: "boolean",
 										description:
 											"Whether the provider supports Anthropic strict tool schemas. Generated Anthropic models enable it explicitly.",
-										default: false,
-									},
-									supportsMidConvoEffort: {
-										type: "boolean",
-										description:
-											"Whether the exact model transport supports effort-only system messages and thinking binding controls.",
 										default: false,
 									},
 									supportsMidConvoToolChanges: {
@@ -1625,6 +1625,12 @@ export function modelsConfigSchema(): object {
 														"Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter.",
 													default: false,
 												},
+												supportsMidConvoEffort: {
+													type: "boolean",
+													description:
+														"Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages and openai-responses APIs.",
+													default: false,
+												},
 												supportsMaxOutputTokens: {
 													type: "boolean",
 													description:
@@ -1665,12 +1671,6 @@ export function modelsConfigSchema(): object {
 													type: "boolean",
 													description:
 														"Whether the provider supports Anthropic strict tool schemas. Generated Anthropic models enable it explicitly.",
-													default: false,
-												},
-												supportsMidConvoEffort: {
-													type: "boolean",
-													description:
-														"Whether the exact model transport supports effort-only system messages and thinking binding controls.",
 													default: false,
 												},
 												supportsMidConvoToolChanges: {
@@ -2635,6 +2635,12 @@ export function modelsConfigSchema(): object {
 															"Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter.",
 														default: false,
 													},
+													supportsMidConvoEffort: {
+														type: "boolean",
+														description:
+															"Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages and openai-responses APIs.",
+														default: false,
+													},
 													supportsMaxOutputTokens: {
 														type: "boolean",
 														description:
@@ -2675,12 +2681,6 @@ export function modelsConfigSchema(): object {
 														type: "boolean",
 														description:
 															"Whether the provider supports Anthropic strict tool schemas. Generated Anthropic models enable it explicitly.",
-														default: false,
-													},
-													supportsMidConvoEffort: {
-														type: "boolean",
-														description:
-															"Whether the exact model transport supports effort-only system messages and thinking binding controls.",
 														default: false,
 													},
 													supportsMidConvoToolChanges: {

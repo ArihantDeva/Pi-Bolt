@@ -1,6 +1,7 @@
 import { parse as partialParse } from "partial-json";
+import type { ToolCall } from "../types.ts";
 
-const VALID_JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
+const VALID_JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
 
 function escapeControlCharacter(char: string): string {
 	switch (char) {
@@ -50,9 +51,11 @@ export function repairJson(json: string): string {
 
 		if (code === 0x5c) {
 			const nextChar = json[index + 1];
-			// "\u" stays as it is, with or without four hex digits after it.
-			if (nextChar !== undefined && VALID_JSON_ESCAPES.has(nextChar)) {
-				index += 1;
+			// "\u" is an escape only with four hex digits after it; "\url" is text (#10868).
+			if (
+				nextChar === "u" ? isHexQuad(json, index + 2) : nextChar !== undefined && VALID_JSON_ESCAPES.has(nextChar)
+			) {
+				index += nextChar === "u" ? 5 : 1;
 				continue;
 			}
 			repaired += `${json.slice(runStart, index)}\\\\`;
@@ -67,6 +70,16 @@ export function repairJson(json: string): string {
 	}
 
 	return runStart === 0 ? json : repaired + json.slice(runStart);
+}
+
+/** Whether the four characters of `json` at `start` are hex digits. */
+function isHexQuad(json: string, start: number): boolean {
+	if (start + 4 > json.length) return false;
+	for (let i = start; i < start + 4; i++) {
+		const code = json.charCodeAt(i) | 0x20;
+		if (!((code >= 0x30 && code <= 0x39) || (code >= 0x61 && code <= 0x66))) return false;
+	}
+	return true;
 }
 
 export function parseJsonWithRepair<T>(json: string): T {
@@ -130,6 +143,30 @@ function parseStreamingJsonWith<T>(partialJson: string | undefined, scan: Partia
 		} catch {
 			return {} as T;
 		}
+	}
+}
+
+/**
+ * Parses the model's complete arguments text of a finished tool call.
+ *
+ * Unlike {@link parseStreamingJson}, this never keeps a partially parsed prefix: once the call is
+ * finished, text that is not a valid JSON object means the model sent malformed arguments. In that
+ * case `arguments` is `{}` and `argumentsError` describes the problem, including the text the
+ * model sent, so tool validation can report it back to the model.
+ */
+export function parseToolCallArguments(json: string | undefined): Pick<ToolCall, "arguments" | "argumentsError"> {
+	if (!json?.trim()) return { arguments: {} };
+	try {
+		const parsed = parseJsonWithRepair<ToolCall["arguments"] | null>(json);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			throw new Error("Tool arguments must be a JSON object");
+		}
+		return { arguments: parsed };
+	} catch (error) {
+		return {
+			arguments: {},
+			argumentsError: `${error instanceof Error ? error.message : String(error)}\n\nReceived arguments:\n${json}`,
+		};
 	}
 }
 
