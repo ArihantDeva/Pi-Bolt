@@ -111,7 +111,7 @@ In Termux, use the installer: it sets the executable's loader to Termux's glibc 
 
 ### Android (Termux)
 
-In [Termux](https://termux.dev), run the same `curl ... | sh` command. Pi-Bolt is a glibc program and Android's libc is not
+In [Termux](https://termux.dev) from F-Droid or GitHub (the Google Play version has no glibc packages), run the same `curl ... | sh` command. Pi-Bolt is a glibc program and Android's libc is not
 glibc, so the installer first installs Termux's glibc (`pkg install glibc-repo && pkg install glibc`, after asking), sets it as
 the executable's loader, and links `pi-bolt` into `$PREFIX/bin`. `pi-bolt` is a small launcher that starts Pi-Bolt in Android's
 time zone and without Termux's `LD_PRELOAD` (a library of Android's libc, which glibc cannot load); the programs Pi-Bolt starts
