@@ -51,9 +51,11 @@ export function repairJson(json: string): string {
 
 		if (code === 0x5c) {
 			const nextChar = json[index + 1];
-			// "\u" stays as it is, with or without four hex digits after it.
-			if (nextChar !== undefined && VALID_JSON_ESCAPES.has(nextChar)) {
-				index += 1;
+			// "\u" is an escape only with four hex digits after it; "\url" is text (#10868).
+			if (
+				nextChar === "u" ? isHexQuad(json, index + 2) : nextChar !== undefined && VALID_JSON_ESCAPES.has(nextChar)
+			) {
+				index += nextChar === "u" ? 5 : 1;
 				continue;
 			}
 			repaired += `${json.slice(runStart, index)}\\\\`;
@@ -68,6 +70,16 @@ export function repairJson(json: string): string {
 	}
 
 	return runStart === 0 ? json : repaired + json.slice(runStart);
+}
+
+/** Whether the four characters of `json` at `start` are hex digits. */
+function isHexQuad(json: string, start: number): boolean {
+	if (start + 4 > json.length) return false;
+	for (let i = start; i < start + 4; i++) {
+		const code = json.charCodeAt(i) | 0x20;
+		if (!((code >= 0x30 && code <= 0x39) || (code >= 0x61 && code <= 0x66))) return false;
+	}
+	return true;
 }
 
 export function parseJsonWithRepair<T>(json: string): T {
