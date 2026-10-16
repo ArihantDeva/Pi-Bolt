@@ -4,11 +4,12 @@ Pi-Bolt compared with the same Pi release on stock Bun and on Node.js. Every fig
 [`bench/`](../bench), and the raw results are in [`bench/results/`](../bench/results). The charts are drawn from those files by
 [`bench/report.py`](../bench/report.py).
 
-**Versions.** Pi-Bolt 0.8.5 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
+**Versions.** [0.9.2 on GitHub's runners](#092-on-githubs-runners) is the latest: Pi-Bolt 0.9.2 (Pi 1.2.0) on GitHub's Linux
+x86-64 and ARM64 runners. The sections after it are earlier measurements: Pi-Bolt 0.8.5 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
 its release archive; [against PiG and oh-my-pi](#against-pig-and-oh-my-pi) in the same runs. [With a real model](#with-a-real-model) is an earlier measurement, of Pi-Bolt 0.6.1.
 
-**These are measurements, not guarantees.** Each set of results comes from one machine: an AMD EPYC 7B13 server for Linux and an
-M5 MacBook Air for macOS. On other hardware the milliseconds will differ, and so can the load, the terminal and the disk. What
+**These are measurements, not guarantees.** Each set of results comes from one machine: for 0.8.5, an AMD EPYC 7B13 server for
+Linux and an M5 MacBook Air for macOS. On other hardware the milliseconds will differ, and so can the load, the terminal and the disk. What
 carries over is the comparison, because every run interleaves the runtimes on the same machine: Pi-Bolt starts three times
 sooner than Pi on Bun and uses about a quarter of its CPU over an interactive session. The ratio varies by scenario: see
 each table.
@@ -36,7 +37,8 @@ each table.
 
 Pi-Bolt 0.9.2 and 0.8.5 (0.8.8 on ARM64, the first ARM64 release), from their release archives, against Pi 1.2.0 on stock Bun
 1.4.2 (this repository's Pi) and Pi 1.2.0 as released on npm on Node 22 and Node 24. GitHub's `ubuntu-24.04` and
-`ubuntu-24.04-arm` runners, one CPU each, interleaved; medians. Raw results:
+`ubuntu-24.04-arm` runners, one CPU each, interleaved. Times to start, prompts and sessions are medians of 11 runs; long
+answers, files, tmux and the 40-prompt session are one run each. The tools' printed results:
 [`bench/results/2026-10-16-linux-0.9.2`](../bench/results/2026-10-16-linux-0.9.2).
 
 **Linux x86-64**

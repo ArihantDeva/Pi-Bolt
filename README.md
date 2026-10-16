@@ -31,8 +31,8 @@ writes large files 18 to 100 times more cheaply.
   <img alt="Pi-Bolt 0.9.2 vs Pi on Bun 1.4.2 vs Pi on Node 24: ready to type 38 / 84 / 277 ms; CPU per session 142 / 383 / 790 ms; CPU for a 60,000-character answer 1.6 / 1.7 / 28.9 s; memory after 40 prompts 101 / 164 / 520 MB" src="docs/images/bench-hero-light.svg">
 </picture>
 
-<sub>GitHub's Linux x86-64 runner, one CPU. Pi-Bolt 0.9.2 against Pi 1.2.0 on stock Bun 1.4.2 and Node 24; medians, lower is
-better. See [Benchmarks](#benchmarks).</sub>
+<sub>GitHub's Linux x86-64 runner, one CPU. Pi-Bolt 0.9.2 against Pi 1.2.0 on stock Bun 1.4.2 and Node 24; lower is better. See
+[Benchmarks](#benchmarks).</sub>
 
 > [!NOTE]
 > Pi-Bolt is an independent fork of [Pi](https://github.com/earendil-works/pi), not affiliated with Pi's authors or with Oven.
@@ -131,8 +131,8 @@ uninstalls it.
 
 ## Benchmarks
 
-Pi-Bolt 0.9.2 against Pi 1.2.0 on stock Bun 1.4.2 and on Node 24, on GitHub's Linux x86-64 runner, one CPU each. Medians, lower
-is better.
+Pi-Bolt 0.9.2 against Pi 1.2.0 on stock Bun 1.4.2 and on Node 24, on GitHub's Linux x86-64 runner, one CPU each; lower is
+better.
 
 | Benchmark | Pi-Bolt | Pi on Bun | Pi on Node 24 |
 |---|---:|---:|---:|
