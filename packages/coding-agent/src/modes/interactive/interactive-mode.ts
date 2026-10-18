@@ -143,7 +143,7 @@ import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguagesOnDemand } from "../../utils/syntax-highlight.ts";
-import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
+import { ensureTool, getToolPath, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
 import { createChatViewport } from "./chat-viewport.ts";
@@ -1038,14 +1038,19 @@ export class InteractiveMode {
 		this.programStatus.report();
 		this.ensurePngTranscoder();
 
-		await this.applyThemeAndShowStartupHeader();
+		const startupHeader = this.applyThemeAndShowStartupHeader();
+		// fd and rg are looked up while the terminal answers the color query that started the header: the lookup is a file check
+		// in each PATH folder when Pi's bin folder has neither, and on Windows the console's answer takes milliseconds.
+		const fdFound = getToolPath("fd");
+		const rgFound = getToolPath("rg");
+		await startupHeader;
 
 		// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
 		// so slow downloads do not make startup appear frozen.
 		// Both are needed: fd for autocomplete, rg for grep tool and bash commands.
 		const [fdPath] = await Promise.all([
-			ensureTool("fd", (status) => this.showManagedToolStatus(status)),
-			ensureTool("rg", (status) => this.showManagedToolStatus(status)),
+			ensureTool("fd", (status) => this.showManagedToolStatus(status), fdFound),
+			ensureTool("rg", (status) => this.showManagedToolStatus(status), rgFound),
 		]);
 		this.fdPath = fdPath;
 		ttiTrace("tools.checked");

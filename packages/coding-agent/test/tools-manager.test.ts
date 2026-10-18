@@ -183,6 +183,28 @@ describe("ensureTool", () => {
 		consoleLog.mockRestore();
 	});
 
+	it("takes a lookup made just before instead of looking the tool up again", async () => {
+		process.env.PI_OFFLINE = "1";
+		const bin = temporaryDir();
+		writeFileSync(join(bin, "rg"), "");
+		writeFileSync(join(bin, "rg.exe"), "");
+		process.env.PATH = bin;
+		// (A lookup now would find rg in PATH: the lookup passed in says there is none.)
+		vi.mocked(accessSync).mockImplementation(() => undefined);
+		try {
+			await expect(ensureTool("rg", undefined, "/opt/bin/rg")).resolves.toBe("/opt/bin/rg");
+			const statuses: ToolStatus[] = [];
+			await expect(ensureTool("rg", (status) => statuses.push(status), null)).resolves.toBeUndefined();
+			expect(statuses).toEqual([
+				{ type: "warning", message: "ripgrep not found. Offline mode enabled, skipping download." },
+			]);
+		} finally {
+			vi.mocked(accessSync).mockImplementation(() => {
+				throw new Error("not found");
+			});
+		}
+	});
+
 	it("surfaces the error cause chain when a download fails", async () => {
 		delete process.env.PI_OFFLINE;
 		const cause = new Error("connect ETIMEDOUT 140.82.113.3:443");
