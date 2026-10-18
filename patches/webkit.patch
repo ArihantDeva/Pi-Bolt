@@ -14722,3 +14722,95 @@ index 24cb73b811344..48fa7bbf856b6 100644
          return uv__get_cgroup2_constrained_cpu(cgroup2);
      return uv__get_cgroup1_constrained_cpu(buf);
  }
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: robobun <robobun@oven.sh>
+Date: Fri, 16 Oct 2026 11:26:53 -0700
+Subject: [PATCH] [JSC] PutCellButterflySlot forbids the double format for the
+ variable it stores (#792)
+
+* [JSC] PutCellButterflySlot forbids the double format for the variable it stores
+
+The DFG and the FTL inline Array.prototype.sort for at most 16 elements
+(ByteCodeParser::handleArraySort). The insertion sort keeps its pivot in a
+variable, passes it to the inlined comparator as the first argument, and
+stores it back into the scratch with PutCellButterflySlot. That store writes
+the value as is, the loop reads the scratch of an Int32 array back as Int32s
+with no check, and ArraySortCommit copies the scratch as is into the array.
+
+A comparator that does double arithmetic on its first parameter makes double
+voting give that variable the double format. The pivot of an Int32 array then
+goes back into the scratch as a boxed double:
+
+    function f(v, w, x, y) { return [v, w, x, y].sort((a, b) => (a + 0.5) - (b + 0.5)); }
+
+Once the DFG has compiled f, f(17, 8, 1, 1) returns the elements out of
+order, as boxed doubles in an ArrayWithInt32. Element reads give 8,1,1,17,
+join() gives "0,0,0,17" and indexOf(8) gives -1. After the first such store
+the comparator also gets numbers that are not in the array. FTL code for f
+aborts under --validateAbstractInterpreterState=1.
+
+Double voting now merges CantUseDoubleFormat into the variable that a
+PutCellButterflySlot stores. Only the double format changes the bits that go
+back: a variable that holds an Int32 or a JSValue gives back the value that
+came out of the array. The pivot of such a sort is now a JSValue, and the
+comparator converts it where it uses it. A sort whose pivot was not in the
+double format gets the code it got before.
+
+The inlined sort is upstream's (WebKit/WebKit#63908), and upstream main
+returns the same arrays.
+
+* JSTests/stress/array-sort-inline-int32-double-comparator.js: Added.
+* Source/JavaScriptCore/dfg/DFGPredictionPropagationPhase.cpp:
+
+* [JSC] Shorten the test and the comment for the inlined sort's pivot format
+
+---------
+
+Co-authored-by: Dylan Conway <dylan.conway567@gmail.com>
+---
+ .../array-sort-inline-int32-double-comparator.js   | 14 ++++++++++++++
+ .../dfg/DFGPredictionPropagationPhase.cpp          | 10 ++++++++++
+ 2 files changed, 24 insertions(+)
+ create mode 100644 JSTests/stress/array-sort-inline-int32-double-comparator.js
+
+diff --git a/JSTests/stress/array-sort-inline-int32-double-comparator.js b/JSTests/stress/array-sort-inline-int32-double-comparator.js
+new file mode 100644
+index 0000000000000..583f227c9871e
+--- /dev/null
++++ b/JSTests/stress/array-sort-inline-int32-double-comparator.js
+@@ -0,0 +1,14 @@
++function shouldBe(actual, expected) {
++    if (actual !== expected)
++        throw new Error("bad value: " + actual + " expected: " + expected);
++}
++
++// Double arithmetic on the comparator's first parameter must not make the inlined sort store its pivot
++// back into the Int32 array as a double.
++function test(a, b, c, d) {
++    return [a, b, c, d].sort((x, y) => (x + 0.5) - (y + 0.5));
++}
++noInline(test);
++
++for (var i = 0; i < testLoopCount; ++i)
++    shouldBe(test(17, 8, 1, 1).join(), "1,1,8,17");
+diff --git a/Source/JavaScriptCore/dfg/DFGPredictionPropagationPhase.cpp b/Source/JavaScriptCore/dfg/DFGPredictionPropagationPhase.cpp
+index 4970432563898..95fde70338e52 100644
+--- a/Source/JavaScriptCore/dfg/DFGPredictionPropagationPhase.cpp
++++ b/Source/JavaScriptCore/dfg/DFGPredictionPropagationPhase.cpp
+@@ -932,6 +932,16 @@ class PredictionPropagationPhase : public Phase {
+             break;
+         }
+         
++        case PutCellButterflySlot: {
++            // The inlined sort reads the scratch of an Int32 array back with no check, and ArraySortCommit
++            // copies it into the array as is. A pivot in the double format would be stored as a boxed double.
++            m_graph.voteChildren(node, VoteValue, weight);
++            Node* value = node->child3().node();
++            if (value->op() == GetLocal)
++                value->variableAccessData()->mergeDoubleFormatState(CantUseDoubleFormat);
++            break;
++        }
++
+         case DataViewSet: {
+             DataViewData data = node->dataViewData();
+             if (data.isFloatingPoint)
