@@ -382,14 +382,12 @@ export interface ToolStatus {
  * Ensure a tool is available, downloading if necessary.
  * Reports progress through `onStatus`; status messages are otherwise silent.
  * Returns the tool path, or undefined if unavailable.
- * `lookedUp`: what getToolPath() returned for it just before, so that it is not looked up again.
  */
 export async function ensureTool(
 	tool: "fd" | "rg",
 	onStatus?: (status: ToolStatus) => void,
-	lookedUp?: string | null,
 ): Promise<string | undefined> {
-	const existingPath = lookedUp === undefined ? getToolPath(tool) : lookedUp;
+	const existingPath = getToolPath(tool);
 	if (existingPath) {
 		return existingPath;
 	}
