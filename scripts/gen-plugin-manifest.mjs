@@ -25,10 +25,21 @@
  * not read: Pi honours those only in a trusted project, and this script cannot tell whether a project is trusted.
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	cpSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const CONFIG_DIR_NAME = ".pi";
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -379,6 +390,311 @@ export function planPlugins(options) {
 	};
 }
 
+// --- import.meta in the copies --------------------------------------------------------------------------------------
+
+/*
+ * Bundling resolves `import.meta.url` once, to the output file, and so `import.meta.dir`, `dirname`, `filename`, `path` and
+ * `file`. In the executable every compiled-in module then says it is `/$bunfs/root/pi-bin`, and an extension that finds its
+ * `skills/`, `prompts/` or themes next to its own module, as `join(dirname(fileURLToPath(import.meta.url)), "..", "skills")`,
+ * looks for `/$bunfs/skills`, which cannot exist. Pi passes over a path that does not exist, so those resources are lost
+ * with a single warning.
+ *
+ * Each copy therefore has those expressions replaced with what they are in the file it was copied from: the installed
+ * extension, by the path Pi loads it from when it loads it from its files. With `pi-bolt compile` that is right for as long as
+ * the compiled-in extension runs: Pi-Bolt uses it only while its installed copy is unchanged (core/extensions/compiled.ts),
+ * and loads the installed files instead once they change. A build from `build-pi.sh --plugins-from-installed` has no such
+ * check, so its extensions read those files from where they are installed, and need to stay installed. Only the copies are
+ * changed. A manifest written by hand (`--plugins`) is not this script's, and is built as it is: its folder may be anywhere,
+ * and the executable may go to another machine.
+ *
+ * `import.meta.main`, `import.meta.resolve()` and the like are left alone, and so are `__dirname` and `__filename`, which
+ * the bundler replaces itself, per module, with the path of the copy.
+ */
+
+/** The `import.meta` properties the bundler resolves to the output file, and what each is for a module at `file`. */
+const IMPORT_META = {
+	url: (file) => pathToFileURL(file).href,
+	dir: (file) => dirname(file),
+	dirname: (file) => dirname(file),
+	filename: (file) => file,
+	path: (file) => file,
+	file: (file) => basename(file),
+};
+const IMPORT_META_AT = new RegExp(`import\\s*\\.\\s*meta\\s*\\.\\s*(${Object.keys(IMPORT_META).join("|")})(?![\\w$])`, "y");
+
+/** Words after which a `/` begins a regular expression rather than dividing, and a `{` an object rather than a block. */
+const BEFORE_EXPRESSION = new Set(
+	"return typeof instanceof in of new delete void throw case do else yield await extends".split(" "),
+);
+/** Words whose `(...)` is followed by a statement, so a `/` after the `)` begins a regular expression. */
+const BEFORE_CONDITION = new Set(["if", "while", "for", "with"]);
+/** Punctuators after which a `{` is an object literal rather than a block. */
+const BEFORE_OBJECT = new Set("( [ , = ? : ! & | + - * % ^ ~ < >".split(" "));
+const isWordChar = (char) => /[\w$\u0080-￿]/.test(char);
+const isWordStart = (char) => char !== undefined && isWordChar(char) && !/[0-9]/.test(char);
+
+/**
+ * `source` with each `import.meta.<property>` above replaced by its value for a module at `file`, as a string literal.
+ *
+ * Only code is changed: the scan steps over comments, strings, the text of template literals (not what is inside `${}`),
+ * regular expressions and, in a .jsx or .tsx file, JSX text and attribute strings (not what is inside `{}`). A comment or a
+ * message that mentions `import.meta.url` therefore keeps it. Line numbers do not change.
+ *
+ * It is a scanner, not a parser, and guesses where a parser would know:
+ * - A `/` begins a regular expression or divides, by the token before it, as JavaScript tools commonly do. After `)` it
+ *   divides, unless the `(` came after `if`, `while`, `for` or `with`; after `}` it divides when the `{` began an object
+ *   literal (after `=`, `(`, `,`, `:`, `return` and the like), and otherwise begins a regular expression.
+ * - In a .jsx or .tsx file, a `<` where an expression may begin, followed by a name or `>`, begins JSX, unless it reads
+ *   `<T,` or `<T extends`, a generic arrow function. A generic function *type* after `:` (`const f: <T>(x: T) => T`) is
+ *   taken for JSX. A .js file is not scanned for JSX: a `<` there is a comparison more often than a tag.
+ * - A string or regular expression ends at the end of its line at the latest, so a wrong guess cannot hide the rest of
+ *   the file.
+ * A wrong guess either leaves an `import.meta.url` in code as it was, which is what bundling gave it before, or changes one
+ * in text.
+ */
+export function pinImportMeta(source, file) {
+	const jsx = /\.[jt]sx$/.test(file);
+	const edits = [];
+	/**
+	 * The last token, for the guesses: a word (its text), a value, or a punctuator (its text). `expression` on a punctuator
+	 * overrides whether an expression may begin after it (a `)` or a `}`).
+	 */
+	let previous = { kind: "punctuator", text: "" };
+	/** The open `(`: whether each came after `if`, `while`, `for` or `with`. */
+	const parens = [];
+	/** The open `{`, `${` and JSX `{`: "block", "object", "template", or the JSX element to go back to. */
+	const braces = [];
+	const length = source.length;
+	let i = 0;
+
+	const expressionMayBegin = () =>
+		previous.kind === "word"
+			? BEFORE_EXPRESSION.has(previous.text)
+			: previous.kind === "punctuator" &&
+				(previous.expression ?? !(previous.text === ")" || previous.text === "]" || previous.text === "}"));
+	const skipQuoted = (quote) => {
+		for (i++; i < length; i++) {
+			const char = source[i];
+			if (char === "\\") i++;
+			else if (char === "\n") return;
+			else if (char === quote) {
+				i++;
+				return;
+			}
+		}
+	};
+	/** The text of a template literal from `i`; true when it stops at a `${`. */
+	const skipTemplateText = () => {
+		for (; i < length; i++) {
+			const char = source[i];
+			if (char === "\\") i++;
+			else if (char === "`") {
+				i++;
+				return false;
+			} else if (char === "$" && source[i + 1] === "{") {
+				i += 2;
+				return true;
+			}
+		}
+		return false;
+	};
+	/** A regular expression from the `/` at `i`; false (and `i` unmoved) when the line ends first. */
+	const skipRegExp = () => {
+		let j = i + 1;
+		let inClass = false;
+		for (; j < length; j++) {
+			const char = source[j];
+			if (char === "\n") return false;
+			if (char === "\\") j++;
+			else if (char === "[") inClass = true;
+			else if (char === "]") inClass = false;
+			else if (char === "/" && !inClass) break;
+		}
+		if (j >= length) return false;
+		for (j++; j < length && isWordChar(source[j]); j++);
+		i = j;
+		return true;
+	};
+	/** Whether the `<` at `i` begins JSX: `<>`, or `<name` that is not `<T,` or `<T extends`. */
+	const jsxBegins = () => {
+		if (source[i + 1] === ">") return true;
+		if (!isWordStart(source[i + 1])) return false;
+		let j = i + 2;
+		while (j < length && isWordChar(source[j])) j++;
+		while (j < length && /\s/.test(source[j])) j++;
+		return !(source[j] === "," || /^extends\b/.test(source.slice(j, j + 8)));
+	};
+	/**
+	 * JSX from `i`, for `element` (how many tags are open, whether the one being read closes) in `mode`: inside a `tag`, or
+	 * between tags (`children`). Stops when the outermost element ends (the JSX is then a value), or at a `{`, whose code the
+	 * main loop reads; its `}` comes back here.
+	 */
+	const scanJsx = (element, mode) => {
+		while (i < length) {
+			const char = source[i];
+			if (mode === "children") {
+				if (char === "{") break;
+				if (char === "<") {
+					element.closing = source[i + 1] === "/";
+					if (!element.closing) element.open++;
+					i += element.closing ? 2 : 1;
+					mode = "tag";
+				} else {
+					i++;
+				}
+			} else if (char === "{") {
+				break;
+			} else if (char === '"' || char === "'") {
+				// (An attribute's string: no escapes, and it may run over lines.)
+				const end = source.indexOf(char, i + 1);
+				i = end === -1 ? length : end + 1;
+			} else if (char === "/" && source[i + 1] === ">") {
+				i += 2;
+				if (--element.open === 0) break;
+				mode = "children";
+			} else if (char === ">") {
+				i++;
+				if (element.closing && --element.open === 0) break;
+				mode = "children";
+			} else {
+				i++;
+			}
+		}
+		if (i < length && source[i] === "{") {
+			braces.push({ element, mode });
+			previous = { kind: "punctuator", text: "{" };
+			i++;
+		} else {
+			previous = { kind: "value" };
+		}
+	};
+
+	if (source.startsWith("#!")) i = source.indexOf("\n") === -1 ? length : source.indexOf("\n");
+	while (i < length) {
+		const char = source[i];
+		const next = source[i + 1];
+		if (char === "/" && next === "/") {
+			const end = source.indexOf("\n", i);
+			i = end === -1 ? length : end;
+		} else if (char === "/" && next === "*") {
+			const end = source.indexOf("*/", i + 2);
+			i = end === -1 ? length : end + 2;
+		} else if (/\s/.test(char)) {
+			i++;
+		} else if (char === "'" || char === '"') {
+			skipQuoted(char);
+			previous = { kind: "value" };
+		} else if (char === "`") {
+			i++;
+			if (skipTemplateText()) {
+				braces.push("template");
+				previous = { kind: "punctuator", text: "{" };
+			} else {
+				previous = { kind: "value" };
+			}
+		} else if (char === "(") {
+			parens.push(previous.kind === "word" && BEFORE_CONDITION.has(previous.text));
+			previous = { kind: "punctuator", text: "(" };
+			i++;
+		} else if (char === ")") {
+			previous = { kind: "punctuator", text: ")", expression: parens.pop() === true };
+			i++;
+		} else if (char === "{") {
+			const object =
+				previous.kind === "word"
+					? BEFORE_EXPRESSION.has(previous.text) && previous.text !== "else" && previous.text !== "do"
+					: previous.kind === "punctuator" && BEFORE_OBJECT.has(previous.text);
+			braces.push(object ? "object" : "block");
+			previous = { kind: "punctuator", text: "{" };
+			i++;
+		} else if (char === "}") {
+			i++;
+			const brace = braces.pop();
+			if (brace === "template") {
+				if (skipTemplateText()) {
+					braces.push("template");
+					previous = { kind: "punctuator", text: "{" };
+				} else {
+					previous = { kind: "value" };
+				}
+			} else if (typeof brace === "object") {
+				scanJsx(brace.element, brace.mode);
+			} else {
+				previous = { kind: "punctuator", text: "}", expression: brace !== "object" };
+			}
+		} else if (char === "/" && expressionMayBegin() && skipRegExp()) {
+			previous = { kind: "value" };
+		} else if (char === "<" && jsx && expressionMayBegin() && jsxBegins()) {
+			scanJsx({ open: 0, closing: false }, "children");
+		} else if (char === "=" && next === ">") {
+			// (After `=>`, a `{` is a function's body.)
+			previous = { kind: "punctuator", text: "=>" };
+			i += 2;
+		} else if (isWordStart(char)) {
+			const start = i;
+			for (i++; i < length && isWordChar(source[i]); i++);
+			const word = source.slice(start, i);
+			// (Not after a `.`: `x.import` is a property, not the keyword.)
+			if (word === "import" && !(previous.kind === "punctuator" && previous.text === ".")) {
+				IMPORT_META_AT.lastIndex = start;
+				const match = IMPORT_META_AT.exec(source);
+				if (match) {
+					// (Followed by the line breaks it spanned, if any, so that line numbers stay as they were.)
+					const breaks = "\n".repeat(match[0].split("\n").length - 1);
+					edits.push({ start, end: start + match[0].length, value: IMPORT_META[match[1]](file), breaks });
+					i = start + match[0].length;
+					previous = { kind: "value" };
+					continue;
+				}
+			}
+			previous = { kind: "word", text: word };
+		} else if (/[0-9]/.test(char)) {
+			for (i++; i < length && /[\w.]/.test(source[i]); i++);
+			previous = { kind: "value" };
+		} else {
+			previous = { kind: "punctuator", text: char };
+			i++;
+		}
+	}
+
+	let pinned = "";
+	let at = 0;
+	for (const edit of edits) {
+		pinned += `${source.slice(at, edit.start)}${JSON.stringify(edit.value)}${edit.breaks}`;
+		at = edit.end;
+	}
+	return pinned + source.slice(at);
+}
+
+/** The scripts Bun bundles, less type declarations (which hold no values). */
+const isScript = (name) => /\.(?:[cm]?[jt]s|[jt]sx)$/.test(name) && !/\.d\.[cm]?ts$/.test(name);
+
+/**
+ * Pins `import.meta` (pinImportMeta) in every script of `staged`, a copy of `original`, to the file it was copied from.
+ * `original` is the path as Pi finds it, not resolved through links: Pi loads an extension by that path, and so do the
+ * modules it imports.
+ */
+function pinImportMetaInCopy(staged, original) {
+	for (const entry of readdirSync(staged, { withFileTypes: true })) {
+		const path = join(staged, entry.name);
+		if (entry.isDirectory()) {
+			pinImportMetaInCopy(path, join(original, entry.name));
+			continue;
+		}
+		if (!entry.isFile() || !isScript(entry.name)) continue;
+		const bytes = readFileSync(path);
+		if (!bytes.includes("meta")) continue;
+		const source = bytes.toString("utf8");
+		// (A file that is not UTF-8 is left as it is rather than rewritten with replacement characters.)
+		if (!Buffer.from(source, "utf8").equals(bytes)) continue;
+		const pinned = pinImportMeta(source, join(original, entry.name));
+		if (pinned === source) continue;
+		// (A copy keeps its file's mode, and an installed file may be read-only.)
+		chmodSync(path, statSync(path).mode | 0o200);
+		writeFileSync(path, pinned);
+	}
+}
+
 // --- output ---------------------------------------------------------------------------------------------------------
 
 export function renderManifest(plan) {
@@ -432,11 +748,16 @@ export function writePluginFolder(plan, out) {
 		rmSync(out, { recursive: true, force: true });
 	}
 	mkdirSync(out, { recursive: true });
-	for (const root of plan.roots) copyRoot(root.root, join(out, root.stageDir));
+	for (const root of plan.roots) {
+		copyRoot(root.root, join(out, root.stageDir));
+		pinImportMetaInCopy(join(out, root.stageDir), root.root);
+	}
 	// One node_modules beside the manifest, as the hoisted root it came from has and as docs/PLUGINS.md expects: Node
 	// resolution walks up from each staged folder, so every package finds its dependencies here.
 	for (const dependency of plan.dependencies) {
-		copyRoot(dependency.from, join(out, "node_modules", ...dependency.name.split("/")));
+		const staged = join(out, "node_modules", ...dependency.name.split("/"));
+		copyRoot(dependency.from, staged);
+		pinImportMetaInCopy(staged, dependency.from);
 	}
 	writeFileSync(manifest, renderManifest(plan));
 	return manifest;
@@ -490,8 +811,17 @@ export function defaultAgentDir(env = process.env) {
 	return join(homedir(), CONFIG_DIR_NAME, "agent");
 }
 
+/** Whether this file is the command being run. Both sides through their links: `/var` is `/private/var` on macOS. */
+function isCommand() {
+	try {
+		return realpathSync(process.argv[1] ?? "") === realpathSync(join(HERE, "gen-plugin-manifest.mjs"));
+	} catch {
+		return false;
+	}
+}
+
 // Imported by the test; run only as a command.
-if (resolve(process.argv[1] ?? "") === resolve(join(HERE, "gen-plugin-manifest.mjs"))) {
+if (isCommand()) {
 	const options = parseArgs(process.argv.slice(2));
 	if (!options.out) die("--out DIR is required");
 	const plan = planPlugins({ ...options, agentDir: options.agentDir || defaultAgentDir() });

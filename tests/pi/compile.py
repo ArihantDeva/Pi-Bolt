@@ -1,6 +1,6 @@
 """`pi-bolt compile` with a release's compile kit and runtime, into an installation made from the build under test:
-the extensions installed here are compiled in and used in place of their files; one changed since is loaded from its files
-with a warning; one removed since is not loaded; the build it replaced is kept, and `pi-bolt update --rollback` swaps the two
+the extensions installed here are compiled in and used in place of their files, and find the skills and prompts beside their
+modules from import.meta.url as they do loaded from their files (#53); one changed since is loaded from its files with a warning; one removed since is not loaded; the build it replaced is kept, and `pi-bolt update --rollback` swaps the two
 (and back); `pi-bolt update --channel beta` is kept for the installation; and `--out` builds without installing. Uses the bench
 fake model.
   python3 tests/pi/compile.py PI KIT RUNTIME     (KIT: pi-bolt-kit-<platform>.tar.gz or its folder; RUNTIME: the runtime's bun)
@@ -29,10 +29,21 @@ def check(name, ok, detail=""):
     failures += 0 if ok else 1
 
 
-# An extension that says how it was loaded: compiled in, its module is in the executable's own file system ($bunfs).
+# An extension that says how it was loaded, and what its import.meta.url is: compiled in, its code is in the executable's own
+# file system ($bunfs), which the first frame of a stack names. (Not import.meta.url: a compiled-in extension's is its installed
+# file's, as when it is loaded from its files.)
 PROBE = """import { writeFileSync } from "node:fs";
 export default function () {
-	writeFileSync(`${process.env.PIBOLT_PROBE}/NAME`, import.meta.url);
+	const how = new Error().stack.split("\\n")[1].includes("/$bunfs/") ? "compiled" : "files";
+	writeFileSync(`${process.env.PIBOLT_PROBE}/NAME`, `${how} ${import.meta.url}`);
+}
+"""
+# And one that registers the skills and prompts beside its module, found from import.meta.url as extensions commonly do.
+RESOURCES = """import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+const here = dirname(fileURLToPath(import.meta.url));
+export function resources(pi) {
+	pi.on("resources_discover", () => ({ skillPaths: [join(here, "skills")], promptPaths: [join(here, "prompts")] }));
 }
 """
 
@@ -47,9 +58,19 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
     (agent / "extensions" / "folder-ext").mkdir(parents=True)
     probe.mkdir()
     (agent / "extensions" / "file-ext.ts").write_text(PROBE.replace("NAME", "file-ext"))
-    (agent / "extensions" / "folder-ext" / "index.ts").write_text(
-        'import "./helper.ts";\n' + PROBE.replace("NAME", "folder-ext"))
-    (agent / "extensions" / "folder-ext" / "helper.ts").write_text("export const one = 1;\n")
+    folder = agent / "extensions" / "folder-ext"
+    (folder / "index.ts").write_text('import "./helper.ts";\nimport { resources } from "./src/resources.ts";\n'
+                                     + PROBE.replace("NAME", "folder-ext").replace("export default function () {",
+                                                                                   "export default function (pi) {\n\tresources(pi);"))
+    (folder / "helper.ts").write_text("export const one = 1;\n")
+    (folder / "src").mkdir()
+    (folder / "src" / "resources.ts").write_text(RESOURCES)
+    (folder / "src" / "skills" / "probe-skill").mkdir(parents=True)
+    (folder / "src" / "skills" / "probe-skill" / "SKILL.md").write_text(
+        "---\nname: probe-skill\ndescription: A skill beside the extension's module.\n---\nSay probe.\n")
+    (folder / "src" / "prompts").mkdir()
+    (folder / "src" / "prompts" / "probe-prompt.md").write_text(
+        "---\ndescription: A prompt beside the extension's module.\n---\nSay probe.\n")
 
     with harness.fake_model() as port, harness.pi_home(port) as home:
         for name in ("models.json", "auth.json", "settings.json"):
@@ -66,13 +87,28 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
                 file.unlink()
             r = subprocess.run([str(build / "pi"), "-p", "--model", "fake/fake-model", "hello"], env=env,
                                capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tmp)
-            loaded = {name: (probe / name).read_text() if (probe / name).exists() else None
+            loaded = {name: tuple((probe / name).read_text().split(" ", 1)) if (probe / name).exists() else (None, None)
                       for name in ("file-ext", "folder-ext")}
             return r, loaded
 
+        def commands():
+            """The skills and prompts Pi loaded (RPC get_commands): no model needed."""
+            r = subprocess.run([str(build / "pi"), "--mode", "rpc"], env=env, capture_output=True, text=True, cwd=tmp,
+                               input='{"type":"get_commands","id":"1"}\n')
+            for line in r.stdout.splitlines():
+                message = json.loads(line) if line.startswith("{") else {}
+                if message.get("command") == "get_commands":
+                    return sorted(c["name"] for c in message["data"]["commands"] if c["source"] in ("skill", "prompt"))
+            return f"no answer: {r.stderr[-300:]}"
+
         r, loaded = session()
         check("before: both extensions load from their files",
-              r.returncode == 0 and all(url and url.startswith("file:") for url in loaded.values()), f"{loaded} {r.stderr[-300:]}")
+              r.returncode == 0 and all(how == "files" and url.startswith("file:") for how, url in loaded.values()),
+              f"{loaded} {r.stderr[-300:]}")
+        from_files = {name: url for name, (_, url) in loaded.items()}
+        resources = commands()
+        check("before: the skill and prompt beside the module are loaded",
+              resources == ["probe-prompt", "skill:probe-skill"], str(resources))
 
         started = time.time()
         r = compile_()
@@ -91,8 +127,13 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
 
         r, loaded = session()
         check("both compiled-in extensions run from the executable",
-              r.returncode == 0 and all(url and "$bunfs" in url for url in loaded.values()), f"{loaded} {r.stderr[-300:]}")
+              r.returncode == 0 and all(how == "compiled" for how, _ in loaded.values()), f"{loaded} {r.stderr[-300:]}")
         check("no warning while they are unchanged", "changed since" not in r.stderr, r.stderr[-300:])
+        check("compiled in, import.meta.url is the installed file's, as loaded from its files (#53)",
+              {name: url for name, (_, url) in loaded.items()} == from_files, f"{loaded} vs {from_files}")
+        resources = commands()
+        check("compiled in, the skill and prompt beside the module are still loaded (#53)",
+              resources == ["probe-prompt", "skill:probe-skill"], str(resources))
 
         helper = agent / "extensions" / "folder-ext" / "helper.ts"
         helper.write_text("export const one = 2;\n")
@@ -100,13 +141,13 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
         os.utime(helper, (later, later))
         r, loaded = session()
         check("a changed extension is loaded from its files, the other stays compiled in",
-              (loaded["folder-ext"] or "").startswith("file:") and "$bunfs" in (loaded["file-ext"] or ""), str(loaded))
+              loaded["folder-ext"][0] == "files" and loaded["file-ext"][0] == "compiled", str(loaded))
         check("with a warning to compile it in again", "changed since it was compiled in" in r.stderr + r.stdout,
               r.stderr[-400:])
 
         (agent / "extensions" / "file-ext.ts").unlink()
         r, loaded = session()
-        check("a removed extension is not loaded at all", loaded["file-ext"] is None, str(loaded))
+        check("a removed extension is not loaded at all", loaded["file-ext"] == (None, None), str(loaded))
 
         status = subprocess.run([str(build / "pi"), "compile", "--status"], env=env, capture_output=True, text=True)
         check("--status says what is compiled in", "file-ext" in status.stdout, status.stdout + status.stderr)
@@ -121,8 +162,7 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
               and "Extensions compiled in" in (install / f"{build.name}.previous" / "pi-bolt.txt").read_text(),
               r.stdout + r.stderr)
         r, loaded = session()
-        check("after the rollback the extensions load from their files again",
-              (loaded["folder-ext"] or "").startswith("file:"), str(loaded))
+        check("after the rollback the extensions load from their files again", loaded["folder-ext"][0] == "files", str(loaded))
         r = pi_bolt("update", "--rollback")
         check("update --rollback again goes forward again",
               r.returncode == 0 and "Extensions compiled in" in (build / "pi-bolt.txt").read_text(), r.stdout + r.stderr)
