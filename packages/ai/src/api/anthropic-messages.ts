@@ -40,6 +40,7 @@ import type {
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { cacheJsonSerialization } from "../utils/json-body.ts";
 import { parseJsonWithRepair, parseStreamingJsonWhileStreaming, parseToolCallArguments } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
@@ -513,6 +514,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				if (nextParams !== undefined) {
 					params = { ...(nextParams as MessageCreateParamsStreaming), stream: true };
 				}
+				cacheJsonSerialization(params.messages);
 				try {
 					response = await retryProviderRequest(
 						() => client.beta.messages.create(params, requestOptions).asResponse(),

@@ -17,6 +17,7 @@ import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { cacheJsonSerialization } from "../utils/json-body.ts";
 import { parseStreamingJson, parseStreamingJsonWhileStreaming, parseToolCallArguments } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -407,6 +408,7 @@ function toMistralWirePayload(payload: MistralChatPayload): Record<string, unkno
 		remapMistralProperty(wirePayload, source, target);
 	}
 	wirePayload.messages = payload.messages.map((message) => toMistralWireMessage(message));
+	cacheJsonSerialization(wirePayload.messages);
 
 	const responseFormat = wirePayload.response_format;
 	if (isMistralRecord(responseFormat)) {
