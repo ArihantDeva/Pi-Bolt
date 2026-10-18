@@ -124,8 +124,10 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 		return localPath;
 	}
 
-	// Check system PATH
-	const systemBinaryNames = config.systemBinaryNames ?? [config.binaryName];
+	// Check system PATH. (Windows: by the binary's own name only. fdfind is Debian's name for fd; every Windows package of fd
+	// installs fd.exe, and each name is looked for in every PATH folder, as .exe and as .com, before the first frame.)
+	const systemBinaryNames =
+		platform() === "win32" ? [config.binaryName] : (config.systemBinaryNames ?? [config.binaryName]);
 	for (const systemBinaryName of systemBinaryNames) {
 		const found = findCommand(systemBinaryName);
 		if (found) {
