@@ -225,6 +225,66 @@ describe("EventStream.forwardTo and lazyStream", () => {
 		expect(await outer.result()).toBe(answer);
 	});
 
+	// What lazyStream() did before forwardTo(): iterate the source, then end with its result once there is one.
+	async function iterateAndForward(target: AssistantMessageEventStream, source: AssistantMessageEventStream) {
+		for await (const event of source) target.push(event);
+		target.end(await source.result());
+	}
+
+	const iterating = (inner: AssistantMessageEventStream) => {
+		const outer = new AssistantMessageEventStream();
+		void iterateAndForward(outer, inner);
+		return outer;
+	};
+
+	type Ending = (inner: AssistantMessageEventStream, answer: AssistantMessage) => void;
+	const endings: Record<string, Ending> = {
+		"a final event": (inner, answer) => inner.push({ type: "done", reason: "stop", message: answer }),
+		"end(result)": (inner, answer) => inner.end(answer),
+		"end() without a result": (inner) => inner.end(),
+		"a final event, then more events and end()": (inner, answer) => {
+			inner.push({ type: "done", reason: "stop", message: answer });
+			inner.push(text("late"));
+			inner.end(message(Date.now()));
+		},
+	};
+
+	/** The events the outer stream gives, whether its iteration and its result settle, and the result. */
+	async function observe(wrap: (inner: AssistantMessageEventStream) => AssistantMessageEventStream, ending: Ending) {
+		const inner = new AssistantMessageEventStream();
+		const answer = message(Date.now());
+		inner.push(text("a"));
+		const outer = wrap(inner);
+		const events: AssistantMessageEvent[] = [];
+		let iterated = false;
+		void (async () => {
+			for await (const event of outer) events.push(event);
+			iterated = true;
+		})();
+		let result: AssistantMessage | undefined;
+		void outer.result().then((value) => {
+			result = value;
+		});
+		await sleep(0);
+		inner.push(text("b"));
+		ending(inner, answer);
+		await sleep(10);
+		return { events: deltas(events), iterated, result: result === answer ? "answer" : result };
+	}
+
+	for (const [name, ending] of Object.entries(endings)) {
+		it(`ends the outer stream as iterating the source did, for ${name}`, async () => {
+			const forwarded = await observe((inner) => lazyStream(model, async () => inner), ending);
+			const iterated = await observe(iterating, ending);
+			expect(forwarded).toEqual(iterated);
+		});
+	}
+
+	it("leaves the outer stream open, as iterating did, when the source ends without a result", async () => {
+		const ended = await observe(iterating, endings["end() without a result"]);
+		expect(ended).toEqual({ events: ["a", "b"], iterated: false, result: undefined });
+	});
+
 	it("still iterates a source that is not an event stream", async () => {
 		const answer = message(Date.now());
 		async function* source(): AsyncGenerator<AssistantMessageEvent> {
