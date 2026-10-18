@@ -422,31 +422,56 @@ const IMPORT_META = {
 };
 const IMPORT_META_AT = new RegExp(`import\\s*\\.\\s*meta\\s*\\.\\s*(${Object.keys(IMPORT_META).join("|")})(?![\\w$])`, "y");
 
-/** Words after which a `/` begins a regular expression rather than dividing. */
-const BEFORE_REGEXP = new Set(
+/** Words after which a `/` begins a regular expression rather than dividing, and a `{` an object rather than a block. */
+const BEFORE_EXPRESSION = new Set(
 	"return typeof instanceof in of new delete void throw case do else yield await extends".split(" "),
 );
-const isWordChar = (char) => /[\w$\u0080-\uffff]/.test(char);
+/** Words whose `(...)` is followed by a statement, so a `/` after the `)` begins a regular expression. */
+const BEFORE_CONDITION = new Set(["if", "while", "for", "with"]);
+/** Punctuators after which a `{` is an object literal rather than a block. */
+const BEFORE_OBJECT = new Set("( [ , = ? : ! & | + - * % ^ ~ < >".split(" "));
+const isWordChar = (char) => /[\w$\u0080-￿]/.test(char);
+const isWordStart = (char) => char !== undefined && isWordChar(char) && !/[0-9]/.test(char);
 
 /**
  * `source` with each `import.meta.<property>` above replaced by its value for a module at `file`, as a string literal.
  *
- * Only code is changed: the scan steps over comments, strings, the text of template literals (not what is inside `${}`)
- * and regular expressions, so a comment or a message that mentions `import.meta.url` keeps it. It is a scanner, not a
- * parser. A `/` is taken for a regular expression or a division from the token before it, as JavaScript tools commonly do,
- * and a string or regular expression ends at the end of its line at the latest, so an apostrophe in JSX text cannot hide
- * the rest of the file. A wrong guess either leaves an `import.meta.url` in code as it was, which is what bundling gave it
- * before, or changes one in text. Line numbers do not change.
+ * Only code is changed: the scan steps over comments, strings, the text of template literals (not what is inside `${}`),
+ * regular expressions and, in a .jsx or .tsx file, JSX text and attribute strings (not what is inside `{}`). A comment or a
+ * message that mentions `import.meta.url` therefore keeps it. Line numbers do not change.
+ *
+ * It is a scanner, not a parser, and guesses where a parser would know:
+ * - A `/` begins a regular expression or divides, by the token before it, as JavaScript tools commonly do. After `)` it
+ *   divides, unless the `(` came after `if`, `while`, `for` or `with`; after `}` it divides when the `{` began an object
+ *   literal (after `=`, `(`, `,`, `:`, `return` and the like), and otherwise begins a regular expression.
+ * - In a .jsx or .tsx file, a `<` where an expression may begin, followed by a name or `>`, begins JSX, unless it reads
+ *   `<T,` or `<T extends`, a generic arrow function. A generic function *type* after `:` (`const f: <T>(x: T) => T`) is
+ *   taken for JSX. A .js file is not scanned for JSX: a `<` there is a comparison more often than a tag.
+ * - A string or regular expression ends at the end of its line at the latest, so a wrong guess cannot hide the rest of
+ *   the file.
+ * A wrong guess either leaves an `import.meta.url` in code as it was, which is what bundling gave it before, or changes one
+ * in text.
  */
 export function pinImportMeta(source, file) {
+	const jsx = /\.[jt]sx$/.test(file);
 	const edits = [];
-	/** What the last token was, for the regular-expression guess: a word (its text), a value, or a punctuator (its text). */
+	/**
+	 * The last token, for the guesses: a word (its text), a value, or a punctuator (its text). `expression` on a punctuator
+	 * overrides whether an expression may begin after it (a `)` or a `}`).
+	 */
 	let previous = { kind: "punctuator", text: "" };
-	/** The open `{` and `${`, so that a `}` can end a template literal's expression. */
+	/** The open `(`: whether each came after `if`, `while`, `for` or `with`. */
+	const parens = [];
+	/** The open `{`, `${` and JSX `{`: "block", "object", "template", or the JSX element to go back to. */
 	const braces = [];
 	const length = source.length;
 	let i = 0;
 
+	const expressionMayBegin = () =>
+		previous.kind === "word"
+			? BEFORE_EXPRESSION.has(previous.text)
+			: previous.kind === "punctuator" &&
+				(previous.expression ?? !(previous.text === ")" || previous.text === "]" || previous.text === "}"));
 	const skipQuoted = (quote) => {
 		for (i++; i < length; i++) {
 			const char = source[i];
@@ -473,10 +498,6 @@ export function pinImportMeta(source, file) {
 		}
 		return false;
 	};
-	const regexpAllowed = () =>
-		previous.kind === "word"
-			? BEFORE_REGEXP.has(previous.text)
-			: previous.kind === "punctuator" && !(previous.text === ")" || previous.text === "]" || previous.text === "}");
 	/** A regular expression from the `/` at `i`; false (and `i` unmoved) when the line ends first. */
 	const skipRegExp = () => {
 		let j = i + 1;
@@ -493,6 +514,59 @@ export function pinImportMeta(source, file) {
 		for (j++; j < length && isWordChar(source[j]); j++);
 		i = j;
 		return true;
+	};
+	/** Whether the `<` at `i` begins JSX: `<>`, or `<name` that is not `<T,` or `<T extends`. */
+	const jsxBegins = () => {
+		if (source[i + 1] === ">") return true;
+		if (!isWordStart(source[i + 1])) return false;
+		let j = i + 2;
+		while (j < length && isWordChar(source[j])) j++;
+		while (j < length && /\s/.test(source[j])) j++;
+		return !(source[j] === "," || /^extends\b/.test(source.slice(j, j + 8)));
+	};
+	/**
+	 * JSX from `i`, for `element` (how many tags are open, whether the one being read closes) in `mode`: inside a `tag`, or
+	 * between tags (`children`). Stops when the outermost element ends (the JSX is then a value), or at a `{`, whose code the
+	 * main loop reads; its `}` comes back here.
+	 */
+	const scanJsx = (element, mode) => {
+		while (i < length) {
+			const char = source[i];
+			if (mode === "children") {
+				if (char === "{") break;
+				if (char === "<") {
+					element.closing = source[i + 1] === "/";
+					if (!element.closing) element.open++;
+					i += element.closing ? 2 : 1;
+					mode = "tag";
+				} else {
+					i++;
+				}
+			} else if (char === "{") {
+				break;
+			} else if (char === '"' || char === "'") {
+				// (An attribute's string: no escapes, and it may run over lines.)
+				const end = source.indexOf(char, i + 1);
+				i = end === -1 ? length : end + 1;
+			} else if (char === "/" && source[i + 1] === ">") {
+				i += 2;
+				if (--element.open === 0) break;
+				mode = "children";
+			} else if (char === ">") {
+				i++;
+				if (element.closing && --element.open === 0) break;
+				mode = "children";
+			} else {
+				i++;
+			}
+		}
+		if (i < length && source[i] === "{") {
+			braces.push({ element, mode });
+			previous = { kind: "punctuator", text: "{" };
+			i++;
+		} else {
+			previous = { kind: "value" };
+		}
 	};
 
 	if (source.startsWith("#!")) i = source.indexOf("\n") === -1 ? length : source.indexOf("\n");
@@ -518,25 +592,45 @@ export function pinImportMeta(source, file) {
 			} else {
 				previous = { kind: "value" };
 			}
+		} else if (char === "(") {
+			parens.push(previous.kind === "word" && BEFORE_CONDITION.has(previous.text));
+			previous = { kind: "punctuator", text: "(" };
+			i++;
+		} else if (char === ")") {
+			previous = { kind: "punctuator", text: ")", expression: parens.pop() === true };
+			i++;
 		} else if (char === "{") {
-			braces.push("brace");
+			const object =
+				previous.kind === "word"
+					? BEFORE_EXPRESSION.has(previous.text) && previous.text !== "else" && previous.text !== "do"
+					: previous.kind === "punctuator" && BEFORE_OBJECT.has(previous.text);
+			braces.push(object ? "object" : "block");
 			previous = { kind: "punctuator", text: "{" };
 			i++;
 		} else if (char === "}") {
 			i++;
-			if (braces.pop() === "template") {
+			const brace = braces.pop();
+			if (brace === "template") {
 				if (skipTemplateText()) {
 					braces.push("template");
 					previous = { kind: "punctuator", text: "{" };
 				} else {
 					previous = { kind: "value" };
 				}
+			} else if (typeof brace === "object") {
+				scanJsx(brace.element, brace.mode);
 			} else {
-				previous = { kind: "punctuator", text: "}" };
+				previous = { kind: "punctuator", text: "}", expression: brace !== "object" };
 			}
-		} else if (char === "/" && regexpAllowed() && skipRegExp()) {
+		} else if (char === "/" && expressionMayBegin() && skipRegExp()) {
 			previous = { kind: "value" };
-		} else if (isWordChar(char) && !/[0-9]/.test(char)) {
+		} else if (char === "<" && jsx && expressionMayBegin() && jsxBegins()) {
+			scanJsx({ open: 0, closing: false }, "children");
+		} else if (char === "=" && next === ">") {
+			// (After `=>`, a `{` is a function's body.)
+			previous = { kind: "punctuator", text: "=>" };
+			i += 2;
+		} else if (isWordStart(char)) {
 			const start = i;
 			for (i++; i < length && isWordChar(source[i]); i++);
 			const word = source.slice(start, i);

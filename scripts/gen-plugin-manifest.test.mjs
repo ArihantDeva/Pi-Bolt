@@ -400,6 +400,50 @@ describe("import.meta in the copies", () => {
 		);
 	});
 
+	it("takes a / after a condition's parentheses or a block for a regular expression, and after an object for a division", () => {
+		// Each regular expression holds a quote: taken for a division, the quote would begin a string to the end of the line.
+		for (const source of [
+			`if (ok) /"/.test(s); const u = import.meta.url;`,
+			`while (m) /'/g.exec(s); const u = import.meta.url;`,
+			`for (;;) /"/.test(s) && import.meta.url;`,
+			`function f() {} /'/.test(s) && import.meta.url;`,
+		]) {
+			assert.equal(pinImportMeta(source, FILE), source.replace("import.meta.url", URL_OF), source);
+		}
+		for (const source of [
+			`const n = f(x) / y; const s = '/'; const u = import.meta.url;`,
+			`const n = { a: 1 } / y; const s = '/'; const u = import.meta.url;`,
+			`const n = (() => {}) / y; const s = '/'; const u = import.meta.url;`,
+		]) {
+			assert.equal(pinImportMeta(source, FILE), source.replace("import.meta.url", URL_OF), source);
+		}
+	});
+
+	it("in a .jsx or .tsx file, takes JSX text and attribute strings for text, and its {} for code", () => {
+		const TSX = "/installed/ext/src/view.tsx";
+		const url = JSON.stringify(pathToFileURL(TSX).href);
+		const cases = [
+			["const x = <div><span>it's</span>{import.meta.url}</div>;", `const x = <div><span>it's</span>{${url}}</div>;`],
+			[
+				'const x = <img src={import.meta.url} alt="import.meta.url" />;',
+				`const x = <img src={${url}} alt="import.meta.url" />;`,
+			],
+			[
+				"const x = <>{items.map((i) => <li key={i}>{import.meta.file}</li>)}</>;",
+				'const x = <>{items.map((i) => <li key={i}>{"view.tsx"}</li>)}</>;',
+			],
+			["const x = <p>import.meta.url</p>; const u = import.meta.url;", `const x = <p>import.meta.url</p>; const u = ${url};`],
+			["const id = <T,>(x: T) => x; const u = import.meta.url;", `const id = <T,>(x: T) => x; const u = ${url};`],
+			["const less = a < b && c > d; const u = import.meta.url;", `const less = a < b && c > d; const u = ${url};`],
+		];
+		for (const [source, expected] of cases) assert.equal(pinImportMeta(source, TSX), expected, source);
+		// (A .ts file has no JSX: there `<number>value` is a type assertion.)
+		assert.equal(
+			pinImportMeta("const n = <number>value; const u = import.meta.url;", FILE),
+			`const n = <number>value; const u = ${URL_OF};`,
+		);
+	});
+
 	it("keeps line numbers, and writes any path as a valid string literal", () => {
 		assert.equal(pinImportMeta("f(import\n\t.meta\n\t.url);\ng();", FILE), `f(${URL_OF}\n\n);\ng();`);
 		const odd = '/home/o"brien/a\\b/ext.ts';
