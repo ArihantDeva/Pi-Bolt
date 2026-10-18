@@ -137,6 +137,15 @@ installed, because the plugin then imports it like any other package.
 
 Pi's own packages are left out of every copy, so a plugin cannot carry a second Pi.
 
+In the copies, `import.meta.url` is the URL of the file it was copied from, and `import.meta.dir`, `dirname`, `filename`,
+`path` and `file` are that file's too. Bundling would otherwise make each one the executable's (`/$bunfs/root/...`). An
+extension that finds its `skills/`, `prompts/` or themes beside its own module, such as
+`join(dirname(fileURLToPath(import.meta.url)), "..", "skills")`, then finds them where it is installed, as it does when Pi loads
+it from its files. Only the copies are changed, and only in code: comments and strings keep their text. `pi-bolt compile` uses a
+compiled-in extension only while its installed copy is unchanged, so those files are always there. An executable built with
+`--plugins-from-installed` has no such check: keep its extensions installed. `__dirname` and `__filename` are not changed:
+the bundler makes them the path of the copy, which is removed after the build.
+
 ### What it cannot do
 
 One kind of package cannot be compiled in. A package whose entry is a Bun build that loads its real code from a `core.cjs`
@@ -250,9 +259,11 @@ const providers = { openai: () => import("./providers/openai.ts"), local: () => 
 const mod = await providers[name]();
 ```
 
-**Embed files instead of reading them next to the source.** In the executable, `import.meta.dir` and `__dirname` point into the
-executable's embedded file system. A prompt, template or WASM file read with `readFile(join(__dirname, "prompt.md"))` is not
-there unless it is imported. Import it instead:
+**Embed files instead of reading them next to the source.** In an executable built from a manifest of your own, `import.meta.url`
+and `import.meta.dir` point into the executable's embedded file system, and `__dirname` at the folder the build copied the
+plugin to. A prompt, template or WASM file read with `readFile(join(__dirname, "prompt.md"))` is not there unless it is
+imported. (A manifest `pi-bolt compile` or `gen-plugin-manifest.mjs` wrote points `import.meta` at the installed files
+instead: [what it copies](#what-it-copies).) Import it instead:
 
 ```ts
 import systemPrompt from "./prompt.md" with { type: "text" }; // the file's contents, as a string
@@ -273,6 +284,9 @@ const url = new URL("./workers/sum.ts", import.meta.url); // relative to this fi
 const compiledIn = url.href.includes("/$bunfs/");          // running from a compiled executable
 const worker = new Worker(compiledIn ? "./.pibolt-plugins/src/workers/sum.ts" : url);
 ```
+
+In a manifest `pi-bolt compile` or `gen-plugin-manifest.mjs` wrote, `import.meta.url` is the installed file's, so `compiledIn`
+is false there and the worker is loaded from the installed file at run time.
 
 **Keep the factory light.** As in stock Pi, register tools, commands and event handlers in the factory. Start processes, sockets,
 watchers and timers from `session_start` or from the command that needs them. Anything slow in the factory delays every launch.

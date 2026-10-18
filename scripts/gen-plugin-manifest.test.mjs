@@ -9,11 +9,19 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
-import { defaultAgentDir, planPlugins, renderManifest, writePluginFolder } from "./gen-plugin-manifest.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+	defaultAgentDir,
+	pinImportMeta,
+	planPlugins,
+	renderManifest,
+	writePluginFolder,
+} from "./gen-plugin-manifest.mjs";
 
 const temporary = [];
 function scratch(prefix = "pibolt-plugins-") {
@@ -342,6 +350,103 @@ describe("the manifest and its folder", () => {
 		writeFileSync(join(out, "stale.txt"), "from an earlier run");
 		writePluginFolder(plan, out);
 		assert.throws(() => readFileSync(join(out, "stale.txt"), "utf8"));
+	});
+});
+
+// Issue #53: bundling resolves import.meta.url to the executable, so an extension lost the skills and prompts beside it.
+describe("import.meta in the copies", () => {
+	const FILE = "/installed/ext/src/index.ts";
+	const URL_OF = JSON.stringify(pathToFileURL(FILE).href);
+
+	it("replaces each property the bundler resolves to the output file, with its value for the installed file", () => {
+		const source = [
+			"const a = import.meta.url;",
+			"const b = [import.meta.dir, import.meta.dirname, import.meta.filename, import.meta.path, import.meta.file];",
+		].join("\n");
+		assert.equal(
+			pinImportMeta(source, FILE),
+			[
+				`const a = ${URL_OF};`,
+				'const b = ["/installed/ext/src", "/installed/ext/src", "/installed/ext/src/index.ts", "/installed/ext/src/index.ts", "index.ts"];',
+			].join("\n"),
+		);
+	});
+
+	it("leaves comments, strings, template text and regular expressions, and other properties", () => {
+		const source = [
+			"#!/usr/bin/env node",
+			"// import.meta.url in a comment",
+			"/* import.meta.dir */",
+			"const s = \"import.meta.url\" + 'import.meta.url';",
+			"const r = /import.meta.url/g;",
+			"const t = `import.meta.url`;",
+			"const keep = [import.meta.main, import.meta.resolve, import.meta.urls, import.meta.url$, x.import];",
+		].join("\n");
+		assert.equal(pinImportMeta(source, FILE), source);
+	});
+
+	it("replaces inside a template literal's expressions, and tells a division from a regular expression", () => {
+		assert.equal(
+			pinImportMeta("`at ${import.meta.url} in ${ { f: import.meta.file }.f }`", FILE),
+			`\`at \${${URL_OF}} in \${ { f: "index.ts" }.f }\``,
+		);
+		assert.equal(
+			pinImportMeta("const n = total / 2 / import.meta.url.length;", FILE),
+			`const n = total / 2 / ${URL_OF}.length;`,
+		);
+		assert.equal(
+			pinImportMeta("if (x) return /'/.test(y) ? import.meta.url : 'it\\'s';", FILE),
+			`if (x) return /'/.test(y) ? ${URL_OF} : 'it\\'s';`,
+		);
+	});
+
+	it("keeps line numbers, and writes any path as a valid string literal", () => {
+		assert.equal(pinImportMeta("f(import\n\t.meta\n\t.url);\ng();", FILE), `f(${URL_OF}\n\n);\ng();`);
+		const odd = '/home/o"brien/a\\b/ext.ts';
+		assert.equal(pinImportMeta("x = import.meta.filename;", odd), `x = ${JSON.stringify(odd)};`);
+	});
+
+	it("pins the copies to the installed files, and leaves the installed files as they were", async () => {
+		const agentDir = agent({ packages: ["npm:uses-dep"] });
+		const extension = join(agentDir, "extensions", "with-skills");
+		const RESOLVES = [
+			'import { dirname, join } from "node:path";',
+			'import { fileURLToPath } from "node:url";',
+			'export const skills = () => join(dirname(fileURLToPath(import.meta.url)), "..", "skills");',
+			"export default () => {};",
+			"",
+		].join("\n");
+		write(join(extension, "package.json"), JSON.stringify({ type: "module", pi: { extensions: ["./src/index.js"] } }));
+		write(join(extension, "src", "index.js"), RESOLVES);
+		write(join(extension, "skills", "probe", "SKILL.md"), "---\nname: probe\n---\n");
+		installPackage(agentDir, "uses-dep", { pi: { extensions: ["./index.js"] }, dependencies: { dep: "1" } }, []);
+		write(join(agentDir, "npm", "node_modules", "uses-dep", "index.js"), "export default () => {};\n");
+		const dep = installPackage(agentDir, "dep", { type: "module" }, []);
+		write(join(dep, "index.js"), "export const here = import.meta.dirname;\n");
+		// (An installed file may be read-only, and its copy keeps the mode.)
+		chmodSync(join(dep, "index.js"), 0o444);
+
+		const out = join(scratch(), "folder");
+		writePluginFolder(planPlugins({ agentDir }), out);
+
+		const copy = await import(pathToFileURL(join(out, "global", "with-skills", "src", "index.js")).href);
+		assert.equal(copy.skills(), join(extension, "skills"));
+		assert.equal(readFileSync(join(extension, "src", "index.js"), "utf8"), RESOLVES);
+		assert.equal(
+			readFileSync(join(out, "node_modules", "dep", "index.js"), "utf8"),
+			`export const here = ${JSON.stringify(dep)};\n`,
+		);
+		assert.equal(readFileSync(join(dep, "index.js"), "utf8"), "export const here = import.meta.dirname;\n");
+	});
+});
+
+describe("the command", () => {
+	it("runs when started through a link to it, as /var is to /private/var on macOS", () => {
+		const link = join(scratch(), "gen-plugin-manifest.mjs");
+		symlinkSync(fileURLToPath(new URL("./gen-plugin-manifest.mjs", import.meta.url)), link);
+		const result = spawnSync(process.execPath, [link, "--help"], { encoding: "utf8" });
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^Usage: scripts\/gen-plugin-manifest\.mjs/);
 	});
 });
 
