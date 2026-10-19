@@ -80,7 +80,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import { formatCacheWarmingStatus, formatCacheWarmingUsage } from "../../core/cache-warmer.ts";
-import { ConnectionWarmer } from "../../core/connection-warmer.ts";
+import { ConnectionWarmer, runtimePreconnect } from "../../core/connection-warmer.ts";
 import { findExtensionStackMatches, recordCrash, takeUnnotifiedCrash } from "../../core/crash-log.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
@@ -542,7 +542,8 @@ export class InteractiveMode {
 	private unsubscribeCapabilityChanges?: () => void;
 	/** Bun only: a full collection when idle after a run (see idle-gc.ts). */
 	private idleCollector: IdleCollector | undefined;
-	private readonly connectionWarmer = new ConnectionWarmer();
+	/** Bun only: opens the model connection while the user types after an idle period (see connection-warmer.ts). */
+	private connectionWarmer: ConnectionWarmer | undefined;
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -686,6 +687,8 @@ export class InteractiveMode {
 						}),
 				})
 			: undefined;
+		const preconnect = runtimePreconnect();
+		this.connectionWarmer = preconnect ? new ConnectionWarmer({ preconnect }) : undefined;
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerContainer = new Container();
@@ -3211,7 +3214,7 @@ export class InteractiveMode {
 			if (wasBashMode !== this.isBashMode) {
 				this.updateEditorBorderColor();
 			}
-			if (!this.session.isStreaming && !this.session.isCompacting) {
+			if (this.connectionWarmer && !this.session.isStreaming && !this.session.isCompacting) {
 				this.connectionWarmer.onTyping(text, this.session.model);
 			}
 		};
@@ -3498,7 +3501,7 @@ export class InteractiveMode {
 
 		this.footer.invalidate();
 		this.programStatus.handleEvent(event);
-		this.connectionWarmer.markActivity();
+		this.connectionWarmer?.markActivity();
 
 		switch (event.type) {
 			case "agent_start":
