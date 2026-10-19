@@ -358,9 +358,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				void checkShutdownRequested();
 			}
 		});
-		unsubscribeBackpressure = session.agent.subscribe(async () => {
-			await waitForRawStdoutBackpressure();
-		});
+		unsubscribeBackpressure = session.agent.subscribe(() => waitForRawStdoutBackpressure());
 	};
 
 	const registerSignalHandlers = (): void => {
