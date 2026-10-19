@@ -8,6 +8,7 @@ throwaway Pi home, so runs are isolated from your Pi configuration and from each
 |---|---|
 | `benchmark.py` | Startup (`--version`), headless (`-p`) and interactive (TUI on a pseudo-terminal) scenarios. Fresh processes, interleaved round-robin. Reports wall, CPU and peak memory. |
 | `long_session.py` | One interactive process, many prompts (default 40; 75 makes a conversation of about 4.2M tokens). Reports time and CPU per prompt, memory and request size as the session grows. |
+| `early_tools.py` | A model that streams read-only tool calls (read, grep, find, ls) with more text after them, at a model's pace, on OpenAI chat completions or Anthropic messages: the time from the end of each message to the request with the tool results, and the whole prompt (`pi -p`). |
 | `large_write.py` | A file written through a tool call whose arguments stream in 16 characters at a time: wall and CPU of `pi -p`, for files of 50 and 200 KB. |
 | `long_answer.py` | The CPU it takes to stream Markdown answers of 5,000 to 60,000 characters in the TUI at the pace of a fast model: what a chunk costs must not grow with the length of the answer. |
 | `tmux_check.py` | Pi in a real tmux pane against a model streaming at human pace: time to interactive, keystroke latency, paste, streaming CPU and frames, resize, Escape to abort, idle CPU, memory. On Windows it runs `conpty_check.py`. |
