@@ -275,8 +275,23 @@ export async function emitSessionShutdownEvent(
 	return false;
 }
 
-function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["type"]) {
-	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
+type ExtensionHandler = Extension["handlers"] extends Map<string, Array<infer Handler>> ? Handler : never;
+
+/**
+ * The handlers of `event` per extension, copied so that handlers registered or removed during the dispatch do not change
+ * it. Extensions without a handler are left out: they would contribute nothing, and an entry for each of them cost more
+ * than the dispatch on every streamed event.
+ */
+function snapshotEventHandlers(
+	extensions: Extension[],
+	event: ExtensionEvent["type"],
+): Array<{ ext: Extension; handlers: ExtensionHandler[] }> {
+	const snapshot: Array<{ ext: Extension; handlers: ExtensionHandler[] }> = [];
+	for (const ext of extensions) {
+		const handlers = ext.handlers.get(event);
+		if (handlers !== undefined && handlers.length > 0) snapshot.push({ ext, handlers: handlers.slice() });
+	}
+	return snapshot;
 }
 
 function sameMessages(left: AgentMessage[], right: AgentMessage[]): boolean {

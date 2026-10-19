@@ -1150,8 +1150,11 @@ export class AgentSession {
 		this._resolveIdleWaitIfIdle();
 	}
 
-	/** Internal handler for agent events - shared by subscribe and reconnect */
-	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+	/**
+	 * Internal handler for agent events - shared by subscribe and reconnect. Runs synchronously and returns undefined
+	 * when no extension handles the event (most streamed deltas); otherwise returns a promise of the whole dispatch.
+	 */
+	private _handleAgentEvent = (event: AgentEvent): Promise<void> | undefined => {
 		// An abort requested while the run was starting, e.g. during before_agent_start, stops it
 		// here. agent_start is awaited before the first request.
 		if (event.type === "agent_start" && this._agentRunAbortRequested) this.agent.abort();
@@ -1191,7 +1194,14 @@ export class AgentSession {
 		}
 
 		// Emit to extensions first, then notify public listeners.
-		await this._emitExtensionEvent(event);
+		const extensionDispatch = this._emitExtensionEvent(event);
+		if (extensionDispatch) return extensionDispatch.then(() => this._finishAgentEvent(event));
+		this._finishAgentEvent(event);
+		return undefined;
+	};
+
+	/** The part of `_handleAgentEvent` after the extension handlers: public listeners, persistence, turn bookkeeping. */
+	private _finishAgentEvent(event: AgentEvent): void {
 		this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
 
 		// Handle session persistence
@@ -1247,7 +1257,7 @@ export class AgentSession {
 			this._lastAssistantToolResults = event.toolResults;
 			this._flushPendingCustomMessages();
 		}
-	};
+	}
 
 	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
 		if (this._agentRunAbortRequested) return false;
@@ -1334,66 +1344,82 @@ export class AgentSession {
 		Object.assign(targetRecord, replacement);
 	}
 
-	/** Emit extension events based on agent events */
-	private async _emitExtensionEvent(event: AgentEvent): Promise<void> {
+	/**
+	 * Emit extension events based on agent events. Returns undefined when nothing needs to be awaited: the event has no
+	 * extension handler (the event object is not even built) and no boundary dispatch is due.
+	 */
+	private _emitExtensionEvent(event: AgentEvent): Promise<void> | undefined {
+		const runner = this._extensionRunner;
 		if (event.type === "agent_start") {
 			this._turnIndex = 0;
-			await this._extensionRunner.emit({ type: "agent_start" });
+			if (!runner.hasHandlers("agent_start")) return undefined;
+			return runner.emit({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
-			await this._extensionRunner.emit({ type: "agent_end", messages: event.messages });
+			if (!runner.hasHandlers("agent_end")) return undefined;
+			return runner.emit({ type: "agent_end", messages: event.messages });
 		} else if (event.type === "turn_start") {
+			if (!runner.hasHandlers("turn_start")) return undefined;
 			const extensionEvent: TurnStartEvent = {
 				type: "turn_start",
 				turnIndex: this._turnIndex,
 				timestamp: Date.now(),
 			};
-			await this._extensionRunner.emit(extensionEvent);
+			return runner.emit(extensionEvent);
 		} else if (event.type === "turn_end") {
 			if (event.message.role === "assistant" && !this._boundaryDispatchedMessages.delete(event.message)) {
-				await this._dispatchTurnEndBoundary(event.message, event.toolResults);
+				return this._dispatchTurnEndBoundary(event.message, event.toolResults).then(() => {
+					this._turnIndex++;
+				});
 			}
 			this._turnIndex++;
+			return undefined;
 		} else if (event.type === "message_start") {
+			if (!runner.hasHandlers("message_start")) return undefined;
 			const extensionEvent: MessageStartEvent = {
 				type: "message_start",
 				message: event.message,
 			};
-			await this._extensionRunner.emit(extensionEvent);
+			return runner.emit(extensionEvent);
 		} else if (event.type === "message_update") {
+			if (!runner.hasHandlers("message_update")) return undefined;
 			const extensionEvent: MessageUpdateEvent = {
 				type: "message_update",
 				message: event.message,
 				assistantMessageEvent: event.assistantMessageEvent,
 			};
-			await this._extensionRunner.emit(extensionEvent);
+			return runner.emit(extensionEvent);
 		} else if (event.type === "message_end") {
+			if (!runner.hasHandlers("message_end")) return undefined;
 			const extensionEvent: MessageEndEvent = {
 				type: "message_end",
 				message: event.message,
 			};
-			const replacement = await this._extensionRunner.emitMessageEnd(extensionEvent);
-			if (replacement) {
-				// Untyped extension handlers can return messages with null/missing content;
-				// normalize so it never enters agent state or session history.
-				const normalized =
-					(replacement.role === "user" ||
-						replacement.role === "assistant" ||
-						replacement.role === "toolResult" ||
-						replacement.role === "custom") &&
-					replacement.content == null
-						? ({ ...replacement, content: [] } as AgentMessage)
-						: replacement;
-				this._replaceMessageInPlace(event.message, normalized);
-			}
+			return runner.emitMessageEnd(extensionEvent).then((replacement) => {
+				if (replacement) {
+					// Untyped extension handlers can return messages with null/missing content;
+					// normalize so it never enters agent state or session history.
+					const normalized =
+						(replacement.role === "user" ||
+							replacement.role === "assistant" ||
+							replacement.role === "toolResult" ||
+							replacement.role === "custom") &&
+						replacement.content == null
+							? ({ ...replacement, content: [] } as AgentMessage)
+							: replacement;
+					this._replaceMessageInPlace(event.message, normalized);
+				}
+			});
 		} else if (event.type === "tool_execution_start") {
+			if (!runner.hasHandlers("tool_execution_start")) return undefined;
 			const extensionEvent: ToolExecutionStartEvent = {
 				type: "tool_execution_start",
 				toolCallId: event.toolCallId,
 				toolName: event.toolName,
 				args: event.args,
 			};
-			await this._extensionRunner.emit(extensionEvent);
+			return runner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_update") {
+			if (!runner.hasHandlers("tool_execution_update")) return undefined;
 			const extensionEvent: ToolExecutionUpdateEvent = {
 				type: "tool_execution_update",
 				toolCallId: event.toolCallId,
@@ -1401,8 +1427,9 @@ export class AgentSession {
 				args: event.args,
 				partialResult: event.partialResult,
 			};
-			await this._extensionRunner.emit(extensionEvent);
+			return runner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_end") {
+			if (!runner.hasHandlers("tool_execution_end")) return undefined;
 			const extensionEvent: ToolExecutionEndEvent = {
 				type: "tool_execution_end",
 				toolCallId: event.toolCallId,
@@ -1411,8 +1438,9 @@ export class AgentSession {
 				isError: event.isError,
 				...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
 			};
-			await this._extensionRunner.emit(extensionEvent);
+			return runner.emit(extensionEvent);
 		}
+		return undefined;
 	}
 
 	/**

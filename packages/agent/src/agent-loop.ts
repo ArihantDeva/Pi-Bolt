@@ -6,10 +6,9 @@
 import {
 	type AssistantMessage,
 	EventStream,
-	getCurrentTools,
-	getToolStateChanges,
 	normalizeContext,
 	type SystemMessage,
+	type Tool,
 	type ToolResultMessage,
 	type ToolStateChanges,
 	toToolDeclaration,
@@ -344,10 +343,7 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 				index === systemIndex ? withToolChanges(pending, NO_CHANGES) : message,
 			)
 		: pendingMessages;
-	const changes = getToolStateChanges(
-		getCurrentTools([...context.messages, ...baseline]),
-		(context.tools ?? []).map(toToolDeclaration),
-	);
+	const changes = getToolChanges(getDeclaredTools(context.messages, baseline), context.tools ?? []);
 	const unchanged = changes.toolsAdded.length === 0 && changes.toolsRemoved.length === 0;
 
 	if (pending) {
@@ -363,6 +359,81 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 }
 
 const NO_CHANGES: ToolStateChanges = { toolsAdded: [], toolsRemoved: [] };
+
+/** `getCurrentTools([...transcript, ...pending])` without copying the transcript: the tools its system messages declare. */
+function getDeclaredTools(transcript: readonly AgentMessage[], pending: readonly AgentMessage[]): Tool[] {
+	const tools = new Map<string, Tool>();
+	for (const messages of [transcript, pending]) {
+		for (const message of messages) {
+			if (message.role !== "system") continue;
+			for (const tool of (message as SystemMessage).toolsRemoved ?? []) tools.delete(tool.name);
+			for (const tool of (message as SystemMessage).toolsAdded ?? []) tools.set(tool.name, tool);
+		}
+	}
+	return [...tools.values()];
+}
+
+interface DeclarationKey {
+	name: string;
+	description: string;
+	parameters: unknown;
+	constrainedSampling: Tool["constrainedSampling"];
+	key: string;
+}
+
+/**
+ * Serialized declarations, per tool object, while the fields a declaration keeps are the same values. The tool set
+ * rarely changes between requests, and serializing every schema twice per request cost more than the rest of the turn's
+ * bookkeeping.
+ */
+const declarationKeys = new WeakMap<Tool, DeclarationKey>();
+
+/** `JSON.stringify(toToolDeclaration(tool))`: what `declarationsEqual` compares. */
+function declarationKey(tool: Tool): string {
+	const cached = declarationKeys.get(tool);
+	if (
+		cached !== undefined &&
+		cached.name === tool.name &&
+		cached.description === tool.description &&
+		cached.parameters === tool.parameters &&
+		cached.constrainedSampling === tool.constrainedSampling
+	) {
+		return cached.key;
+	}
+	const key = JSON.stringify(toToolDeclaration(tool));
+	declarationKeys.set(tool, {
+		name: tool.name,
+		description: tool.description,
+		parameters: tool.parameters,
+		constrainedSampling: tool.constrainedSampling,
+		key,
+	});
+	return key;
+}
+
+/**
+ * `getToolStateChanges(previous, current.map(toToolDeclaration))`, comparing cached serialized declarations instead of
+ * serializing both sides of every comparison again.
+ */
+function getToolChanges(previous: readonly Tool[], current: readonly Tool[]): ToolStateChanges {
+	const currentKeys = current.map(declarationKey);
+	const previousTools = new Map(previous.map((tool) => [tool.name, tool]));
+	const currentIndexes = new Map(current.map((tool, index) => [tool.name, index]));
+	return {
+		toolsAdded: current
+			.filter((tool, index) => {
+				const previousTool = previousTools.get(tool.name);
+				return previousTool === undefined || declarationKey(previousTool) !== currentKeys[index];
+			})
+			.map(toToolDeclaration),
+		toolsRemoved: previous
+			.filter((tool) => {
+				const currentIndex = currentIndexes.get(tool.name);
+				return currentIndex === undefined || declarationKey(tool) !== currentKeys[currentIndex];
+			})
+			.map((tool) => ({ name: tool.name })),
+	};
+}
 
 /** Copy a system message with its tool fields replaced by `changes`; empty lists omit the field. */
 function withToolChanges(message: SystemMessage, { toolsAdded, toolsRemoved }: ToolStateChanges): SystemMessage {
@@ -432,11 +503,13 @@ async function streamAssistantResponse(
 				if (partialMessage) {
 					partialMessage = event.partial;
 					context.messages[context.messages.length - 1] = partialMessage;
-					await emit({
+					// One event per delta: await only a sink that returned a promise.
+					const pending = emit({
 						type: "message_update",
 						assistantMessageEvent: event,
 						message: { ...partialMessage },
-					});
+					}) as Promise<void> | undefined;
+					if (pending) await pending;
 				}
 				break;
 

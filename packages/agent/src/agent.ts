@@ -556,13 +556,24 @@ export class Agent {
 	}
 
 	/**
-	 * Reduce internal state for a loop event, then await listeners.
+	 * Reduce internal state for a loop event, then call listeners in subscription order, awaiting each promise a
+	 * listener returns before calling the next. Returns undefined when no listener returned a promise: streaming emits
+	 * an event per delta, and an await per event and listener would cost more than the listeners. Never throws: a
+	 * failure is returned as a rejected promise, as from an async function.
 	 *
 	 * `agent_end` only means no further loop events will be emitted. The run is
 	 * considered idle later, after all awaited listeners for `agent_end` finish
 	 * and `finishRun()` clears runtime-owned state.
 	 */
-	private async processEvents(event: AgentEvent): Promise<void> {
+	private processEvents(event: AgentEvent): Promise<void> | undefined {
+		try {
+			return this.processEventsSync(event);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+	}
+
+	private processEventsSync(event: AgentEvent): Promise<void> | undefined {
 		switch (event.type) {
 			case "message_start":
 				this._state.streamingMessage = event.message;
@@ -606,8 +617,32 @@ export class Agent {
 		if (!signal) {
 			throw new Error("Agent listener invoked outside active run");
 		}
-		for (const listener of this.listeners) {
-			await listener(event, signal);
+		// The iterator, not a copy: listeners added or removed by a listener are seen as with for...of.
+		const listeners = this.listeners.values();
+		for (let next = listeners.next(); !next.done; next = listeners.next()) {
+			const result = next.value(event, signal);
+			if (isPromiseLike(result)) return this.awaitListeners(result, listeners, event, signal);
+		}
+		return undefined;
+	}
+
+	private async awaitListeners(
+		pending: PromiseLike<void>,
+		listeners: Iterator<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>,
+		event: AgentEvent,
+		signal: AbortSignal,
+	): Promise<void> {
+		await pending;
+		for (let next = listeners.next(); !next.done; next = listeners.next()) {
+			await next.value(event, signal);
 		}
 	}
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<void> {
+	return (
+		(typeof value === "object" || typeof value === "function") &&
+		value !== null &&
+		typeof (value as { then?: unknown }).then === "function"
+	);
 }
