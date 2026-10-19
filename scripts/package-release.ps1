@@ -93,7 +93,19 @@ function Add-Notices($dir) {
 	Copy-Item (Join-Path $Root 'THIRD_PARTY_NOTICES.md') $dir
 	if (Test-Path (Join-Path $Pi 'LICENSE')) { Copy-Item (Join-Path $Pi 'LICENSE') (Join-Path $dir 'LICENSE.pi') }
 }
+# With 7-Zip where it is installed (GitHub's Windows runners have it): its deflate makes the same kind of .zip, which every reader
+# of it unpacks (install.ps1, npm/install.cjs, Expand-Archive), 3.4% smaller than .NET's (-mx=7: pi-bolt.exe 93.9 -> 90.7 MB,
+# about a minute more per archive). Without it, .NET's.
+$SevenZip = @((Get-Command 7z.exe -ErrorAction SilentlyContinue).Source, (Join-Path $env:ProgramFiles '7-Zip\7z.exe')) |
+	Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 function New-Zip($dir, $zip) {
+	if ($SevenZip) {
+		# (From the folder's parent, so that its entries start with the folder's name, as .NET's do.)
+		Push-Location (Split-Path $dir)
+		try { & $SevenZip a -tzip -mx=7 -mtc=off -bso0 -bsp0 $zip (Split-Path $dir -Leaf) } finally { Pop-Location }
+		if ($LASTEXITCODE -ne 0) { Die "7-Zip could not write $zip" }
+		return
+	}
 	[IO.Compression.ZipFile]::CreateFromDirectory($dir, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
 }
 try {
