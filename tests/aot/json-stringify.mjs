@@ -123,6 +123,26 @@ show("raw wide in toJSON", () => JSON.stringify({ m: hidden([1, 2], () => [JSON.
 	show("wide early", () => JSON.stringify([{ toJSON: () => "☃" }, "☃".repeat(10), big(100, "e")]));
 	show("latin1 in wide string", () => JSON.stringify({ t: { toJSON: () => 1 }, s: "café →".slice(0, 4) }));
 }
+// Escaping of 16-bit strings: every kind of character at every place in blocks of sixteen, lone and paired surrogates at the
+// ends of blocks, Latin-1-only blocks inside wide strings.
+{
+	const kinds = ["a", " ", '"', "\\", "\n", "\t", "\u0001", "\u001f", "\u007f", "\u00e9", "\u00ff", "\u0100", "\u2192", "\ud83d\ude00", "\ud800", "\udfff", "\u4e2d"];
+	let seed = 7;
+	const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 8;
+	const strings = [];
+	for (let n = 0; n < 400; n++) {
+		let s = n % 3 ? "\u2192" : "";
+		const length = next() % 70;
+		for (let i = 0; i < length; i++) s += next() % 4 ? String.fromCharCode(97 + (next() % 26)) : kinds[next() % kinds.length];
+		strings.push(s);
+	}
+	show("wide escapes", () => JSON.stringify(strings));
+	show("wide escapes, in toJSON", () => JSON.stringify({ t: { toJSON: () => strings.slice(0, 200) }, rest: strings.slice(200) }, null, 1));
+	for (const at of [15, 16, 17, 31, 32]) {
+		const pad = "x".repeat(at);
+		show(`surrogate at ${at}`, () => JSON.stringify([`${pad}\ud83d\ude00${pad}`, `${pad}\ud83d`, `${pad}\ude00\u2192`, `\u2192${pad}"\n${pad}\u00e9`]));
+	}
+}
 // Depth: indentation of a fast part deep inside slow ones, and a very deep chain with a toJSON at the bottom.
 {
 	let v = { leaf: { toJSON: () => ({ end: [1, { two: 2 }] }) } };
