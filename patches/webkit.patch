@@ -15286,3 +15286,201 @@ index 0a6afc315e..7d2a80879e 100644
      if constexpr (sizeof(InputCharacterType) == 1) {
          // (How the last stretch was says how the next is likely to be.)
          bool hasMuchToEscape = false;
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <323596076+opensec-intelligence@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 02:14:06 +0530
+Subject: [PATCH] [JSC] Microtasks: one call cache per VM, set-associative,
+ lasts across drains; await of a non-object skips the promise checks
+
+Each drain made a MicrotaskCallCache of 8 entries on the stack. Bun drains after every callback, so the first resume of
+each async function in a drain missed the cache (MicrotaskCall::initialize, prepareForMicrotaskCall, getCallDataInline:
+about 190 instructions), as did any resume once more than 8 functions took turns. In a chain of an async generator and
+three nested async calls, 6 of 10 resumes per event missed.
+
+- The VM owns the drain's cache, as it owns the one for synchronous resumes, and clears and reconciles it the same way
+  (when code is detached, at the end of each GC). An entry is not used after the call it makes, so nested drains share it.
+- 32 entries in 8 sets of 4, by the callee's executable, instead of 8 searched one by one.
+- resolveWithInternalMicrotaskForAsyncAwait() queues the fulfilment of an awaited non-object directly, as
+  resolveWithInternalMicrotask() did after the promise checks. The same job is queued at the same moment.
+---
+ .../interpreter/MicrotaskCall.h               | 37 ++++++++++++-------
+ Source/JavaScriptCore/runtime/JSMicrotask.cpp |  2 +-
+ Source/JavaScriptCore/runtime/JSPromise.cpp   |  4 ++
+ .../JavaScriptCore/runtime/MicrotaskQueue.cpp |  9 +++--
+ .../runtime/MicrotaskQueueInlines.h           |  2 +-
+ Source/JavaScriptCore/runtime/VM.cpp          |  3 ++
+ Source/JavaScriptCore/runtime/VM.h            |  2 +
+ 7 files changed, 40 insertions(+), 19 deletions(-)
+
+diff --git a/Source/JavaScriptCore/interpreter/MicrotaskCall.h b/Source/JavaScriptCore/interpreter/MicrotaskCall.h
+index 4cb89b0f86..b4f1722af7 100644
+--- a/Source/JavaScriptCore/interpreter/MicrotaskCall.h
++++ b/Source/JavaScriptCore/interpreter/MicrotaskCall.h
+@@ -84,13 +84,17 @@ class MicrotaskCallCache final {
+     WTF_MAKE_NONCOPYABLE(MicrotaskCallCache);
+     WTF_MAKE_TZONE_ALLOCATED(MicrotaskCallCache);
+ public:
+-    static constexpr unsigned cacheSize = 8;
+-    static_assert(hasOneBitSet(cacheSize));
+-
+-    // The cache lives on the stack, where the conservative scan reads whole words. A MicrotaskCall has
+-    // padding (after CallLinkInfoBase's one-byte type) that its constructor does not write, so an entry
+-    // built over a slot an earlier frame left a cell pointer in would keep all but the low byte of it,
+-    // and the scan takes that for a pointer into the cell. The entries are built over zeroed storage.
++    // A callee goes in one set, by its executable, in any of the set's ways. (One per VM lasts across drains: Bun drains
++    // after every callback, and a cache made for each drain missed on the first resume of each function in it.)
++    static constexpr unsigned ways = 4;
++    static constexpr unsigned sets = 8;
++    static constexpr unsigned cacheSize = ways * sets;
++    static_assert(hasOneBitSet(ways) && hasOneBitSet(sets));
++
++    // A MicrotaskCall has padding (after CallLinkInfoBase's one-byte type) that its constructor does not write: should
++    // the cache be on the stack, where the conservative scan reads whole words, an entry built over a slot an earlier
++    // frame left a cell pointer in would keep all but the low byte of it, and the scan would take that for a pointer
++    // into the cell. The entries are built over zeroed storage.
+     MicrotaskCallCache()
+     {
+         zeroBytes(m_storage);
+@@ -112,18 +116,19 @@ public:
+         if (cell->type() != JSFunctionType) [[unlikely]]
+             return nullptr;
+         auto* executable = uncheckedDowncast<JSFunction>(cell)->executable();
+-        for (auto& entry : entries()) {
++        for (auto& entry : entries().subspan(setOf(executable) * ways, ways)) {
+             if (entry.isInitializedFor(executable))
+                 return &entry;
+         }
+         return nullptr;
+     }
+ 
+-    ALWAYS_INLINE MicrotaskCall* nextEntryToReplace()
++    ALWAYS_INLINE MicrotaskCall* nextEntryToReplace(JSFunction* function)
+     {
+-        auto* result = &entries()[m_nextEntryIndex];
+-        m_nextEntryIndex = (m_nextEntryIndex + 1) & (cacheSize - 1);
+-        return result;
++        unsigned set = setOf(function->executable());
++        unsigned way = m_nextWay[set];
++        m_nextWay[set] = (way + 1) & (ways - 1);
++        return &entries()[set * ways + way];
+     }
+ 
+     void clear()
+@@ -139,10 +144,16 @@ public:
+     }
+ 
+ private:
++    static unsigned setOf(ExecutableBase* executable)
++    {
++        auto bits = std::bit_cast<uintptr_t>(executable);
++        return static_cast<unsigned>((bits >> 4) ^ (bits >> 9) ^ (bits >> 14)) & (sets - 1);
++    }
++
+     std::span<MicrotaskCall, cacheSize> entries() { return std::span<MicrotaskCall, cacheSize> { std::bit_cast<MicrotaskCall*>(&m_storage[0]), cacheSize }; }
+ 
+     alignas(MicrotaskCall) std::array<uint8_t, sizeof(MicrotaskCall) * cacheSize> m_storage;
+-    unsigned m_nextEntryIndex { 0 };
++    std::array<uint8_t, sets> m_nextWay { };
+ };
+ 
+ } // namespace JSC
+diff --git a/Source/JavaScriptCore/runtime/JSMicrotask.cpp b/Source/JavaScriptCore/runtime/JSMicrotask.cpp
+index ce81a32a22..6354f2215b 100644
+--- a/Source/JavaScriptCore/runtime/JSMicrotask.cpp
++++ b/Source/JavaScriptCore/runtime/JSMicrotask.cpp
+@@ -148,7 +148,7 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
+             auto* jsFunction = uncheckedDowncast<JSFunction>(functionObject.asCell());
+             auto* microtaskCall = microtaskCallCache->find(functionObject);
+             if (!microtaskCall)
+-                microtaskCall = microtaskCallCache->nextEntryToReplace();
++                microtaskCall = microtaskCallCache->nextEntryToReplace(jsFunction);
+             microtaskCall->initialize(vm, jsFunction);
+             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
+ 
+diff --git a/Source/JavaScriptCore/runtime/JSPromise.cpp b/Source/JavaScriptCore/runtime/JSPromise.cpp
+index c53f9f406b..9ffea644db 100644
+--- a/Source/JavaScriptCore/runtime/JSPromise.cpp
++++ b/Source/JavaScriptCore/runtime/JSPromise.cpp
+@@ -1087,6 +1087,10 @@ void JSPromise::resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject* global
+ #define BUN_ASYNC_CONTEXT
+ #endif
+ 
++    // (What resolveWithInternalMicrotask() below does with it, without going through the checks for a promise.)
++    if (!resolution.isObject())
++        return fulfillWithInternalMicrotask(vm, globalObject, resolution, task, context BUN_ASYNC_CONTEXT);
++
+     if (resolution.inherits<JSPromise>()) {
+         auto* promise = uncheckedDowncast<JSPromise>(resolution);
+         if (promise->realm() == globalObject && promiseSpeciesWatchpointIsValid(vm, promise)) [[likely]]
+diff --git a/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp b/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp
+index acd89dcd44..a01ee346c0 100644
+--- a/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp
++++ b/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp
+@@ -181,10 +181,11 @@ DEFINE_VISIT_AGGREGATE(MarkedMicrotaskDeque);
+ template<bool useCallOnEachMicrotask>
+ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGlobalObject* currentGlobalObject, VM& vm, TopExceptionScope& catchScope)
+ {
+-    // Entries hold the callee's CodeBlock and entry point untraced, which is only sound on the stack:
+-    // conservative scanning keeps them alive, and code is detached only outside a VM entry scope. A cache
+-    // that outlives a drain needs clear() and reconcileWeakReferencesAtGCEnd, as VM's own cache does.
+-    MicrotaskCallCache microtaskCallCache;
++    // Entries hold the callee's CodeBlock and entry point untraced: the VM's cache is cleared when code is detached and
++    // reconciled at the end of each GC (VM::clearMicrotaskCallCaches(), VM::reconcileWeakReferencesAtGCEnd()), as its
++    // cache for synchronous resumes is. It lasts across drains, nested ones included: an entry is not used after the
++    // call it makes.
++    MicrotaskCallCache& microtaskCallCache = vm.drainCallCache();
+ 
+     while (!m_queue.isEmpty()) {
+         auto& front = m_queue.front();
+diff --git a/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h b/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h
+index 198b66e5c3..b622fd8ba2 100644
+--- a/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h
++++ b/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h
+@@ -148,7 +148,7 @@ inline void MicrotaskQueue::performMicrotaskCheckpoint(VM& vm, NOESCAPE const In
+         std::optional<VMEntryScope> entryScope;
+         JSGlobalObject* currentGlobalObject = nullptr;
+ 
+-        // drain() handles an empty queue too, but it constructs a MicrotaskCallCache first. Check here so that an empty checkpoint skips that.
++        // drain() handles an empty queue too. Check here so that an empty checkpoint does not set up a drain.
+         while (!m_queue.isEmpty()) {
+             auto [nextGlobalObject, done] = drain<useCallOnEachMicrotask>(currentGlobalObject, vm, catchScope);
+             if (done)
+diff --git a/Source/JavaScriptCore/runtime/VM.cpp b/Source/JavaScriptCore/runtime/VM.cpp
+index dab6862830..cfa840a27f 100644
+--- a/Source/JavaScriptCore/runtime/VM.cpp
++++ b/Source/JavaScriptCore/runtime/VM.cpp
+@@ -285,6 +285,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
+     , m_regExpCache(makeUnique<RegExpCache>())
+     , m_compactVariableMap(adoptRef(*new CompactTDZEnvironmentMap))
+     , m_syncResumeCallCache(makeUniqueRef<MicrotaskCallCache>())
++    , m_drainCallCache(makeUniqueRef<MicrotaskCallCache>())
+     , m_codeCache(makeUnique<CodeCache>())
+     , m_intlCache(makeUnique<IntlCache>())
+     , m_builtinExecutables(makeUnique<BuiltinExecutables>(*this))
+@@ -2226,11 +2227,13 @@ void VM::beginMarking()
+ void VM::reconcileWeakReferencesAtGCEnd()
+ {
+     m_syncResumeCallCache->reconcileWeakReferencesAtGCEnd(*this);
++    m_drainCallCache->reconcileWeakReferencesAtGCEnd(*this);
+ }
+ 
+ void VM::clearMicrotaskCallCaches()
+ {
+     m_syncResumeCallCache->clear();
++    m_drainCallCache->clear();
+ }
+ 
+ template<typename Visitor>
+diff --git a/Source/JavaScriptCore/runtime/VM.h b/Source/JavaScriptCore/runtime/VM.h
+index b8ca26878f..34456d0987 100644
+--- a/Source/JavaScriptCore/runtime/VM.h
++++ b/Source/JavaScriptCore/runtime/VM.h
+@@ -1033,6 +1033,8 @@ public:
+ 
+     const UniqueRef<MicrotaskCallCache> m_syncResumeCallCache;
+     MicrotaskCallCache& syncResumeCallCache() { return m_syncResumeCallCache.get(); }
++    const UniqueRef<MicrotaskCallCache> m_drainCallCache;
++    MicrotaskCallCache& drainCallCache() { return m_drainCallCache.get(); }
+     void clearMicrotaskCallCaches();
+ 
+     enum class StructureChainIntegrityEvent : uint8_t {
