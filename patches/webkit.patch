@@ -14814,3 +14814,351 @@ index 4970432563898..95fde70338e52 100644
          case DataViewSet: {
              DataViewData data = node->dataViewData();
              if (data.isFloatingPoint)
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <323596076+opensec-intelligence@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 01:59:58 +0530
+Subject: [PATCH] [JSC] JSON.stringify: the general serializer hands objects to
+ the fast one; raw JSON and a hidden toJSON in the fast one
+
+When FastStringifier gave up anywhere in a value (a toJSON, a Date, a raw JSON value), the general Stringifier serialized
+all of it, about three times slower. A request body whose messages array has a toJSON went that way as a whole.
+
+- Stringifier, without a replacer, first gives each object or array it reaches (after its toJSON) to FastStringifier, at
+  its depth for indentation. FastStringifier has no side effects, so when it gives up nothing has happened and the general
+  one goes on as before. The objects and arrays it was inside of when it gave up are not tried again, so each part of a
+  value is gone through about twice at most; after 64 failures in a row it is not tried any more.
+- FastStringifier copies a JSON.rawJSON() value as it is (frozen, no prototype: no toJSON), narrow or wide.
+- FastStringifier looks for an own toJSON before it serializes an object that has any non-enumerable property, instead of
+  finding it after the rest of the object.
+---
+ Source/JavaScriptCore/runtime/JSONObject.cpp | 168 +++++++++++++++++--
+ 1 file changed, 156 insertions(+), 12 deletions(-)
+
+diff --git a/Source/JavaScriptCore/runtime/JSONObject.cpp b/Source/JavaScriptCore/runtime/JSONObject.cpp
+index 4746873402..5095a6f09b 100644
+--- a/Source/JavaScriptCore/runtime/JSONObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSONObject.cpp
+@@ -40,6 +40,7 @@
+ #include "PropertyNameArray.h"
+ #include "VMInlines.h"
+ #include <charconv>
++#include <wtf/HashSet.h>
+ #include <wtf/MathExtras.h>
+ #include <wtf/UnalignedAccess.h>
+ #include <wtf/dragonbox/dragonbox_to_chars.h>
+@@ -100,11 +101,18 @@ private:
+     mutable JSValue m_value;
+ };
+ 
++// The objects and arrays a FastStringifier was inside of when it gave up, outermost first.
++using FastStringifyFailurePath = Vector<JSObject*, 16>;
++
++// FastStringifier for a value inside what the general Stringifier serializes: an object or array at `depth` (the number of
++// objects and arrays around it), indented with `gap`. Null if it cannot; `failurePath` then says where it gave up.
++static String fastStringifyNested(JSGlobalObject&, JSObject*, const String& gap, unsigned depth, bool preferWide, FastStringifyFailurePath&);
++
+ class Stringifier {
+     WTF_MAKE_NONCOPYABLE(Stringifier);
+     WTF_FORBID_HEAP_ALLOCATION;
+ public:
+-    static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space);
++    static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, const FastStringifyFailurePath* = nullptr);
+ 
+ private:
+     class Holder {
+@@ -157,6 +165,17 @@ private:
+     Vector<Holder, 16, UnsafeVectorOverflow> m_holderStack;
+     String m_repeatedGap;
+     StringView m_indent;
++
++    // Without a replacer, an object or array is first given to FastStringifier, which has no side effects: if it gives up,
++    // nothing it did can be seen and this goes on as if it had not tried. The ones it was inside of when it gave up are not
++    // tried again (it would give up again, at the same place), so that each part of a value is gone through about twice at
++    // most. (Only addresses are compared: one that is reused for another object costs a try, nothing else.) Where it gives up
++    // again and again (every one of many objects has a Date in it), it is not tried any more.
++    static constexpr unsigned maxFastStringifierFailuresInARow = 64;
++    bool m_triesFastStringifier { false };
++    unsigned m_fastStringifierFailuresInARow { 0 };
++    UncheckedKeyHashSet<JSObject*> m_fastStringifierGaveUpIn;
++    FastStringifyFailurePath m_fastStringifierFailurePath;
+ };
+ 
+ // ------------------------------ helper functions --------------------------------
+@@ -273,17 +292,22 @@ Stringifier::Stringifier(JSGlobalObject* globalObject, JSValue replacer, JSValue
+         }
+     }
+ 
+-    scope.release();
+     m_gap = gap(globalObject, space);
++    RETURN_IF_EXCEPTION(scope, );
++    m_triesFastStringifier = !m_usingArrayReplacer && !isCallableReplacer() && (m_gap.isNull() || m_gap.is8Bit());
+ }
+ 
+-String Stringifier::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space)
++String Stringifier::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, const FastStringifyFailurePath* fastStringifierFailurePath)
+ {
+     VM& vm = globalObject.vm();
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+     Stringifier stringifier(&globalObject, replacer, space);
+     RETURN_IF_EXCEPTION(scope, { });
++    if (fastStringifierFailurePath && stringifier.m_triesFastStringifier) {
++        for (auto* object : *fastStringifierFailurePath)
++            stringifier.m_fastStringifierGaveUpIn.add(object);
++    }
+ 
+     PropertyNameForFunctionCall emptyPropertyName(vm.propertyNames->emptyIdentifier.impl());
+ 
+@@ -453,6 +477,21 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder&
+         return StringifyFailed;
+     }
+ 
++    if (m_triesFastStringifier && !m_fastStringifierGaveUpIn.contains(object)) {
++        unsigned depth = willIndent() ? m_indent.length() / m_gap.length() : 0;
++        String fast = fastStringifyNested(*m_globalObject, object, m_gap, depth, !builder.is8Bit(), m_fastStringifierFailurePath);
++        if (!fast.isNull()) {
++            m_fastStringifierFailuresInARow = 0;
++            builder.append(fast);
++            return StringifySucceeded;
++        }
++        if (++m_fastStringifierFailuresInARow == maxFastStringifierFailuresInARow)
++            m_triesFastStringifier = false;
++        m_fastStringifierGaveUpIn.add(object);
++        for (auto* inside : m_fastStringifierFailurePath)
++            m_fastStringifierGaveUpIn.add(inside);
++    }
++
+     bool holderStackWasEmpty = m_holderStack.isEmpty();
+     Structure* structure = object->structure();
+     m_holderStack.append(Holder(m_globalObject, object, structure));
+@@ -702,7 +741,9 @@ template<typename CharType, BufferMode bufferMode>
+ class FastStringifier {
+ public:
+     // Returns null string if the fast case fails.
+-    static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, std::optional<FailureReason>&);
++    static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, std::optional<FailureReason>&, FastStringifyFailurePath&);
++    // An object or array inside what Stringifier serializes, after its toJSON was called: see fastStringifyNested().
++    static String stringifyNested(JSGlobalObject&, JSObject*, const String& gap, unsigned depth, std::optional<FailureReason>&, FastStringifyFailurePath&);
+ 
+     static constexpr unsigned staticBufferSize = bufferMode == BufferMode::StaticBuffer ? 8192 : 8;
+     static constexpr unsigned dynamicBufferInlineCapacity = bufferMode == BufferMode::StaticBuffer ? 0 : 1024;
+@@ -720,6 +761,7 @@ private:
+     template<HasGap hasGap> void append(JSValue);
+     void appendInt32(int32_t);
+     template<HasGap hasGap> void appendInt32Array(JSArray&);
++    void appendRawJSON(JSRawJSONObject&);
+     String result();
+ 
+     static constexpr unsigned maxInt32StringLength = ("-2147483648"_s).length();
+@@ -763,6 +805,8 @@ private:
+     bool m_checkedArrayPrototype { false };
+     bool m_hasSeenWideString { false };
+     std::optional<FailureReason> m_failureReason;
++    // The objects and arrays it is inside of: when it gives up, where it gave up.
++    FastStringifyFailurePath* m_path { nullptr };
+     Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
+     uint8_t* m_stackLimit { nullptr };
+ 
+@@ -1537,6 +1581,11 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
+         }
+         if (structure.storedPrototype() != m_globalObject.objectPrototype()) {
+             if (cell.type() != FinalObjectType) [[unlikely]] {
++                // JSON.rawJSON()'s: frozen, without a prototype, so without a toJSON.
++                if (object.inherits<JSRawJSONObject>()) {
++                    appendRawJSON(*uncheckedDowncast<JSRawJSONObject>(&object));
++                    return;
++                }
+                 recordFailure("non-final object with non-standard prototype"_s);
+                 return;
+             }
+@@ -1565,6 +1614,16 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
+             recordFailure("object has non-reified static properties"_s);
+             return;
+         }
++        // An own toJSON that is not enumerable (one defined on an object after it was made) would be found only after all the
++        // rest of the object was serialized, in vain.
++        if (structure.hasNonEnumerableProperties()) [[unlikely]] {
++            if (structure.get(m_vm, m_vm.propertyNames->toJSON) != invalidOffset) {
++                recordFailure("object has non-enumerable toJSON"_s);
++                return;
++            }
++        }
++        if (m_path)
++            m_path->append(&object);
+         if constexpr (hasGap == HasGap::Yes)
+             ++m_depth;
+         const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
+@@ -1704,6 +1763,8 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
+         if (needNewLine)
+             appendNewLineAndIndentUnchecked();
+         buffer()[m_length++] = '}';
++        if (m_path)
++            m_path->removeLast();
+         return;
+     }
+ 
+@@ -1743,6 +1804,8 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
+         buffer()[m_length++] = '[';
+         if constexpr (hasGap == HasGap::Yes)
+             ++m_depth;
++        if (m_path)
++            m_path->append(&array);
+ 
+         auto closeArray = [&] {
+             if constexpr (hasGap == HasGap::Yes)
+@@ -1755,6 +1818,8 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
+             if (needNewLine)
+                 appendNewLineAndIndentUnchecked();
+             buffer()[m_length++] = ']';
++            if (m_path)
++                m_path->removeLast();
+         };
+ 
+         IndexingType indexingType = array.indexingType();
+@@ -1862,13 +1927,68 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendInt32Array(JSArra
+ }
+ 
+ template<typename CharType, BufferMode bufferMode>
+-inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason>& failureReason)
++void FastStringifier<CharType, bufferMode>::appendRawJSON(JSRawJSONObject& object)
++{
++    auto string = object.rawJSON(m_vm)->tryGetValue();
++    if (string.data.isNull()) [[unlikely]] {
++        recordFailure("raw JSON String::tryGetValue"_s);
++        return;
++    }
++    unsigned length = string.data.length();
++    if (!length) [[unlikely]]
++        return;
++    if (!hasRemainingCapacity(length)) [[unlikely]] {
++        recordBufferFull();
++        return;
++    }
++    auto output = bufferSpan().subspan(m_length, length);
++    if (string.data.is8Bit())
++        StringImpl::copyCharacters(output, string.data.span8());
++    else {
++        if constexpr (std::same_as<CharType, Latin1Character>) {
++            if (!charactersAreAllLatin1(string.data.span16())) [[unlikely]] {
++                if constexpr (bufferMode == BufferMode::DynamicBuffer)
++                    recordFailure(FailureReason::Found16BitLate, "16-bit raw JSON"_s);
++                else
++                    recordFailure(m_length < (m_capacity / 2) ? FailureReason::Found16BitEarly : FailureReason::Found16BitLate, "16-bit raw JSON"_s);
++                return;
++            }
++        } else
++            m_hasSeenWideString = true;
++        StringImpl::copyCharacters(output, string.data.span16());
++    }
++    m_length += length;
++}
++
++template<typename CharType, BufferMode bufferMode>
++inline String FastStringifier<CharType, bufferMode>::stringifyNested(JSGlobalObject& globalObject, JSObject* object, const String& gap, unsigned depth, std::optional<FailureReason>& failureReason, FastStringifyFailurePath& path)
++{
++    FastStringifier stringifier(globalObject);
++    path.shrink(0);
++    stringifier.m_path = &path;
++    if (!gap.isEmpty()) {
++        ASSERT(gap.is8Bit() && gap.length() <= maxGapLength);
++        auto span = gap.span8();
++        memcpySpan(std::span { stringifier.m_gap }.first(span.size()), span);
++        stringifier.m_gapLength = span.size();
++        stringifier.m_depth = depth;
++        stringifier.append<HasGap::Yes>(object);
++    } else
++        stringifier.append<HasGap::No>(object);
++    failureReason = stringifier.m_failureReason;
++    return stringifier.result();
++}
++
++template<typename CharType, BufferMode bufferMode>
++inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason>& failureReason, FastStringifyFailurePath& path)
+ {
+     if (replacer.isObject()) {
+         logOutcome("replacer"_s);
+         return { };
+     }
+     FastStringifier stringifier(globalObject);
++    path.shrink(0);
++    stringifier.m_path = &path;
+     if (!space.isUndefined()) {
+         if (!stringifier.setGap(space)) [[unlikely]] {
+             logOutcome("space"_s);
+@@ -1887,38 +2007,39 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
+ {
+     VM& vm = globalObject.vm();
+     uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
++    FastStringifyFailurePath failurePath;
+     if (std::bit_cast<uint8_t*>(currentStackPointer()) >= stackLimit) [[likely]] {
+         std::optional<FailureReason> failureReason;
+         failureReason = std::nullopt;
+-        if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
++        if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason, failurePath); !result.isNull())
+             return result;
+         if (failureReason == FailureReason::Found16BitEarly) {
+             failureReason = std::nullopt;
+-            if (String result = FastStringifier<char16_t, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
++            if (String result = FastStringifier<char16_t, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason, failurePath); !result.isNull())
+                 return result;
+ 
+             if (failureReason == FailureReason::BufferFull) {
+                 failureReason = std::nullopt;
+-                if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
++                if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, failurePath); !result.isNull())
+                     return result;
+             }
+         } else if (failureReason == FailureReason::BufferFull) {
+             failureReason = std::nullopt;
+             // To take what is narrow for wide costs making it narrow at the end. To take what is wide for narrow costs all that was done until that came out.
+             if (vm.jsonStringifyHints.isWide) {
+-                if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
++                if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, failurePath); !result.isNull())
+                     return result;
+-            } else if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
++            } else if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, failurePath); !result.isNull())
+                 return result;
+         }
+         // However far it had got: what is left to try is still a good deal faster than doing without.
+         if (failureReason == FailureReason::Found16BitLate) {
+             failureReason = std::nullopt;
+-            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
++            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, failurePath); !result.isNull())
+                 return result;
+         }
+     }
+-    String result = Stringifier::stringify(globalObject, value, replacer, space);
++    String result = Stringifier::stringify(globalObject, value, replacer, space, &failurePath);
+ #if FAST_STRINGIFY_LOG_USAGE
+     if (!result.isNull())
+         dataLogLn("Not fastStringify: ", result);
+@@ -1926,6 +2047,29 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
+     return result;
+ }
+ 
++static String fastStringifyNested(JSGlobalObject& globalObject, JSObject* object, const String& gap, unsigned depth, bool preferWide, FastStringifyFailurePath& failurePath)
++{
++    VM& vm = globalObject.vm();
++    if (std::bit_cast<uint8_t*>(currentStackPointer()) < std::bit_cast<uint8_t*>(vm.softStackLimit())) [[unlikely]] {
++        failurePath.shrink(0);
++        return { };
++    }
++    std::optional<FailureReason> failureReason;
++    if (!preferWide) {
++        if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringifyNested(globalObject, object, gap, depth, failureReason, failurePath); !result.isNull())
++            return result;
++        if (failureReason == FailureReason::BufferFull) {
++            failureReason = std::nullopt;
++            if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringifyNested(globalObject, object, gap, depth, failureReason, failurePath); !result.isNull())
++                return result;
++        }
++        if (failureReason != FailureReason::Found16BitEarly && failureReason != FailureReason::Found16BitLate)
++            return { };
++        failureReason = std::nullopt;
++    }
++    return FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringifyNested(globalObject, object, gap, depth, failureReason, failurePath);
++}
++
+ // ------------------------------ JSONObject --------------------------------
+ 
+ const ClassInfo JSONObject::s_info = { "JSON"_s, &JSNonFinalObject::s_info, &jsonTable, nullptr, CREATE_METHOD_TABLE(JSONObject) };
