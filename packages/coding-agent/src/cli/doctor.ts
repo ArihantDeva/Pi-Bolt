@@ -485,24 +485,34 @@ function systemSection(): DoctorSection {
 
 /**
  * Records calls to the bun:ffi functions that make native code (dlopen, cc, linkSymbols, CFunction, JSCallback) while
- * extensions load: an extension that makes them needs the JIT build. Returns the function that puts them back. (Doctor only:
- * Pi's own starts do not load bun:ffi.)
+ * extensions load, and whether each threw "bun:ffi requires the JIT". An extension that makes such a call needs the JIT build,
+ * unless it catches that error and goes on without bun:ffi, as an extension with a second backend does. Returns the function
+ * that puts them back. (Doctor only: Pi's own starts do not load bun:ffi.)
  */
-function recordFfiCalls(onCall: () => void): () => void {
+function recordFfiCalls(onCall: (jitRequired: boolean) => void): () => void {
 	let ffi: Record<string, unknown>;
 	try {
 		ffi = createRequire(import.meta.url)("bun:ffi") as Record<string, unknown>;
 	} catch {
 		return () => {};
 	}
+	const recorded = <T>(call: () => T): T => {
+		try {
+			const result = call();
+			onCall(false);
+			return result;
+		} catch (error) {
+			onCall(error instanceof Error && error.message.includes(JIT_REQUIRED_MESSAGE));
+			throw error;
+		}
+	};
 	const originals = new Map<string, unknown>();
 	for (const name of ["dlopen", "cc", "linkSymbols", "CFunction"]) {
 		const original = ffi[name];
 		if (typeof original !== "function") continue;
 		originals.set(name, original);
 		ffi[name] = function (this: unknown, ...args: unknown[]) {
-			onCall();
-			return Reflect.apply(original, this, args);
+			return recorded(() => Reflect.apply(original, this, args));
 		};
 	}
 	const OriginalCallback = ffi.JSCallback;
@@ -510,8 +520,7 @@ function recordFfiCalls(onCall: () => void): () => void {
 		originals.set("JSCallback", OriginalCallback);
 		ffi.JSCallback = new Proxy(OriginalCallback, {
 			construct(target, args, newTarget) {
-				onCall();
-				return Reflect.construct(target, args, newTarget);
+				return recorded(() => Reflect.construct(target, args, newTarget));
 			},
 		});
 	}
@@ -568,6 +577,8 @@ export interface ExtensionReport {
 	cpuMs?: number;
 	/** It uses bun:ffi's native code (called while loading, or a file of it imports bun:ffi). */
 	ffi?: string;
+	/** A bun:ffi call threw "bun:ffi requires the JIT" while it loaded (and, when it loaded all the same, it went on without). */
+	ffiJitRequired?: boolean;
 }
 
 function sourceOf(entry: unknown): string | undefined {
@@ -647,6 +658,34 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "tim
 	}
 }
 
+/**
+ * What doctor says about an extension's use of bun:ffi on a build without the JIT (#62). Only what was seen is a problem. A
+ * failure of "bun:ffi requires the JIT" says so itself (core/extensions/jit-hint.ts), and an extension that loaded although a
+ * bun:ffi call threw it caught the error and went on without bun:ffi. One that only imports bun:ffi may call it later, when it
+ * is used: that error then names the JIT build too, so it is a suggestion, not a problem. One that failed after a bun:ffi call
+ * threw it (it rethrew something else) needs the JIT.
+ */
+export function jitFinding(
+	entry: ExtensionReport,
+	jit: boolean,
+): { kind: "problem" | "suggestion"; text: string } | undefined {
+	if (jit || entry.ffi === undefined || isJitRequiredMessage(entry.detail)) return undefined;
+	if (entry.state === "loaded" && entry.ffiJitRequired) return undefined;
+	if (entry.ffiJitRequired) {
+		return {
+			kind: "problem",
+			text: `${jitHint(entry.name)} (a bun:ffi call threw "${JIT_REQUIRED_MESSAGE}" while it loaded).`,
+		};
+	}
+	if (entry.state === "loaded" && entry.ffi !== "called while loading") {
+		return {
+			kind: "suggestion",
+			text: `${jitHint(entry.name)}, if it fails with "${JIT_REQUIRED_MESSAGE}" when used (it imports bun:ffi, and did not call it while loading).`,
+		};
+	}
+	return { kind: "problem", text: `${jitHint(entry.name)} (unless it has a fallback without bun:ffi).` };
+}
+
 /** Formats the extension rows: one line each, compiled-in ones together. */
 export function extensionRows(
 	builtins: { enabled: string[]; disabled: string[] },
@@ -664,8 +703,11 @@ export function extensionRows(
 	const runTime = jit ? "JIT" : "interpreted";
 	for (const extension of extensions) {
 		// (A failure of "bun:ffi requires the JIT" says so already.)
+		const fallback = extension.state === "loaded" && extension.ffiJitRequired ? "; went on without it" : "";
 		const ffi =
-			extension.ffi && !extension.detail.includes(JIT_REQUIRED_MESSAGE) ? `; uses bun:ffi (${extension.ffi})` : "";
+			extension.ffi && !extension.detail.includes(JIT_REQUIRED_MESSAGE)
+				? `; uses bun:ffi (${extension.ffi}${fallback})`
+				: "";
 		if (extension.state === "loaded")
 			rows.push(["run time", `${extension.name}: ${runTime}, ${extension.detail}${ffi}`]);
 		else rows.push([extension.state, `${extension.name}: ${extension.detail}${ffi}`]);
@@ -734,8 +776,10 @@ async function extensionSections(
 
 	const extensions: ExtensionReport[] = [];
 	let loading: ExtensionReport | undefined;
-	const restoreFfi = recordFfiCalls(() => {
-		if (loading) loading.ffi = "called while loading";
+	const restoreFfi = recordFfiCalls((jitRequired) => {
+		if (!loading) return;
+		loading.ffi = "called while loading";
+		if (jitRequired) loading.ffiJitRequired = true;
 	});
 	const eventBus = createEventBus();
 	const runtime = createExtensionRuntime();
@@ -808,10 +852,9 @@ async function extensionSections(
 
 	for (const entry of extensions) {
 		if (entry.state === "failed") report.problems.push(`Extension ${entry.name} fails to load: ${entry.detail}`);
-		// (A failure of "bun:ffi requires the JIT" says so itself, core/extensions/jit-hint.ts.)
-		if (!jit && entry.ffi !== undefined && !isJitRequiredMessage(entry.detail)) {
-			report.problems.push(`${jitHint(entry.name)} (unless it has a fallback without bun:ffi).`);
-		}
+		const finding = jitFinding(entry, jit);
+		if (finding?.kind === "problem") report.problems.push(finding.text);
+		if (finding?.kind === "suggestion") report.suggestions.push(finding.text);
 		if (!jit && entry.state === "loaded" && (entry.cpuMs ?? 0) >= HEAVY_EXTENSION_CPU_MS) {
 			report.suggestions.push(
 				`${entry.name} takes ${entry.cpuMs} ms of CPU to load, interpreted: the JIT build runs heavy extensions faster (${piBoltJitSwitchCommand()}), or compile it in (docs/PLUGINS.md).`,
