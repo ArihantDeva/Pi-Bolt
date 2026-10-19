@@ -203,6 +203,12 @@ way, so `pi-bin` waits for it as it would for the program. If `pi-spawn` is kill
 helper, `pi-spawn` runs the program in its own place. Not covered: programs started on a pseudo-terminal or as another user, which
 Bun starts with `fork`. It costs 0.3 ms at each start and about 1.4 ms per program.
 
+**Imports by library.** An import that names libSystem is looked up, at every launch, in libSystem's re-exported libraries
+one after another until one exports it: for the runtime's ~700 imports, about 12,000 lookups and 27 million instructions
+before `main()`, a third of what `pi --version` cost. The runtime links six of libSystem's libraries by name (libsystem_kernel,
+libsystem_c, libsystem_pthread, libsystem_m, libsystem_malloc and libsystem_platform), so that 429 of its 482 libSystem imports
+name the library that exports them, and each is one lookup. Each binds to the library it bound to through libSystem.
+
 **Fixed regions.** The static region (36 GB of address space at 0x200000000000) and the structures' 4 GB are free in every
 macOS process. macOS has no `RLIMIT_AS`, so the fallbacks for an address-space limit are not needed there.
 

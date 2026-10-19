@@ -61,6 +61,11 @@ if [ -f "$HINTS" ]; then
 	rm -f "$ORDER.before"
 fi
 
+# macOS: the imports that name one of libSystem's own libraries bind as they would through libSystem.
+if [ "$PIBOLT_OS" = darwin ]; then
+	python3 "$PIBOLT_ROOT/scripts/lib/check-darwin-imports.py" "$BUN_SRC/$BUILD_DIR/bun" || die "the runtime's imports differ from libSystem's (above)"
+fi
+
 mkdir -p "$PIBOLT_WORK/runtime"
 cp "$BUN_SRC/$BUILD_DIR/bun" "$PIBOLT_WORK/runtime/bun"
 cp "$BUN_SRC/$BUILD_DIR/bun-profile" "$PIBOLT_WORK/runtime/bun-profile" 2>/dev/null || true
