@@ -102,7 +102,8 @@ def main():
     ap.add_argument("--out", help="keep each scenario's log here (default: a temporary folder)")
     a = ap.parse_args()
     build = parse_builds([a.build])[0]
-    out = Path(a.out or tempfile.mkdtemp(prefix="pibolt-aot-coverage-"))
+    # (Absolute: Pi runs in a scratch folder of its own, and the log and the regexps are written from there.)
+    out = Path(a.out or tempfile.mkdtemp(prefix="pibolt-aot-coverage-")).resolve()
     out.mkdir(parents=True, exist_ok=True)
     profiled = set()
     if a.profile and (Path(a.profile) / "regexps.txt").exists():
@@ -113,6 +114,8 @@ def main():
     print(f"{'scenario':14} {'ok':>3} {'no code':>8} {'regexps':>8} {'slots':>7} {'fills':>7} {'refills':>8}")
     for name in names:
         err, recorded = out / f"{name}.log", out / f"{name}.regexps"
+        # (Both are appended to: a run into a folder used before starts from nothing.)
+        err.unlink(missing_ok=True)
         recorded.unlink(missing_ok=True)
         extra = {"BUN_JSC_verboseAOTCompilation": "1", "BUN_JSC_aotRecordRegExpsPath": str(recorded)}
         ok = SCENARIOS[name](build, extra, err)
