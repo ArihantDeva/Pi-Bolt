@@ -148,6 +148,14 @@ describe("extension rows", () => {
 				{ name: "npm:pi-todo", state: "loaded", detail: "loaded in 40 ms (CPU 35 ms)" },
 				{ name: "npm:pi-ffi", state: "failed", detail: "Cannot find module", ffi: "index.ts imports it" },
 				{ name: "npm:pi-dlopen", state: "failed", detail: "bun:ffi requires the JIT. pi-dlopen needs ..." },
+				// #62: dlopen threw "bun:ffi requires the JIT", the extension caught it and loaded with its other backend.
+				{
+					name: "npm:pi-fallback",
+					state: "loaded",
+					detail: "loaded in 30 ms (CPU 25 ms)",
+					ffi: "called while loading",
+					ffiJitRequired: true,
+				},
 			],
 			false,
 		);
@@ -157,6 +165,10 @@ describe("extension rows", () => {
 			["run time", "npm:pi-todo: interpreted, loaded in 40 ms (CPU 35 ms)"],
 			["failed", "npm:pi-ffi: Cannot find module; uses bun:ffi (index.ts imports it)"],
 			["failed", "npm:pi-dlopen: bun:ffi requires the JIT. pi-dlopen needs ..."],
+			[
+				"run time",
+				"npm:pi-fallback: interpreted, loaded in 30 ms (CPU 25 ms); uses bun:ffi (called while loading; went on without it)",
+			],
 		]);
 	});
 });
@@ -270,7 +282,13 @@ describe("runDoctor", () => {
 		const agentDir = join(home, ".pi", "agent");
 		const project = join(home, "project");
 		const bin = join(home, "bin");
-		for (const dir of [project, bin, join(agentDir, "extensions", "ffi-ext"), join(home, ".config", "zed")]) {
+		for (const dir of [
+			project,
+			bin,
+			join(agentDir, "extensions", "ffi-ext"),
+			join(agentDir, "extensions", "ffi-lazy"),
+			join(home, ".config", "zed"),
+		]) {
 			mkdirSync(dir, { recursive: true });
 		}
 		writeFileSync(join(agentDir, "extensions", "fine.ts"), "export default function () {}\n");
@@ -281,6 +299,11 @@ describe("runDoctor", () => {
 		writeFileSync(
 			join(agentDir, "extensions", "ffi-ext", "index.ts"),
 			'import { dlopen } from "bun:ffi";\nexport default function () { return dlopen; }\n',
+		);
+		// Imports bun:ffi only where it is used, not while it loads.
+		writeFileSync(
+			join(agentDir, "extensions", "ffi-lazy", "index.ts"),
+			'export default function () { return () => require("bun:ffi"); }\n',
 		);
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -319,6 +342,13 @@ describe("runDoctor", () => {
 		expect(output).toMatch(/failed +~\/\.pi\/agent\/extensions\/broken\.ts: boom/);
 		expect(output).toMatch(/ffi-ext\/index\.ts: .*uses bun:ffi \(ffi-ext\/index\.ts imports it\)/);
 		expect(output).toContain("needs Pi-Bolt's JIT build (bun:ffi); switch with: ");
+		// #62: one that fails is a problem; one that only imports bun:ffi and loads is a suggestion.
+		const problems = output.slice(output.indexOf("\nProblems\n"), output.indexOf("\nSuggestions\n"));
+		const suggestions = output.slice(output.indexOf("\nSuggestions\n"));
+		expect(problems).toContain("broken.ts");
+		expect(problems).toContain("ffi-ext/index.ts needs Pi-Bolt's JIT build");
+		expect(problems).not.toContain("ffi-lazy");
+		expect(suggestions).toMatch(/ffi-lazy\/index\.ts needs Pi-Bolt's JIT build .*did not call it while loading/);
 		expect(output).toContain("only Pi loads");
 		expect(output).toContain("git:https://***@github.com/me/private-ext");
 		expect(output).toContain('Zed\'s agent server "Pi-Bolt" runs /no/such/pi-bolt, which does not exist');
