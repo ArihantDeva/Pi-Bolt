@@ -192,6 +192,8 @@ function Stage-Assets($dir) {
 	# Pi's documentation and example extensions: Pi points the model (its system prompt) and the user (the first run, /login) at
 	# them, next to the README.
 	Copy-Item -Recurse -Force (Join-Path $Agent 'docs'), (Join-Path $Agent 'examples') $dir
+	# Not the documentation's pictures (2.5 MB of PNG): the model reads the text, and a terminal shows none of them.
+	Remove-Item -Recurse -Force (Join-Path $dir 'docs\images') -ErrorAction SilentlyContinue
 	# With Pi-Bolt's own that `pi-bolt doctor` points at (#63).
 	Copy-Item (Join-Path $Root 'docs\PLUGINS.md'), (Join-Path $Root 'docs\ACP.md'), (Join-Path $Root 'docs\TROUBLESHOOTING.md') (Join-Path $dir 'docs')
 	New-Item -ItemType Directory -Force "$dir\theme", "$dir\assets", "$dir\export-html\vendor", "$dir\native\win32\prebuilds" | Out-Null
