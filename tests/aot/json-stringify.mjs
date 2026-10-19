@@ -79,13 +79,15 @@ show("boxed", () => JSON.stringify({ s: new String("str"), n: new Number(4), b: 
 	const target = { a: 1 };
 	const holder = { before: { x: 1 }, t: { toJSON: () => (Object.defineProperty(target, "toJSON", { value: () => "late", enumerable: false }), "t") }, target };
 	show("toJSON adds a toJSON", () => JSON.stringify(holder));
-	show("toJSON on Object.prototype", () => {
-		const o = { a: { b: { toJSON: () => (Object.prototype.toJSON = function () { return "proto"; }, "first") }, c: { d: 1 } } };
-		try {
-			return JSON.stringify(o);
-		} finally {
-			delete Object.prototype.toJSON;
+	// (Not Object.prototype: the AOT build makes the built-in prototypes immutable.)
+	class Shape {
+		constructor(n) {
+			this.n = n;
 		}
+	}
+	show("toJSON added to a prototype", () => {
+		const o = { a: { b: { toJSON: () => ((Shape.prototype.toJSON = function () { return `shape ${this.n}`; }), "first") }, c: new Shape(1), d: [new Shape(2), { e: new Shape(3) }] } };
+		return JSON.stringify(o);
 	});
 }
 // Getters: called in order, between toJSON calls.
