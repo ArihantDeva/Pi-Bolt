@@ -13464,3 +13464,104 @@ index 4d76ec8e..c7fe4ecd 100644
 -- 
 2.54.0 (Apple Git-157)
 
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <323596076+opensec-intelligence@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 02:10:43 +0530
+Subject: [PATCH] macOS: import libSystem's functions from the libraries that
+ export them
+
+An import that names libSystem is looked up, at every launch, in each of
+libSystem's re-exported libraries in turn until one exports it. bun's ~700
+imports took about 12,000 export-trie lookups in dyld
+(dyld4::Loader::hasExportedSymbol): 27 million instructions before main(),
+a third of what a compiled Pi's `--version` costs on macOS.
+
+Link libsystem_kernel, libsystem_c, libsystem_pthread, libsystem_m,
+libsystem_malloc and libsystem_platform by name, so that each of their
+imports names the library that exports it: one lookup. They hold almost
+all of bun's libSystem imports, and every macOS bun supports has them;
+the rest is still imported from libSystem.
+---
+ scripts/build/binary-expectations.ts |  3 ++-
+ scripts/build/bun.ts                 |  3 ++-
+ scripts/build/config.ts              | 25 +++++++++++++++++++++++++
+ 3 files changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/scripts/build/binary-expectations.ts b/scripts/build/binary-expectations.ts
+index fabdf34910..41418f976e 100644
+--- a/scripts/build/binary-expectations.ts
++++ b/scripts/build/binary-expectations.ts
+@@ -17,7 +17,7 @@
+ 
+ import { readFileSync } from "node:fs";
+ import { join } from "node:path";
+-import type { Config } from "./config.ts";
++import { darwinSystemSublibraries, type Config } from "./config.ts";
+ import { versionScriptPath } from "./flags.ts";
+ 
+ export type BinaryFormat = "elf" | "macho" | "pe";
+@@ -448,6 +448,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
+             "/usr/lib/libc++.1.dylib",
+             "/usr/lib/libicucore.A.dylib",
+             "/usr/lib/libresolv.9.dylib",
++            ...darwinSystemSublibraries(cfg).installNames,
+           ],
+           exact: true,
+           allowed: sanitizerLibs,
+diff --git a/scripts/build/bun.ts b/scripts/build/bun.ts
+index c37eea84ae..858eb994ba 100644
+--- a/scripts/build/bun.ts
++++ b/scripts/build/bun.ts
+@@ -17,7 +17,7 @@ import type { Sources } from "../glob-sources.ts";
+ import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
+ import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
+ import { cc, cxx, link, pch } from "./compile.ts";
+-import { bunExeName, shouldStrip, type Config } from "./config.ts";
++import { bunExeName, darwinSystemSublibraries, shouldStrip, type Config } from "./config.ts";
+ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
+ import { allDeps } from "./deps/index.ts";
+ import { lolhtml } from "./deps/lolhtml.ts";
+@@ -85,6 +85,7 @@ function systemLibs(cfg: Config): string[] {
+     // icucore: system ICU framework.
+     // resolv: DNS resolution (getaddrinfo et al).
+     libs.push("-licucore", "-lresolv");
++    libs.push(...darwinSystemSublibraries(cfg).link);
+   }
+ 
+   if (cfg.freebsd) {
+diff --git a/scripts/build/config.ts b/scripts/build/config.ts
+index 6feaf589ae..07c94b8590 100644
+--- a/scripts/build/config.ts
++++ b/scripts/build/config.ts
+@@ -1777,3 +1777,28 @@ export function formatConfig(cfg: Config, exe: string): string {
+ export function formatConfigUnchanged(exe: string, elapsed: number): string {
+   return `[configured] ${c.green(exe)} in ${elapsed}ms ${c.dim("(unchanged)")}`;
+ }
++
++/**
++ * libSystem's own libraries that bun imports most from, linked by name, so that each import names the library that exports
++ * it. An import that names libSystem is looked up in libSystem's re-exported libraries one after another, in their order, at
++ * every launch: bun's ~700 imports took about 12,000 export-trie lookups (dyld4::Loader::hasExportedSymbol), 27 million
++ * instructions before main(), a third of what `pi --version` costs on macOS. Named here, an import is one lookup. These six
++ * hold almost all of bun's libSystem imports (kernel 175, c 150, pthread 47, m 43, malloc 9, platform 5), and every macOS
++ * bun supports has them; what is not in them is still imported from libSystem.
++ */
++const DARWIN_SYSTEM_SUBLIBRARIES = [
++  "libsystem_kernel",
++  "libsystem_c",
++  "libsystem_pthread",
++  "libsystem_m",
++  "libsystem_malloc",
++  "libsystem_platform",
++];
++
++export function darwinSystemSublibraries(cfg: Config): { link: string[]; installNames: string[] } {
++  if (!cfg.darwin || cfg.osxSysroot === undefined) return { link: [], installNames: [] };
++  return {
++    link: DARWIN_SYSTEM_SUBLIBRARIES.map(name => join(cfg.osxSysroot!, "usr", "lib", "system", `${name}.tbd`)),
++    installNames: DARWIN_SYSTEM_SUBLIBRARIES.map(name => `/usr/lib/system/${name}.dylib`),
++  };
++}
+-- 
+2.54.0 (Apple Git-157)
+
