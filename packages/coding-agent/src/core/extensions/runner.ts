@@ -294,6 +294,14 @@ function snapshotEventHandlers(
 	return snapshot;
 }
 
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+	return (
+		(typeof value === "object" || typeof value === "function") &&
+		value !== null &&
+		typeof (value as { then?: unknown }).then === "function"
+	);
+}
+
 function sameMessages(left: AgentMessage[], right: AgentMessage[]): boolean {
 	return left.length === right.length && left.every((message, index) => message === right[index]);
 }
@@ -1169,6 +1177,68 @@ export class ExtensionRunner {
 		}
 
 		return result as RunnerEmitResult<TEvent>;
+	}
+
+	/**
+	 * `emit` for an event whose handlers' results are not used (`agent_start`, `message_update`, `tool_execution_end`,
+	 * ...), without an await while handlers return synchronously. Returns undefined when every handler returned
+	 * synchronously, or a promise of the rest of the dispatch from the first handler that returned a promise. Handlers
+	 * run in the same order, with the same context and error reporting, as with `emit`.
+	 */
+	dispatch(event: Exclude<RunnerEmitEvent, SessionBeforeEvent>): Promise<void> | undefined {
+		if (!this.hasHandlers(event.type)) return undefined;
+		const ctx = this.createContext();
+		const snapshot = snapshotEventHandlers(this.extensions, event.type);
+		for (let extensionIndex = 0; extensionIndex < snapshot.length; extensionIndex++) {
+			const { ext, handlers } = snapshot[extensionIndex];
+			for (let handlerIndex = 0; handlerIndex < handlers.length; handlerIndex++) {
+				let result: unknown;
+				try {
+					result = handlers[handlerIndex](event, ctx);
+				} catch (err) {
+					this.emitHandlerError(ext, event.type, err);
+					continue;
+				}
+				if (isPromiseLike(result)) {
+					return this.finishDispatch(result, event, ctx, snapshot, extensionIndex, handlerIndex);
+				}
+			}
+		}
+		return undefined;
+	}
+
+	private async finishDispatch(
+		pending: PromiseLike<unknown>,
+		event: Exclude<RunnerEmitEvent, SessionBeforeEvent>,
+		ctx: ExtensionContext,
+		snapshot: Array<{ ext: Extension; handlers: ExtensionHandler[] }>,
+		extensionIndex: number,
+		handlerIndex: number,
+	): Promise<void> {
+		try {
+			await pending;
+		} catch (err) {
+			this.emitHandlerError(snapshot[extensionIndex].ext, event.type, err);
+		}
+		for (let e = extensionIndex; e < snapshot.length; e++) {
+			const { ext, handlers } = snapshot[e];
+			for (let h = e === extensionIndex ? handlerIndex + 1 : 0; h < handlers.length; h++) {
+				try {
+					await handlers[h](event, ctx);
+				} catch (err) {
+					this.emitHandlerError(ext, event.type, err);
+				}
+			}
+		}
+	}
+
+	private emitHandlerError(ext: Extension, event: string, err: unknown): void {
+		this.emitError({
+			extensionPath: ext.path,
+			event,
+			error: err instanceof Error ? err.message : String(err),
+			stack: err instanceof Error ? err.stack : undefined,
+		});
 	}
 
 	/** Returns the event's own action unless a handler overrides it; the last override wins. */

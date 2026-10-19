@@ -99,3 +99,96 @@ describe("ExtensionRunner.emit with handlers", () => {
 		expect(errors).toEqual([{ event: "agent_start", error: "boom" }]);
 	});
 });
+
+describe("ExtensionRunner.dispatch", () => {
+	it("returns undefined without a context when no extension handles the event", async () => {
+		const runner = await createRunner([
+			(pi) => {
+				pi.on("agent_end", () => {});
+			},
+		]);
+		const createContext = vi.spyOn(runner, "createContext");
+		expect(runner.dispatch({ type: "agent_start" })).toBeUndefined();
+		expect(createContext).not.toHaveBeenCalled();
+	});
+
+	it("runs synchronous handlers to the end before returning, with one context", async () => {
+		const calls: Array<{ name: string; ctx: ExtensionContext }> = [];
+		const runner = await createRunner([
+			(pi) => {
+				pi.on("agent_start", (_event, ctx) => {
+					calls.push({ name: "first", ctx });
+				});
+				pi.on("agent_start", (_event, ctx) => {
+					calls.push({ name: "second", ctx });
+				});
+			},
+			(pi) => {
+				pi.on("agent_end", () => {});
+			},
+			(pi) => {
+				pi.on("agent_start", (_event, ctx) => {
+					calls.push({ name: "third", ctx });
+				});
+			},
+		]);
+
+		expect(runner.dispatch({ type: "agent_start" })).toBeUndefined();
+		expect(calls.map((call) => call.name)).toEqual(["first", "second", "third"]);
+		expect(new Set(calls.map((call) => call.ctx)).size).toBe(1);
+	});
+
+	it("waits for a handler's promise before calling the next handler, and reports every failure", async () => {
+		const seen: string[] = [];
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const runner = await createRunner([
+			(pi) => {
+				pi.on("message_start", () => {
+					seen.push("sync");
+				});
+				pi.on("message_start", () => {
+					throw new Error("sync failure");
+				});
+				pi.on("message_start", async () => {
+					seen.push("async start");
+					await gate;
+					seen.push("async end");
+				});
+			},
+			(pi) => {
+				pi.on("message_start", async () => {
+					seen.push("rejecting");
+					throw new Error("async failure");
+				});
+				pi.on("message_start", () => {
+					seen.push("last");
+				});
+			},
+		]);
+		const errors: Array<{ extensionPath: string; event: string; error: string }> = [];
+		runner.onError((error) =>
+			errors.push({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
+		);
+		const [first, second] = runner.getExtensionPaths();
+
+		const pending = runner.dispatch({
+			type: "message_start",
+			message: { role: "user", content: "hi", timestamp: 0 },
+		});
+		expect(pending).toBeInstanceOf(Promise);
+		expect(seen).toEqual(["sync", "async start"]);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		expect(seen).toEqual(["sync", "async start"]);
+
+		release();
+		await pending;
+		expect(seen).toEqual(["sync", "async start", "async end", "rejecting", "last"]);
+		expect(errors).toEqual([
+			{ extensionPath: first, event: "message_start", error: "sync failure" },
+			{ extensionPath: second, event: "message_start", error: "async failure" },
+		]);
+	});
+});

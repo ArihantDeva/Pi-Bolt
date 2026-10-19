@@ -1352,11 +1352,9 @@ export class AgentSession {
 		const runner = this._extensionRunner;
 		if (event.type === "agent_start") {
 			this._turnIndex = 0;
-			if (!runner.hasHandlers("agent_start")) return undefined;
-			return runner.emit({ type: "agent_start" });
+			return runner.dispatch({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
-			if (!runner.hasHandlers("agent_end")) return undefined;
-			return runner.emit({ type: "agent_end", messages: event.messages });
+			return runner.dispatch({ type: "agent_end", messages: event.messages });
 		} else if (event.type === "turn_start") {
 			if (!runner.hasHandlers("turn_start")) return undefined;
 			const extensionEvent: TurnStartEvent = {
@@ -1364,7 +1362,7 @@ export class AgentSession {
 				turnIndex: this._turnIndex,
 				timestamp: Date.now(),
 			};
-			return runner.emit(extensionEvent);
+			return runner.dispatch(extensionEvent);
 		} else if (event.type === "turn_end") {
 			if (event.message.role === "assistant" && !this._boundaryDispatchedMessages.delete(event.message)) {
 				return this._dispatchTurnEndBoundary(event.message, event.toolResults).then(() => {
@@ -1379,7 +1377,7 @@ export class AgentSession {
 				type: "message_start",
 				message: event.message,
 			};
-			return runner.emit(extensionEvent);
+			return runner.dispatch(extensionEvent);
 		} else if (event.type === "message_update") {
 			if (!runner.hasHandlers("message_update")) return undefined;
 			const extensionEvent: MessageUpdateEvent = {
@@ -1387,7 +1385,7 @@ export class AgentSession {
 				message: event.message,
 				assistantMessageEvent: event.assistantMessageEvent,
 			};
-			return runner.emit(extensionEvent);
+			return runner.dispatch(extensionEvent);
 		} else if (event.type === "message_end") {
 			if (!runner.hasHandlers("message_end")) return undefined;
 			const extensionEvent: MessageEndEvent = {
@@ -1417,7 +1415,7 @@ export class AgentSession {
 				toolName: event.toolName,
 				args: event.args,
 			};
-			return runner.emit(extensionEvent);
+			return runner.dispatch(extensionEvent);
 		} else if (event.type === "tool_execution_update") {
 			if (!runner.hasHandlers("tool_execution_update")) return undefined;
 			const extensionEvent: ToolExecutionUpdateEvent = {
@@ -1427,7 +1425,7 @@ export class AgentSession {
 				args: event.args,
 				partialResult: event.partialResult,
 			};
-			return runner.emit(extensionEvent);
+			return runner.dispatch(extensionEvent);
 		} else if (event.type === "tool_execution_end") {
 			if (!runner.hasHandlers("tool_execution_end")) return undefined;
 			const extensionEvent: ToolExecutionEndEvent = {
@@ -1438,7 +1436,7 @@ export class AgentSession {
 				isError: event.isError,
 				...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
 			};
-			return runner.emit(extensionEvent);
+			return runner.dispatch(extensionEvent);
 		}
 		return undefined;
 	}
