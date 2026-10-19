@@ -80,6 +80,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import { formatCacheWarmingStatus, formatCacheWarmingUsage } from "../../core/cache-warmer.ts";
+import { ConnectionWarmer } from "../../core/connection-warmer.ts";
 import { findExtensionStackMatches, recordCrash, takeUnnotifiedCrash } from "../../core/crash-log.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
@@ -541,6 +542,7 @@ export class InteractiveMode {
 	private unsubscribeCapabilityChanges?: () => void;
 	/** Bun only: a full collection when idle after a run (see idle-gc.ts). */
 	private idleCollector: IdleCollector | undefined;
+	private readonly connectionWarmer = new ConnectionWarmer();
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -3209,6 +3211,9 @@ export class InteractiveMode {
 			if (wasBashMode !== this.isBashMode) {
 				this.updateEditorBorderColor();
 			}
+			if (!this.session.isStreaming && !this.session.isCompacting) {
+				this.connectionWarmer.onTyping(text, this.session.model);
+			}
 		};
 
 		// Handle clipboard paste (triggered on Ctrl+V). Copied files use their original paths,
@@ -3493,6 +3498,7 @@ export class InteractiveMode {
 
 		this.footer.invalidate();
 		this.programStatus.handleEvent(event);
+		this.connectionWarmer.markActivity();
 
 		switch (event.type) {
 			case "agent_start":
