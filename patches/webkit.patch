@@ -14835,7 +14835,7 @@ all of it, about three times slower. A request body whose messages array has a t
  1 file changed, 156 insertions(+), 12 deletions(-)
 
 diff --git a/Source/JavaScriptCore/runtime/JSONObject.cpp b/Source/JavaScriptCore/runtime/JSONObject.cpp
-index 4746873402..5095a6f09b 100644
+index 4746873402..0d505b29bd 100644
 --- a/Source/JavaScriptCore/runtime/JSONObject.cpp
 +++ b/Source/JavaScriptCore/runtime/JSONObject.cpp
 @@ -40,6 +40,7 @@
@@ -15039,7 +15039,7 @@ index 4746873402..5095a6f09b 100644
 +        StringImpl::copyCharacters(output, string.data.span8());
 +    else {
 +        if constexpr (std::same_as<CharType, Latin1Character>) {
-+            if (!charactersAreAllLatin1(string.data.span16())) [[unlikely]] {
++            if (!WTF::charactersAreAllLatin1(string.data.span16())) [[unlikely]] {
 +                if constexpr (bufferMode == BufferMode::DynamicBuffer)
 +                    recordFailure(FailureReason::Found16BitLate, "16-bit raw JSON"_s);
 +                else
@@ -15162,6 +15162,7 @@ index 4746873402..5095a6f09b 100644
  // ------------------------------ JSONObject --------------------------------
  
  const ClassInfo JSONObject::s_info = { "JSON"_s, &JSNonFinalObject::s_info, &jsonTable, nullptr, CREATE_METHOD_TABLE(JSONObject) };
+
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: OpenSec <323596076+opensec-intelligence@users.noreply.github.com>
 Date: Tue, 20 Oct 2026 02:05:16 +0530
@@ -15286,6 +15287,7 @@ index 0a6afc315e..7d2a80879e 100644
      if constexpr (sizeof(InputCharacterType) == 1) {
          // (How the last stretch was says how the next is likely to be.)
          bool hasMuchToEscape = false;
+
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: OpenSec <323596076+opensec-intelligence@users.noreply.github.com>
 Date: Tue, 20 Oct 2026 02:14:06 +0530
