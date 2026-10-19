@@ -658,6 +658,34 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "tim
 	}
 }
 
+/**
+ * What doctor says about an extension's use of bun:ffi on a build without the JIT (#62). Only what was seen is a problem. A
+ * failure of "bun:ffi requires the JIT" says so itself (core/extensions/jit-hint.ts), and an extension that loaded although a
+ * bun:ffi call threw it caught the error and went on without bun:ffi. One that only imports bun:ffi may call it later, when it
+ * is used: that error then names the JIT build too, so it is a suggestion, not a problem. One that failed after a bun:ffi call
+ * threw it (it rethrew something else) needs the JIT.
+ */
+export function jitFinding(
+	entry: ExtensionReport,
+	jit: boolean,
+): { kind: "problem" | "suggestion"; text: string } | undefined {
+	if (jit || entry.ffi === undefined || isJitRequiredMessage(entry.detail)) return undefined;
+	if (entry.state === "loaded" && entry.ffiJitRequired) return undefined;
+	if (entry.ffiJitRequired) {
+		return {
+			kind: "problem",
+			text: `${jitHint(entry.name)} (a bun:ffi call threw "${JIT_REQUIRED_MESSAGE}" while it loaded).`,
+		};
+	}
+	if (entry.state === "loaded" && entry.ffi !== "called while loading") {
+		return {
+			kind: "suggestion",
+			text: `${jitHint(entry.name)}, if it fails with "${JIT_REQUIRED_MESSAGE}" when used (it imports bun:ffi, and did not call it while loading).`,
+		};
+	}
+	return { kind: "problem", text: `${jitHint(entry.name)} (unless it has a fallback without bun:ffi).` };
+}
+
 /** Formats the extension rows: one line each, compiled-in ones together. */
 export function extensionRows(
 	builtins: { enabled: string[]; disabled: string[] },
@@ -824,20 +852,9 @@ async function extensionSections(
 
 	for (const entry of extensions) {
 		if (entry.state === "failed") report.problems.push(`Extension ${entry.name} fails to load: ${entry.detail}`);
-		// Only what was seen is a problem. A failure of "bun:ffi requires the JIT" says so itself (core/extensions/jit-hint.ts),
-		// and an extension that loaded although a bun:ffi call threw it caught the error and went on without bun:ffi (#62). One
-		// that only imports bun:ffi may call it later, when it is used: that error then names the JIT build too, so it is a
-		// suggestion here, not a problem.
-		if (!jit && entry.ffi !== undefined && !entry.ffiJitRequired && !isJitRequiredMessage(entry.detail)) {
-			const imported = entry.ffi !== "called while loading";
-			if (imported && entry.state === "loaded") {
-				report.suggestions.push(
-					`${jitHint(entry.name)}, if it fails with "${JIT_REQUIRED_MESSAGE}" when used (it imports bun:ffi, and did not call it while loading).`,
-				);
-			} else {
-				report.problems.push(`${jitHint(entry.name)} (unless it has a fallback without bun:ffi).`);
-			}
-		}
+		const finding = jitFinding(entry, jit);
+		if (finding?.kind === "problem") report.problems.push(finding.text);
+		if (finding?.kind === "suggestion") report.suggestions.push(finding.text);
 		if (!jit && entry.state === "loaded" && (entry.cpuMs ?? 0) >= HEAVY_EXTENSION_CPU_MS) {
 			report.suggestions.push(
 				`${entry.name} takes ${entry.cpuMs} ms of CPU to load, interpreted: the JIT build runs heavy extensions faster (${piBoltJitSwitchCommand()}), or compile it in (docs/PLUGINS.md).`,

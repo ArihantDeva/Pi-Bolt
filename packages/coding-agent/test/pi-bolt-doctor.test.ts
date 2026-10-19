@@ -9,6 +9,7 @@ import {
 	extensionRows,
 	findBunFfiImport,
 	formatDoctorReport,
+	jitFinding,
 	packageListRows,
 	packageListsOf,
 	piBoltAgentServers,
@@ -170,6 +171,35 @@ describe("extension rows", () => {
 				"npm:pi-fallback: interpreted, loaded in 30 ms (CPU 25 ms); uses bun:ffi (called while loading; went on without it)",
 			],
 		]);
+	});
+});
+
+// #62
+describe("jitFinding", () => {
+	const loaded = { name: "npm:pi-x", state: "loaded" as const, detail: "loaded in 30 ms (CPU 25 ms)" };
+	const failed = { name: "npm:pi-x", state: "failed" as const, detail: "native backend unavailable" };
+
+	it("says nothing with the JIT, without bun:ffi, or when the extension went on without it", () => {
+		expect(jitFinding({ ...loaded, ffi: "index.ts imports it" }, true)).toBeUndefined();
+		expect(jitFinding(loaded, false)).toBeUndefined();
+		expect(jitFinding({ ...loaded, ffi: "called while loading", ffiJitRequired: true }, false)).toBeUndefined();
+	});
+
+	it("suggests the JIT build for one that only imports bun:ffi and loaded", () => {
+		const finding = jitFinding({ ...loaded, ffi: "index.ts imports it" }, false);
+		expect(finding?.kind).toBe("suggestion");
+		expect(finding?.text).toContain("did not call it while loading");
+	});
+
+	it("reports one that failed after a bun:ffi call threw the JIT error, though it rethrew another", () => {
+		const finding = jitFinding({ ...failed, ffi: "called while loading", ffiJitRequired: true }, false);
+		expect(finding?.kind).toBe("problem");
+		expect(finding?.text).toContain("needs Pi-Bolt's JIT build");
+		expect(finding?.text).toContain("threw");
+	});
+
+	it("reports one that imports bun:ffi and failed", () => {
+		expect(jitFinding({ ...failed, ffi: "index.ts imports it" }, false)?.kind).toBe("problem");
 	});
 });
 
