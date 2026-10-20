@@ -22,17 +22,17 @@
 One executable for Linux x86-64 and ARM64, macOS on Apple silicon and Windows x64. No JIT, no Node.js or Bun required.</p>
 
 Pi-Bolt is the Pi you already use, with the same commands, sessions, settings, providers and extensions. Every function is
-compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. It starts two to three
-times sooner than Pi on Bun and uses about a third of its CPU over a session; against Pi on Node it streams long answers and
-writes large files 18 to 100 times more cheaply.
+compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. Against Pi on Node it is
+ready to type 8 times sooner, uses a sixth of the CPU over a session and a thirteenth for a long answer, and a third of the
+memory after 40 prompts.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-hero-dark.svg">
-  <img alt="Pi-Bolt 0.9.2 vs Pi on Bun 1.4.2 vs Pi on Node 24: ready to type 38 / 84 / 277 ms; CPU per session 142 / 383 / 790 ms; CPU for a 60,000-character answer 1.6 / 1.7 / 28.9 s; memory after 40 prompts 101 / 164 / 520 MB" src="docs/images/bench-hero-light.svg">
+  <img alt="Pi-Bolt 0.9.6 vs Pi on Node 24 vs Pi-Bolt 0.9.5: ready to type 42 / 362 / 42 ms; CPU per session 164 / 1,026 / 180 ms; CPU for a 60,000-character answer 2.6 / 34.7 / 2.7 s; memory after 40 prompts 173 / 574 / 223 MB" src="docs/images/bench-hero-light.svg">
 </picture>
 
-<sub>GitHub's Linux x86-64 runner, one CPU. Pi-Bolt 0.9.2 against Pi 1.2.0 on stock Bun 1.4.2 and Node 24; lower is better. See
-[Benchmarks](#benchmarks).</sub>
+<sub>GitHub's Linux x86-64 runner, one CPU. Pi-Bolt 0.9.6 against Pi 1.3.0 on Node 24 and Pi-Bolt 0.9.5; the long answer is
+60,000 characters; lower is better. See [Benchmarks](#benchmarks), also against PiG.</sub>
 
 > [!NOTE]
 > Pi-Bolt is an independent fork of [Pi](https://github.com/earendil-works/pi), not affiliated with Pi's authors or with Oven.
