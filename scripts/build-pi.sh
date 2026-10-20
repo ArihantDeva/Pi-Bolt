@@ -127,6 +127,9 @@ stage_assets() {
 	# Pi's documentation and example extensions: Pi points the model (its system prompt) and the user (the first run, /login) at
 	# them, next to the README.
 	cp -R "$AGENT/docs" "$AGENT/examples" "$dir/"
+	# Not the documentation's pictures (2.5 MB of PNG, about 4% of the download): the model reads the text, and a terminal
+	# shows none of them (the one the docs show has its alt text).
+	rm -rf "$dir/docs/images"
 	# With Pi-Bolt's own that `pi-bolt doctor` points at (#63).
 	cp "$PIBOLT_ROOT/docs/PLUGINS.md" "$PIBOLT_ROOT/docs/ACP.md" "$PIBOLT_ROOT/docs/TROUBLESHOOTING.md" "$dir/docs/"
 	mkdir -p "$dir/theme" "$dir/assets" "$dir/export-html/vendor" "$dir/native/$PIBOLT_OS/prebuilds"
