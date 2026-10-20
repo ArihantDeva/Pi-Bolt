@@ -166,6 +166,9 @@ exercises them to `training.md` and record again.
 scripts/train-profile.sh [--pi DIR] [--plugins FILE] [--out DIR]
 ```
 
+`bench/aot_coverage.py --build pi-bolt=out/pi-bolt/pi --profile profiles/pi-<version>` lists what a build still runs outside its
+compiled code: regular expressions that are not in the profile, and functions that have no code in the image.
+
 ### The runtime's order file (macOS)
 
 On macOS `build-runtime.sh` also lays out the runtime's own code by what Pi runs: the functions a Pi session enters first and
