@@ -125,8 +125,117 @@ function buildRules(
 	return rules.map((rule) => `- ${rule}`).join("\n");
 }
 
-/** Build the ordered, independently replaceable sections of the structured system prompt. */
+/** The inputs `buildSystemPromptSections` read for its last result, copied, with the defaults applied. */
+interface SectionsInput {
+	customPrompt: string | undefined;
+	selectedTools: string[];
+	hiddenTools: string[];
+	toolSnippets: Record<string, string>;
+	toolGuidelines: Record<string, string[]>;
+	promptGuidelines: string[];
+	appendSystemPrompt: string;
+	sections: Record<string, string>;
+	cwd: string;
+	contextFiles: Array<{ path: string; content: string }>;
+	/** Only the fields `formatSkillsForPrompt` reads. */
+	skills: Array<Pick<Skill, "name" | "description" | "filePath" | "disableModelInvocation">>;
+}
+
+const DEFAULT_SELECTED_TOOLS = ["read", "bash", "edit", "write"];
+
+let lastSectionsInput: SectionsInput | undefined;
+let lastSections: SystemPromptSections | undefined;
+
+function sameArray<T>(left: readonly T[], right: readonly T[]): boolean {
+	if (left.length !== right.length) return false;
+	for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return false;
+	return true;
+}
+
+/** Same keys in the same order, each value equal by `same`. */
+function sameRecord<T>(left: Record<string, T>, right: Record<string, T>, same: (a: T, b: T) => boolean): boolean {
+	const leftKeys = Object.keys(left);
+	const rightKeys = Object.keys(right);
+	if (!sameArray(leftKeys, rightKeys)) return false;
+	for (const key of leftKeys) if (!same(left[key], right[key])) return false;
+	return true;
+}
+
+const sameValue = <T>(a: T, b: T): boolean => a === b;
+
+function sameSectionsInput(last: SectionsInput, input: BuildSystemPromptOptions): boolean {
+	if (
+		last.customPrompt !== input.customPrompt ||
+		last.cwd !== input.cwd ||
+		last.appendSystemPrompt !== (input.appendSystemPrompt ?? "") ||
+		!sameArray(last.selectedTools, input.selectedTools ?? DEFAULT_SELECTED_TOOLS) ||
+		!sameArray(last.hiddenTools, input.hiddenTools ?? []) ||
+		!sameArray(last.promptGuidelines, input.promptGuidelines ?? []) ||
+		!sameRecord(last.toolSnippets, input.toolSnippets ?? {}, sameValue) ||
+		!sameRecord(last.toolGuidelines, input.toolGuidelines ?? {}, sameArray) ||
+		!sameRecord(last.sections, input.sections ?? {}, sameValue)
+	) {
+		return false;
+	}
+	const contextFiles = input.contextFiles ?? [];
+	if (last.contextFiles.length !== contextFiles.length) return false;
+	for (let i = 0; i < contextFiles.length; i++) {
+		const file = contextFiles[i];
+		const lastFile = last.contextFiles[i];
+		if (lastFile.path !== file.path || lastFile.content !== file.content) return false;
+	}
+	const skills = input.skills ?? [];
+	if (last.skills.length !== skills.length) return false;
+	for (let i = 0; i < skills.length; i++) {
+		const skill = skills[i];
+		const lastSkill = last.skills[i];
+		if (
+			lastSkill.name !== skill.name ||
+			lastSkill.description !== skill.description ||
+			lastSkill.filePath !== skill.filePath ||
+			lastSkill.disableModelInvocation !== skill.disableModelInvocation
+		) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Build the ordered, independently replaceable sections of the structured system prompt. The prompt is built again
+ * before every model request, almost always from the same inputs: the last result is reused while they are equal
+ * (compared by value), which also keeps the section strings the same objects, so comparing them with the replayed
+ * transcript is cheap.
+ */
 export function buildSystemPromptSections(input: BuildSystemPromptOptions): SystemPromptSections {
+	if (lastSectionsInput !== undefined && lastSections !== undefined && sameSectionsInput(lastSectionsInput, input)) {
+		return { ...lastSections };
+	}
+	const sections = buildSystemPromptSectionsUncached(input);
+	const options = normalizeBuildSystemPromptOptions(input);
+	lastSectionsInput = {
+		customPrompt: options.customPrompt,
+		selectedTools: options.selectedTools,
+		hiddenTools: options.hiddenTools,
+		toolSnippets: options.toolSnippets,
+		toolGuidelines: options.toolGuidelines,
+		promptGuidelines: options.promptGuidelines,
+		appendSystemPrompt: options.appendSystemPrompt,
+		sections: options.sections,
+		cwd: options.cwd,
+		contextFiles: options.contextFiles,
+		skills: options.skills.map(({ name, description, filePath, disableModelInvocation }) => ({
+			name,
+			description,
+			filePath,
+			disableModelInvocation,
+		})),
+	};
+	lastSections = sections;
+	return { ...sections };
+}
+
+function buildSystemPromptSectionsUncached(input: BuildSystemPromptOptions): SystemPromptSections {
 	const options = normalizeBuildSystemPromptOptions(input);
 	const {
 		customPrompt,

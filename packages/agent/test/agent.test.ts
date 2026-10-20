@@ -208,6 +208,65 @@ describe("Agent", () => {
 		expect(initial.toolsAdded?.[0]).not.toHaveProperty("execute");
 	});
 
+	it("declares a tool again when a declared field of the same tool object changes", async () => {
+		const tool = createTool("echo");
+		const declarations: string[] = [];
+		const agent = new Agent({
+			initialState: { systemPrompt: "You are helpful.", tools: [tool] },
+			streamFn: () => {
+				const stream = createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+				});
+				return stream;
+			},
+		});
+		const record = () => {
+			declarations.push(
+				agent.state.messages
+					.filter((message) => message.role === "system")
+					.map(
+						(message) =>
+							`+${(message.toolsAdded ?? []).map((added) => `${added.name}:${added.description}:${JSON.stringify(added.parameters)}`).join(",")}` +
+							` -${(message.toolsRemoved ?? []).map((removed) => removed.name).join(",")}`,
+					)
+					.join(" | "),
+			);
+		};
+
+		await agent.prompt("unchanged");
+		record();
+		await agent.prompt("unchanged again");
+		record();
+		tool.description = "changed in place";
+		await agent.prompt("description");
+		record();
+		tool.parameters = Type.Object({});
+		await agent.prompt("equal parameters in a new object");
+		record();
+		tool.parameters = Type.Object({ value: Type.String() });
+		await agent.prompt("different parameters");
+		record();
+		(tool.parameters as { properties: Record<string, unknown> }).properties.extra = Type.Number();
+		await agent.prompt("parameters changed in place");
+		record();
+
+		const initial = '+echo:echo tool:{"type":"object","properties":{}} -';
+		const described = '+echo:changed in place:{"type":"object","properties":{}} -echo';
+		const reshaped =
+			'+echo:changed in place:{"type":"object","required":["value"],"properties":{"value":{"type":"string"}}} -echo';
+		const extended =
+			'+echo:changed in place:{"type":"object","required":["value"],"properties":{"value":{"type":"string"},"extra":{"type":"number"}}} -echo';
+		expect(declarations).toEqual([
+			initial,
+			initial,
+			`${initial} | ${described}`,
+			`${initial} | ${described}`,
+			`${initial} | ${described} | ${reshaped}`,
+			`${initial} | ${described} | ${reshaped} | ${extended}`,
+		]);
+	});
+
 	it("merges tool changes into a pending system message", async () => {
 		const tool: AgentTool = {
 			name: "echo",
@@ -429,6 +488,120 @@ describe("Agent", () => {
 
 		expect(idleResolved).toBe(true);
 		expect(agent.state.isStreaming).toBe(false);
+	});
+
+	it("calls listeners in order, holding later listeners until an earlier one's promise settles", async () => {
+		const streamedText = ["a", "b", "c"];
+		const agent = new Agent({
+			streamFn: () => {
+				const stream = createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					let text = "";
+					stream.push({ type: "start", partial: createAssistantMessage("") });
+					for (const delta of streamedText) {
+						text += delta;
+						stream.push({ type: "text_delta", contentIndex: 0, delta, partial: createAssistantMessage(text) });
+					}
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage(text) });
+				});
+				return stream;
+			},
+		});
+
+		const calls: string[] = [];
+		const gate = createDeferred();
+		agent.subscribe((event) => {
+			if (event.type === "message_update") calls.push(`sync:${event.assistantMessageEvent.type}`);
+		});
+		agent.subscribe((event) => {
+			if (event.type !== "message_update" || event.assistantMessageEvent.type !== "text_delta") return;
+			calls.push(`async:${event.assistantMessageEvent.delta}`);
+			if (event.assistantMessageEvent.delta === "b") return gate.promise;
+		});
+		agent.subscribe((event) => {
+			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+				calls.push(`last:${event.assistantMessageEvent.delta}`);
+			}
+		});
+
+		const promptPromise = agent.prompt("hello");
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(calls).toEqual(["sync:text_delta", "async:a", "last:a", "sync:text_delta", "async:b"]);
+
+		gate.resolve();
+		await promptPromise;
+		expect(calls).toEqual([
+			"sync:text_delta",
+			"async:a",
+			"last:a",
+			"sync:text_delta",
+			"async:b",
+			"last:b",
+			"sync:text_delta",
+			"async:c",
+			"last:c",
+		]);
+	});
+
+	it("calls a listener that an earlier listener subscribes for the same event", async () => {
+		const agent = new Agent({
+			streamFn: () => {
+				const stream = createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") });
+				});
+				return stream;
+			},
+		});
+		const seen: string[] = [];
+		agent.subscribe((event) => {
+			if (event.type === "agent_start") {
+				agent.subscribe((later) => {
+					seen.push(later.type);
+				});
+			}
+		});
+
+		await agent.prompt("hello");
+		expect(seen[0]).toBe("agent_start");
+		expect(seen.at(-1)).toBe("agent_end");
+	});
+
+	it("ends the run with an error when a synchronous listener throws, as when an async one rejects", async () => {
+		for (const failing of [
+			() => {
+				throw new Error("listener failed");
+			},
+			async () => {
+				throw new Error("listener failed");
+			},
+		]) {
+			const agent = new Agent({
+				streamFn: () => {
+					const stream = createAssistantMessageEventStream();
+					queueMicrotask(() => {
+						stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") });
+					});
+					return stream;
+				},
+			});
+			const events: string[] = [];
+			let thrown = false;
+			agent.subscribe((event) => {
+				events.push(event.type);
+				if (event.type === "turn_start" && !thrown) {
+					thrown = true;
+					return failing();
+				}
+			});
+
+			await agent.prompt("hello");
+			const lastMessage = agent.state.messages.at(-1);
+			if (lastMessage?.role !== "assistant") throw new Error("Expected assistant message");
+			expect(lastMessage.stopReason).toBe("error");
+			expect(lastMessage.errorMessage).toBe("listener failed");
+			expect(events).toEqual(["agent_start", "turn_start", "message_start", "message_end", "turn_end", "agent_end"]);
+		}
 	});
 
 	it("should pass the active abort signal to subscribers", async () => {
