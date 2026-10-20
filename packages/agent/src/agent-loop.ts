@@ -373,63 +373,58 @@ function getDeclaredTools(transcript: readonly AgentMessage[], pending: readonly
 	return [...tools.values()];
 }
 
-interface DeclarationKey {
-	name: string;
-	description: string;
-	parameters: unknown;
-	constrainedSampling: Tool["constrainedSampling"];
-	key: string;
-}
-
 /**
- * Serialized declarations, per tool object, while the fields a declaration keeps are the same values. The tool set
- * rarely changes between requests, and serializing every schema twice per request cost more than the rest of the turn's
- * bookkeeping.
+ * `JSON.stringify(toToolDeclaration(tool))`, which is what `declarationsEqual` compares, with one serialization instead of
+ * a JSON round-trip and a serialization: serializing the parsed copy of `parameters` gives the same text as serializing
+ * `parameters`. Computed again on every request, so a schema changed in place is seen. Parameters that do not serialize to
+ * JSON text (undefined, a function, or a `toJSON` method) take the original path, which throws the same errors.
  */
-const declarationKeys = new WeakMap<Tool, DeclarationKey>();
-
-/** `JSON.stringify(toToolDeclaration(tool))`: what `declarationsEqual` compares. */
 function declarationKey(tool: Tool): string {
-	const cached = declarationKeys.get(tool);
+	const parameters: unknown = tool.parameters;
 	if (
-		cached !== undefined &&
-		cached.name === tool.name &&
-		cached.description === tool.description &&
-		cached.parameters === tool.parameters &&
-		cached.constrainedSampling === tool.constrainedSampling
+		parameters === undefined ||
+		typeof parameters === "function" ||
+		typeof parameters === "symbol" ||
+		typeof (parameters as { toJSON?: unknown } | null)?.toJSON === "function"
 	) {
-		return cached.key;
+		return JSON.stringify(toToolDeclaration(tool));
 	}
-	const key = JSON.stringify(toToolDeclaration(tool));
-	declarationKeys.set(tool, {
+	return JSON.stringify({
 		name: tool.name,
 		description: tool.description,
-		parameters: tool.parameters,
-		constrainedSampling: tool.constrainedSampling,
-		key,
+		parameters,
+		...(tool.constrainedSampling === undefined ? {} : { constrainedSampling: tool.constrainedSampling }),
 	});
-	return key;
 }
 
 /**
- * `getToolStateChanges(previous, current.map(toToolDeclaration))`, comparing cached serialized declarations instead of
- * serializing both sides of every comparison again.
+ * `getToolStateChanges(previous, current.map(toToolDeclaration))`, serializing each declaration once instead of round-tripping
+ * and serializing both sides of every comparison again (about nine JSON passes per tool per request).
  */
 function getToolChanges(previous: readonly Tool[], current: readonly Tool[]): ToolStateChanges {
 	const currentKeys = current.map(declarationKey);
+	const previousKeys = new Map<Tool, string>();
+	const previousKey = (tool: Tool): string => {
+		let key = previousKeys.get(tool);
+		if (key === undefined) {
+			key = declarationKey(tool);
+			previousKeys.set(tool, key);
+		}
+		return key;
+	};
 	const previousTools = new Map(previous.map((tool) => [tool.name, tool]));
 	const currentIndexes = new Map(current.map((tool, index) => [tool.name, index]));
 	return {
 		toolsAdded: current
 			.filter((tool, index) => {
 				const previousTool = previousTools.get(tool.name);
-				return previousTool === undefined || declarationKey(previousTool) !== currentKeys[index];
+				return previousTool === undefined || previousKey(previousTool) !== currentKeys[index];
 			})
 			.map(toToolDeclaration),
 		toolsRemoved: previous
 			.filter((tool) => {
 				const currentIndex = currentIndexes.get(tool.name);
-				return currentIndex === undefined || declarationKey(tool) !== currentKeys[currentIndex];
+				return currentIndex === undefined || previousKey(tool) !== currentKeys[currentIndex];
 			})
 			.map((tool) => ({ name: tool.name })),
 	};

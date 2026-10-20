@@ -247,17 +247,23 @@ describe("Agent", () => {
 		tool.parameters = Type.Object({ value: Type.String() });
 		await agent.prompt("different parameters");
 		record();
+		(tool.parameters as { properties: Record<string, unknown> }).properties.extra = Type.Number();
+		await agent.prompt("parameters changed in place");
+		record();
 
 		const initial = '+echo:echo tool:{"type":"object","properties":{}} -';
 		const described = '+echo:changed in place:{"type":"object","properties":{}} -echo';
 		const reshaped =
 			'+echo:changed in place:{"type":"object","required":["value"],"properties":{"value":{"type":"string"}}} -echo';
+		const extended =
+			'+echo:changed in place:{"type":"object","required":["value"],"properties":{"value":{"type":"string"},"extra":{"type":"number"}}} -echo';
 		expect(declarations).toEqual([
 			initial,
 			initial,
 			`${initial} | ${described}`,
 			`${initial} | ${described}`,
 			`${initial} | ${described} | ${reshaped}`,
+			`${initial} | ${described} | ${reshaped} | ${extended}`,
 		]);
 	});
 
