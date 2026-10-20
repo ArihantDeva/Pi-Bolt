@@ -40,11 +40,11 @@ import type {
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { cacheJsonSerialization } from "../utils/json-body.ts";
 import { parseJsonWithRepair, parseStreamingJsonWhileStreaming, parseToolCallArguments } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { cacheRequestBody } from "../utils/request-body.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { iterateSseMessages } from "../utils/sse.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
@@ -514,7 +514,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				if (nextParams !== undefined) {
 					params = { ...(nextParams as MessageCreateParamsStreaming), stream: true };
 				}
-				cacheJsonSerialization(params.messages);
+				// A client passed in by the caller is not wrapped.
+				cacheRequestBody(options?.client ? undefined : client, params.messages, "messages", options?.sessionId);
 				try {
 					response = await retryProviderRequest(
 						() => client.beta.messages.create(params, requestOptions).asResponse(),

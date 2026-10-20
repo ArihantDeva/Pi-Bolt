@@ -5,9 +5,9 @@ import type { Api, AssistantMessage, Model, SimpleStreamOptions, StreamFunction,
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { cacheJsonSerialization } from "../utils/json-body.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { cacheRequestBody } from "../utils/request-body.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
 import { type AzureEndpointOptions, resolveAzureConfig, resolveDeploymentName } from "./azure-openai-config.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
@@ -80,7 +80,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
 			}
-			cacheJsonSerialization(params.input);
+			cacheRequestBody(client, params.input, "input", options?.sessionId);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
