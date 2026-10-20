@@ -12,8 +12,14 @@
  * that preconnect. Only Bun has fetch.preconnect; elsewhere this does nothing. Bun skips an origin the environment's
  * proxy settings route through a proxy.
  *
- * Only for the APIs whose requests go to the model's `baseUrl` through the global fetch, and only for HTTPS: a
- * plain-HTTP endpoint is local or near in practice, with no TLS handshake to save.
+ * Only for the APIs whose requests go to the model's base URL through the global fetch, and only for HTTPS: a
+ * plain-HTTP endpoint is local or near in practice, with no TLS handshake to save. The base URL is the one the model's
+ * latest request in this process went to (ModelRuntime.lastRequestBaseUrl): auth can replace the model's own (GitHub
+ * Copilot's OAuth credential names its endpoint), and resolving auth may refresh a token over the network, so before
+ * a model's first request nothing is preconnected.
+ *
+ * Only model traffic counts as activity: assistant messages streaming and compaction (a summarization request), not
+ * session bookkeeping such as a thinking-level change.
  */
 import type { Api, Model } from "@earendil-works/pi-ai";
 
@@ -32,16 +38,34 @@ export function runtimePreconnect(): ((url: string) => void) | undefined {
 	return (url) => preconnect.call(fetch, url);
 }
 
-/** The origin the model's next request connects to, or undefined when preconnecting it would not help. */
-export function preconnectOrigin(model: Model<Api> | undefined): string | undefined {
-	if (!model || !PRECONNECT_APIS.has(model.api)) return undefined;
+/**
+ * The origin of `baseUrl`, the base URL `model`'s requests go to, or undefined when preconnecting it would not help or
+ * the base URL is unknown.
+ */
+export function preconnectOrigin(model: Model<Api> | undefined, baseUrl: string | undefined): string | undefined {
+	if (!model || baseUrl === undefined || !PRECONNECT_APIS.has(model.api)) return undefined;
 	let url: URL;
 	try {
-		url = new URL(model.baseUrl);
+		url = new URL(baseUrl);
 	} catch {
 		return undefined;
 	}
 	return url.protocol === "https:" ? url.origin : undefined;
+}
+
+/** Whether a session event is traffic with the model: a request being made or answered. */
+export function isModelActivity(event: { type: string; message?: unknown }): boolean {
+	switch (event.type) {
+		case "message_start":
+		case "message_update":
+		case "message_end":
+			return (event.message as { role?: unknown } | undefined)?.role === "assistant";
+		case "compaction_start":
+		case "compaction_end":
+			return true;
+		default:
+			return false;
+	}
 }
 
 export interface ConnectionWarmerOptions {
@@ -63,23 +87,23 @@ export class ConnectionWarmer {
 		this.idleMs = options.idleMs ?? CONNECTION_IDLE_MS;
 	}
 
-	/** A request is being made or streamed: the connection is in use. */
+	/** A request is being made or answered: the connection is in use. */
 	markActivity(): void {
 		this.lastActivity = this.now();
 	}
 
 	/**
-	 * The editor's text changed to `text` while no request runs. Preconnects to `model`'s endpoint if this starts a
-	 * prompt after an idle period. Never throws.
+	 * The editor's text changed to `text` while no request runs. Preconnects to `baseUrl`, where `model`'s requests go,
+	 * if this starts a prompt after an idle period. Never throws.
 	 */
-	onTyping(text: string, model: Model<Api> | undefined): void {
+	onTyping(text: string, model: Model<Api> | undefined, baseUrl: string | undefined): void {
 		if (!this.preconnect) return;
 		const now = this.now();
 		if (now - this.lastActivity < this.idleMs) return;
 		// Not a prompt: nothing, a command, a shell command.
 		const start = text.trimStart();
 		if (start === "" || start.startsWith("/") || start.startsWith("!")) return;
-		const origin = preconnectOrigin(model);
+		const origin = preconnectOrigin(model, baseUrl);
 		if (!origin) return;
 		this.lastActivity = now;
 		try {

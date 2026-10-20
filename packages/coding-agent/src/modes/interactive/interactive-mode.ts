@@ -80,7 +80,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import { formatCacheWarmingStatus, formatCacheWarmingUsage } from "../../core/cache-warmer.ts";
-import { ConnectionWarmer, runtimePreconnect } from "../../core/connection-warmer.ts";
+import { ConnectionWarmer, isModelActivity, runtimePreconnect } from "../../core/connection-warmer.ts";
 import { findExtensionStackMatches, recordCrash, takeUnnotifiedCrash } from "../../core/crash-log.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
@@ -3215,7 +3215,9 @@ export class InteractiveMode {
 				this.updateEditorBorderColor();
 			}
 			if (this.connectionWarmer && !this.session.isStreaming && !this.session.isCompacting) {
-				this.connectionWarmer.onTyping(text, this.session.model);
+				const model = this.session.model;
+				const baseUrl = model && this.session.modelRuntime.lastRequestBaseUrl(model);
+				this.connectionWarmer.onTyping(text, model, baseUrl);
 			}
 		};
 
@@ -3501,7 +3503,7 @@ export class InteractiveMode {
 
 		this.footer.invalidate();
 		this.programStatus.handleEvent(event);
-		this.connectionWarmer?.markActivity();
+		if (isModelActivity(event)) this.connectionWarmer?.markActivity();
 
 		switch (event.type) {
 			case "agent_start":
