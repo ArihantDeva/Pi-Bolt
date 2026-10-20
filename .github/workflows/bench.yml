@@ -1,0 +1,80 @@
+name: bench
+
+# The README's headline chart: Pi-Bolt 0.9.6 as released against Pi 1.3.0 on stock Bun 1.4.2 (this repository's Pi) and Pi
+# 1.3.0 as released on npm on Node 22 and Node 24, on GitHub's Linux x86-64 and ARM64 runners, one CPU each.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["bench/**"]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  bench:
+    name: Bench on ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86-64
+            runner: ubuntu-24.04
+          - name: Linux ARM64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - name: Builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux >/dev/null
+          case "$(uname -m)" in x86_64) plat=linux-x64; narch=x64 ;; *) plat=linux-arm64; narch=arm64 ;; esac
+          mkdir -p results
+          scripts/fetch-runtime.sh --version bolt-v0.9.6
+          scripts/prepare-pi.sh
+          scripts/build-pi.sh --stable --out out/pi-stable
+          gh release download bolt-v0.9.6 --repo "$GITHUB_REPOSITORY" --pattern "pi-bolt-$plat.tar.xz" --pattern SHA256SUMS --dir .work/cand
+          (cd .work/cand && grep " pi-bolt-$plat.tar.xz\$" SHA256SUMS | sha256sum -c -)
+          mkdir -p out/cand && tar -C out/cand --strip-components=1 -xJf ".work/cand/pi-bolt-$plat.tar.xz"
+          npm install --prefix .work/vanilla --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.3.0 >/dev/null
+          for v in 22 24; do
+            base="https://nodejs.org/dist/latest-v$v.x"
+            file=$(curl -fsSL "$base/SHASUMS256.txt" | awk -v f="linux-$narch.tar.xz" '$2 ~ f"$" {print $2}')
+            curl -fsSL -o ".work/$file" "$base/$file"
+            (cd .work && curl -fsSL "$base/SHASUMS256.txt" | grep " $file\$" | sha256sum -c -)
+            mkdir -p ".work/node$v" && tar -C ".work/node$v" --strip-components=1 -xJf ".work/$file"
+          done
+          {
+            echo "runner: ${{ matrix.runner }} ($(uname -sm)), $(nproc) CPUs; $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)"
+            echo "pi-bolt: Pi-Bolt 0.9.6, pi-bolt-$plat.tar.xz from the release (checked against its SHA256SUMS): $(out/cand/pi --version </dev/null)"
+            echo "bun: Pi 1.3.0 (this repository's Pi) on stock Bun $(bun --version): scripts/build-pi.sh --stable: $(out/pi-stable/pi --version </dev/null)"
+            for v in 22 24; do echo "node$v: Pi $(.work/node$v/bin/node .work/vanilla/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --version </dev/null) as released on npm (@earendil-works/pi-coding-agent, dist/bundle/cli.js) on Node $(.work/node$v/bin/node --version)"; done
+          } | tee results/environment.txt
+      - name: Suites
+        run: |
+          VAN=".work/vanilla/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+          B=(--build pi-bolt=out/cand/pi --build bun=out/pi-stable/pi --build "node22=.work/node22/bin/node $VAN" --build "node24=.work/node24/bin/node $VAN")
+          run() { name=$1; shift; echo "## $name" | tee -a results/all.txt; "$@" 2>&1 | grep -vE 'round [0-9]+/' | tee -a results/all.txt || echo "$name failed" | tee -a results/all.txt; }
+          run benchmark python3 bench/benchmark.py --runs 21 --warmup 3 --scenarios startup,headless,interactive --cpus 1 "${B[@]}" --baseline bun
+          for i in 1 2 3; do run "long_answer $i" python3 bench/long_answer.py --sizes 60000 --cpus 1 "${B[@]}"; done
+          run long_session python3 bench/long_session.py --prompts 40 --every 20 --cpus 1 "${B[@]}"
+          { echo '```'; cat results/environment.txt results/all.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: bench-${{ runner.arch }}
+          path: results/
+          retention-days: 30
