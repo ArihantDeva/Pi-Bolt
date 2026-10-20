@@ -149,17 +149,23 @@ def chart(title, subtitle, panels, builds, theme, path):
     path.write_text("\n".join(out) + "\n")
 
 
-def hero(tiles, builds, theme, path, title=None, subtitle=None):
+def hero(tiles, builds, theme, path, title=None, subtitle=None, compare=None):
     """The README's headline image: a column per metric, Pi-Bolt's figure large, how it compares in plain words, and a bar for
     every build. tiles: [(title, unit, {build: value}, better)] where better is "faster" or "less". With a title, a heading.
+    compare: [(build, name)], the builds each column compares Pi-Bolt with, one line each (default: the reference build, then
+    an earlier release if one is among the builds).
     No backgrounds and no badges: hairlines between the columns, text in the page's ink, color only on the bars."""
     t = THEME[theme]
     width, pad, gap = 880, 24, 28
     tile_w = (width - 2 * pad - gap * (len(tiles) - 1)) / len(tiles)
     top = 66 if title else 0
-    reference = REFERENCE if REFERENCE in builds else builds[1]
-    earlier = next((b for b in builds if is_release(b)), None)
-    bars_y = 132 if earlier else 114
+    if compare is None:
+        reference = REFERENCE if REFERENCE in builds else builds[1]
+        earlier = next((b for b in builds if is_release(b)), None)
+        compare = [(reference, LABELS.get(reference, reference).split()[0])]
+        if earlier:
+            compare.append((earlier, LABELS.get(earlier, earlier).replace("Pi-Bolt ", "")))
+    bars_y = 96 + 18 * len(compare)
     tile_h = bars_y + 30 * len(builds)
     height = top + tile_h + 10
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" '
@@ -191,13 +197,11 @@ def hero(tiles, builds, theme, path, title=None, subtitle=None):
         if unit_text:
             figure += f'<tspan font-size="16" font-weight="600" fill="{t["muted"]}" dx="5">{unit_text}</tspan>'
         out.append(f'<text x="{x:.1f}" y="{y + 58}" font-size="36" font-weight="700" fill="{t["text"]}">{figure}</text>')
-        line = compared(mine, values.get(reference), better, LABELS.get(reference, reference).split()[0])
-        if line:
-            out.append(f'<text x="{x:.1f}" y="{y + 84}" font-size="13" font-weight="600" fill="{t["text"]}">{line}</text>')
-        if earlier:
-            line = compared(mine, values.get(earlier), better, LABELS.get(earlier, earlier).replace("Pi-Bolt ", ""))
+        for k, (other, other_name) in enumerate(compare):
+            line = compared(mine, values.get(other), better, other_name)
             if line:
-                out.append(f'<text x="{x:.1f}" y="{y + 102}" font-size="13" fill="{t["muted"]}">{line}</text>')
+                style = f'font-weight="600" fill="{t["text"]}"' if k == 0 else f'fill="{t["muted"]}"'
+                out.append(f'<text x="{x:.1f}" y="{y + 84 + 18 * k}" font-size="13" {style}>{line}</text>')
         most = max(v for v in values.values() if v)
         for j, b in enumerate(builds):
             v = values.get(b)

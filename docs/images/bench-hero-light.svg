@@ -1,54 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="214" viewBox="0 0 880 214" role="img" aria-label="Pi-Bolt compared with Bun and Node">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="262" viewBox="0 0 880 262" role="img" aria-label="Pi-Bolt compared with Bun and Node">
 <style>text{font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif}</style>
 <text x="24.0" y="22" font-size="13" font-weight="600" fill="#59636e">Ready to type</text>
-<text x="24.0" y="62" font-size="36" font-weight="700" fill="#1f2328">38<tspan font-size="16" font-weight="600" fill="#59636e" dx="5">ms</tspan></text>
-<text x="24.0" y="88" font-size="13" font-weight="600" fill="#1f2328">2.2× faster than Bun</text>
-<text x="24.0" y="118" font-size="12.5" font-weight="650" fill="#1f2328">Pi-Bolt</text>
-<text x="211.0" y="118" font-size="12.5" font-weight="650" text-anchor="end" fill="#1f2328">38 ms</text>
-<rect x="24.0" y="125" width="25.7" height="6" rx="3" fill="#2a78d6"/>
-<text x="24.0" y="148" font-size="12.5" font-weight="400" fill="#59636e">Bun 1.4.2</text>
-<text x="211.0" y="148" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">84 ms</text>
-<rect x="24.0" y="155" width="56.7" height="6" rx="3" fill="#848d97"/>
-<text x="24.0" y="178" font-size="12.5" font-weight="400" fill="#59636e">Node 24</text>
-<text x="211.0" y="178" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">277 ms</text>
-<rect x="24.0" y="185" width="187.0" height="6" rx="3" fill="#848d97"/>
-<line x1="225.0" y1="10" x2="225.0" y2="202" stroke="#d1d9e0"/>
+<text x="24.0" y="62" font-size="36" font-weight="700" fill="#1f2328">52<tspan font-size="16" font-weight="600" fill="#59636e" dx="5">ms</tspan></text>
+<text x="24.0" y="88" font-size="13" font-weight="600" fill="#1f2328">2.4× faster than Bun</text>
+<text x="24.0" y="106" font-size="13" fill="#59636e">8.9× faster than Node</text>
+<text x="24.0" y="136" font-size="12.5" font-weight="650" fill="#1f2328">Pi-Bolt</text>
+<text x="211.0" y="136" font-size="12.5" font-weight="650" text-anchor="end" fill="#1f2328">52 ms</text>
+<rect x="24.0" y="143" width="21.0" height="6" rx="3" fill="#2a78d6"/>
+<text x="24.0" y="166" font-size="12.5" font-weight="400" fill="#59636e">Bun</text>
+<text x="211.0" y="166" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">123 ms</text>
+<rect x="24.0" y="173" width="49.7" height="6" rx="3" fill="#848d97"/>
+<text x="24.0" y="196" font-size="12.5" font-weight="400" fill="#59636e">Node 22</text>
+<text x="211.0" y="196" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">426 ms</text>
+<rect x="24.0" y="203" width="172.1" height="6" rx="3" fill="#848d97"/>
+<text x="24.0" y="226" font-size="12.5" font-weight="400" fill="#59636e">Node 24</text>
+<text x="211.0" y="226" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">463 ms</text>
+<rect x="24.0" y="233" width="187.0" height="6" rx="3" fill="#848d97"/>
+<line x1="225.0" y1="10" x2="225.0" y2="250" stroke="#d1d9e0"/>
 <text x="239.0" y="22" font-size="13" font-weight="600" fill="#59636e">CPU per session</text>
-<text x="239.0" y="62" font-size="36" font-weight="700" fill="#1f2328">142<tspan font-size="16" font-weight="600" fill="#59636e" dx="5">ms</tspan></text>
+<text x="239.0" y="62" font-size="36" font-weight="700" fill="#1f2328">214<tspan font-size="16" font-weight="600" fill="#59636e" dx="5">ms</tspan></text>
 <text x="239.0" y="88" font-size="13" font-weight="600" fill="#1f2328">2.7× less than Bun</text>
-<text x="239.0" y="118" font-size="12.5" font-weight="650" fill="#1f2328">Pi-Bolt</text>
-<text x="426.0" y="118" font-size="12.5" font-weight="650" text-anchor="end" fill="#1f2328">142 ms</text>
-<rect x="239.0" y="125" width="33.6" height="6" rx="3" fill="#2a78d6"/>
-<text x="239.0" y="148" font-size="12.5" font-weight="400" fill="#59636e">Bun 1.4.2</text>
-<text x="426.0" y="148" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">383 ms</text>
-<rect x="239.0" y="155" width="90.7" height="6" rx="3" fill="#848d97"/>
-<text x="239.0" y="178" font-size="12.5" font-weight="400" fill="#59636e">Node 24</text>
-<text x="426.0" y="178" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">790 ms</text>
-<rect x="239.0" y="185" width="187.0" height="6" rx="3" fill="#848d97"/>
-<line x1="440.0" y1="10" x2="440.0" y2="202" stroke="#d1d9e0"/>
-<text x="454.0" y="22" font-size="13" font-weight="600" fill="#59636e">CPU, a long answer</text>
-<text x="454.0" y="62" font-size="36" font-weight="700" fill="#1f2328">1.6<tspan font-size="16" font-weight="600" fill="#59636e" dx="5">s</tspan></text>
+<text x="239.0" y="106" font-size="13" fill="#59636e">6.1× less than Node</text>
+<text x="239.0" y="136" font-size="12.5" font-weight="650" fill="#1f2328">Pi-Bolt</text>
+<text x="426.0" y="136" font-size="12.5" font-weight="650" text-anchor="end" fill="#1f2328">214 ms</text>
+<rect x="239.0" y="143" width="29.9" height="6" rx="3" fill="#2a78d6"/>
+<text x="239.0" y="166" font-size="12.5" font-weight="400" fill="#59636e">Bun</text>
+<text x="426.0" y="166" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">571 ms</text>
+<rect x="239.0" y="173" width="79.7" height="6" rx="3" fill="#848d97"/>
+<text x="239.0" y="196" font-size="12.5" font-weight="400" fill="#59636e">Node 22</text>
+<text x="426.0" y="196" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">1,339 ms</text>
+<rect x="239.0" y="203" width="187.0" height="6" rx="3" fill="#848d97"/>
+<text x="239.0" y="226" font-size="12.5" font-weight="400" fill="#59636e">Node 24</text>
+<text x="426.0" y="226" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">1,309 ms</text>
+<rect x="239.0" y="233" width="182.8" height="6" rx="3" fill="#848d97"/>
+<line x1="440.0" y1="10" x2="440.0" y2="250" stroke="#d1d9e0"/>
+<text x="454.0" y="22" font-size="13" font-weight="600" fill="#59636e">CPU, long answer</text>
+<text x="454.0" y="62" font-size="36" font-weight="700" fill="#1f2328">3.4<tspan font-size="16" font-weight="600" fill="#59636e" dx="5">s</tspan></text>
 <text x="454.0" y="88" font-size="13" font-weight="600" fill="#1f2328">1.1× less than Bun</text>
-<text x="454.0" y="118" font-size="12.5" font-weight="650" fill="#1f2328">Pi-Bolt</text>
-<text x="641.0" y="118" font-size="12.5" font-weight="650" text-anchor="end" fill="#1f2328">1.6 s</text>
-<rect x="454.0" y="125" width="10.1" height="6" rx="3" fill="#2a78d6"/>
-<text x="454.0" y="148" font-size="12.5" font-weight="400" fill="#59636e">Bun 1.4.2</text>
-<text x="641.0" y="148" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">1.7 s</text>
-<rect x="454.0" y="155" width="11.0" height="6" rx="3" fill="#848d97"/>
-<text x="454.0" y="178" font-size="12.5" font-weight="400" fill="#59636e">Node 24</text>
-<text x="641.0" y="178" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">28.9 s</text>
-<rect x="454.0" y="185" width="187.0" height="6" rx="3" fill="#848d97"/>
-<line x1="655.0" y1="10" x2="655.0" y2="202" stroke="#d1d9e0"/>
+<text x="454.0" y="106" font-size="13" fill="#59636e">11× less than Node</text>
+<text x="454.0" y="136" font-size="12.5" font-weight="650" fill="#1f2328">Pi-Bolt</text>
+<text x="641.0" y="136" font-size="12.5" font-weight="650" text-anchor="end" fill="#1f2328">3.4 s</text>
+<rect x="454.0" y="143" width="15.5" height="6" rx="3" fill="#2a78d6"/>
+<text x="454.0" y="166" font-size="12.5" font-weight="400" fill="#59636e">Bun</text>
+<text x="641.0" y="166" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">3.7 s</text>
+<rect x="454.0" y="173" width="17.0" height="6" rx="3" fill="#848d97"/>
+<text x="454.0" y="196" font-size="12.5" font-weight="400" fill="#59636e">Node 22</text>
+<text x="641.0" y="196" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">40.9 s</text>
+<rect x="454.0" y="203" width="187.0" height="6" rx="3" fill="#848d97"/>
+<text x="454.0" y="226" font-size="12.5" font-weight="400" fill="#59636e">Node 24</text>
+<text x="641.0" y="226" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">38.5 s</text>
+<rect x="454.0" y="233" width="176.2" height="6" rx="3" fill="#848d97"/>
+<line x1="655.0" y1="10" x2="655.0" y2="250" stroke="#d1d9e0"/>
 <text x="669.0" y="22" font-size="13" font-weight="600" fill="#59636e">Memory after 40 prompts</text>
-<text x="669.0" y="62" font-size="36" font-weight="700" fill="#1f2328">101<tspan font-size="16" font-weight="600" fill="#59636e" dx="5">MB</tspan></text>
-<text x="669.0" y="88" font-size="13" font-weight="600" fill="#1f2328">1.6× less than Bun</text>
-<text x="669.0" y="118" font-size="12.5" font-weight="650" fill="#1f2328">Pi-Bolt</text>
-<text x="856.0" y="118" font-size="12.5" font-weight="650" text-anchor="end" fill="#1f2328">101 MB</text>
-<rect x="669.0" y="125" width="36.3" height="6" rx="3" fill="#2a78d6"/>
-<text x="669.0" y="148" font-size="12.5" font-weight="400" fill="#59636e">Bun 1.4.2</text>
-<text x="856.0" y="148" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">164 MB</text>
-<rect x="669.0" y="155" width="59.0" height="6" rx="3" fill="#848d97"/>
-<text x="669.0" y="178" font-size="12.5" font-weight="400" fill="#59636e">Node 24</text>
-<text x="856.0" y="178" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">520 MB</text>
-<rect x="669.0" y="185" width="187.0" height="6" rx="3" fill="#848d97"/>
+<text x="669.0" y="62" font-size="36" font-weight="700" fill="#1f2328">177<tspan font-size="16" font-weight="600" fill="#59636e" dx="5">MB</tspan></text>
+<text x="669.0" y="88" font-size="13" font-weight="600" fill="#1f2328">1.2× less than Bun</text>
+<text x="669.0" y="106" font-size="13" fill="#59636e">3.1× less than Node</text>
+<text x="669.0" y="136" font-size="12.5" font-weight="650" fill="#1f2328">Pi-Bolt</text>
+<text x="856.0" y="136" font-size="12.5" font-weight="650" text-anchor="end" fill="#1f2328">177 MB</text>
+<rect x="669.0" y="143" width="60.0" height="6" rx="3" fill="#2a78d6"/>
+<text x="669.0" y="166" font-size="12.5" font-weight="400" fill="#59636e">Bun</text>
+<text x="856.0" y="166" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">211 MB</text>
+<rect x="669.0" y="173" width="71.5" height="6" rx="3" fill="#848d97"/>
+<text x="669.0" y="196" font-size="12.5" font-weight="400" fill="#59636e">Node 22</text>
+<text x="856.0" y="196" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">533 MB</text>
+<rect x="669.0" y="203" width="180.6" height="6" rx="3" fill="#848d97"/>
+<text x="669.0" y="226" font-size="12.5" font-weight="400" fill="#59636e">Node 24</text>
+<text x="856.0" y="226" font-size="12.5" font-weight="400" text-anchor="end" fill="#59636e">552 MB</text>
+<rect x="669.0" y="233" width="187.0" height="6" rx="3" fill="#848d97"/>
 </svg>
