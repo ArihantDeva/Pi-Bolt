@@ -22,17 +22,17 @@
 One executable for Linux x86-64 and ARM64, macOS on Apple silicon and Windows x64. No JIT, no Node.js or Bun required.</p>
 
 Pi-Bolt is the Pi you already use, with the same commands, sessions, settings, providers and extensions. Every function is
-compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. Against Pi on Node it is
-ready to type 8 times sooner, uses a sixth of the CPU over a session and a thirteenth for a long answer, and a third of the
-memory after 40 prompts.
+compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. It is ready to type 2.4
+times sooner than Pi on Bun and uses 2.7 times less CPU over a session; against Pi on Node, 9 times sooner, 6 times less CPU,
+11 times less for a long answer and a third of the memory.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-hero-dark.svg">
-  <img alt="Pi-Bolt 0.9.6 vs Pi on Node 24 vs Pi-Bolt 0.9.5: ready to type 42 / 362 / 42 ms; CPU per session 164 / 1,026 / 180 ms; CPU for a 60,000-character answer 2.6 / 34.7 / 2.7 s; memory after 40 prompts 173 / 574 / 223 MB" src="docs/images/bench-hero-light.svg">
+  <img alt="Pi-Bolt vs Pi on Bun, Node 22 and Node 24: ready to type 52 / 123 / 426 / 463 ms; CPU per session 214 / 571 / 1,339 / 1,309 ms; CPU for a 60,000-character answer 3.4 / 3.7 / 40.9 / 38.5 s; memory after 40 prompts 177 / 211 / 533 / 552 MB" src="docs/images/bench-hero-light.svg">
 </picture>
 
-<sub>GitHub's Linux x86-64 runner, one CPU. Pi-Bolt 0.9.6 against Pi 1.3.0 on Node 24 and Pi-Bolt 0.9.5; the long answer is
-60,000 characters; lower is better. See [Benchmarks](#benchmarks), also against PiG.</sub>
+<sub>GitHub's Linux x86-64 runner, one CPU each. Pi-Bolt against the same Pi on stock Bun and on Node 22 and 24; the long answer
+is 60,000 characters; lower is better. See [Benchmarks](#benchmarks), also against PiG.</sub>
 
 > [!NOTE]
 > Pi-Bolt is an independent fork of [Pi](https://github.com/earendil-works/pi), not affiliated with Pi's authors or with Oven.
