@@ -4,7 +4,7 @@ Pi-Bolt compared with the same Pi release on stock Bun and on Node.js. Every fig
 [`bench/`](../bench), and the raw results are in [`bench/results/`](../bench/results). The charts are drawn from those files by
 [`bench/report.py`](../bench/report.py).
 
-**Versions.** [0.9.2 on GitHub's runners](#092-on-githubs-runners) is the latest: Pi-Bolt 0.9.2 (Pi 1.2.0) on GitHub's Linux
+**Versions.** [0.9.6 against PiG 0.5.1](#096-against-pig-051) is the latest: Pi-Bolt 0.9.6 against PiG 0.5.1, Pi-Bolt 0.9.5 and Pi 1.3.0 on Node 24, on GitHub's runners and an M5 Mac. [0.9.2 on GitHub's runners](#092-on-githubs-runners) is the one before: Pi-Bolt 0.9.2 (Pi 1.2.0) on GitHub's Linux
 x86-64 and ARM64 runners. The sections after it are earlier measurements: Pi-Bolt 0.8.5 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
 its release archive; [against PiG and oh-my-pi](#against-pig-and-oh-my-pi) in the same runs. [With a real model](#with-a-real-model) is an earlier measurement, of Pi-Bolt 0.6.1.
 
@@ -14,6 +14,7 @@ carries over is the comparison, because every run interleaves the runtimes on th
 sooner than Pi on Bun and uses about a quarter of its CPU over an interactive session. The ratio varies by scenario: see
 each table.
 
+- [0.9.6 against PiG 0.5.1](#096-against-pig-051)
 - [0.9.2 on GitHub's runners](#092-on-githubs-runners)
 - [0.7.3 against 0.7.2](#073-against-072)
 - [Results](#results)
@@ -32,6 +33,39 @@ each table.
   - [Why is a run-time plugin's loop slow on the default build?](#why-is-a-run-time-plugins-loop-slow-on-the-default-build)
 - [Reproduce](#reproduce)
 - [Correctness](#correctness)
+
+## 0.9.6 against PiG 0.5.1
+
+Pi-Bolt 0.9.6 against [PiG](https://github.com/MichaelKinsy/PiG) 0.5.1 (Pi 1.3.0 ported to Go), with Pi-Bolt 0.9.5 and Pi 1.3.0 on
+Node 24. Every build does the same work against the same local model: `bench/pig_verify.py` checks the requests, tool results,
+answers and files written (Pi-Bolt's requests carry two more tool definitions, `grep` and `find`, enabled by default). Times to
+start and sessions are medians of 21 runs (15 on Windows), streaming the mean of three rounds (two on the Mac). Raw data and the
+exact builds: [`bench/results/2026-10-20-pig-0.5.1`](../bench/results/2026-10-20-pig-0.5.1). Lower is better.
+
+| CPU or memory | Linux x86-64 | Linux ARM64 | Windows x64 | Apple M5 |
+|---|---|---|---|---|
+| Ready to type, ms | 42 / **15** | 43 / **15** | 78 / **75** | 31 / **22** |
+| One prompt (`pi -p`), CPU ms | 56 / **25** | 63 / **27** | 87 / **70** | 27 / **18** |
+| Interactive session, CPU ms | 164 / **141** | 187 / **155** | **229** / 272 | **91** / 125 |
+| 60,000-character answer, CPU s | 2.58 / **1.53** | 2.31 / **1.18** | 2.68 / **2.06** | 3.36 / **2.34** |
+| Files written in tmux (write:50), Pi CPU s | **1.10** / 2.67 | **0.96** / 2.71 | | **1.94** / 4.35 |
+| A prompt 40 into a session, CPU ms | 56.8 / **41.5** | 53.4 / **41.2** | | **18.9** / 27.0 |
+| Startup, CPU ms | 12 / **5** | 10 / **4** | **17** / 33 | 7 / **6** |
+| Peak memory, interactive, MB | 154 / **66** | 132 / **56** | 102 / **67** (private) | 41 / **26** (footprint) |
+| Idle CPU, ms/s | 0.54 / **0.00** | | | 0.98 / **0.01** |
+| Download / installed, MB | 55 / **32**, 266 / **70** | | | |
+
+Pi-Bolt 0.9.6 / PiG 0.5.1. GitHub's Linux runners are pinned to one CPU; the Windows runner has two cores; the Mac was not pinned.
+GitHub's macOS runner stretches the paced tools about sixfold, so the macOS column comes from an M5 Mac; a shorter run on GitHub's
+macOS runner (`macos-github`) agrees on every row but the long session, where the two are even.
+
+- **PiG** starts sooner, streams with less CPU and uses about half the memory. It is a native Go program; on Linux it leads every
+  row but writing files in the terminal.
+- **Pi-Bolt** writes 2.2–2.8 times less CPU through a terminal and sends a seventh of the bytes PiG does (528 KB against 3,573 KB
+  for a 20,000-character answer). On macOS it uses less CPU over an interactive session (91 / 125 ms on the M5, 191 / 238 ms on
+  GitHub's runner), and on the M5 over a long session (even on GitHub's runner). On Windows it starts with half PiG's CPU.
+- **Pi on Node 24** is far behind both: on Linux x86-64 it takes 362 ms to be ready, 1,026 ms of CPU over a session and 34.7 s for
+  the long answer.
 
 ## 0.9.2 on GitHub's runners
 
