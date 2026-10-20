@@ -7,11 +7,10 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
 	EventStream,
-	getCurrentTools,
-	getToolStateChanges,
 	type JsonObject,
 	normalizeContext,
 	type SystemMessage,
+	type Tool,
 	type ToolResultMessage,
 	type ToolStateChanges,
 	toToolDeclaration,
@@ -372,10 +371,7 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 				index === systemIndex ? withToolChanges(pending, NO_CHANGES) : message,
 			)
 		: pendingMessages;
-	const changes = getToolStateChanges(
-		getCurrentTools([...context.messages, ...baseline]),
-		(context.tools ?? []).map(toToolDeclaration),
-	);
+	const changes = getToolChanges(getDeclaredTools(context.messages, baseline), context.tools ?? []);
 	const unchanged = changes.toolsAdded.length === 0 && changes.toolsRemoved.length === 0;
 
 	if (pending) {
@@ -391,6 +387,76 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 }
 
 const NO_CHANGES: ToolStateChanges = { toolsAdded: [], toolsRemoved: [] };
+
+/** `getCurrentTools([...transcript, ...pending])` without copying the transcript: the tools its system messages declare. */
+function getDeclaredTools(transcript: readonly AgentMessage[], pending: readonly AgentMessage[]): Tool[] {
+	const tools = new Map<string, Tool>();
+	for (const messages of [transcript, pending]) {
+		for (const message of messages) {
+			if (message.role !== "system") continue;
+			for (const tool of (message as SystemMessage).toolsRemoved ?? []) tools.delete(tool.name);
+			for (const tool of (message as SystemMessage).toolsAdded ?? []) tools.set(tool.name, tool);
+		}
+	}
+	return [...tools.values()];
+}
+
+/**
+ * `JSON.stringify(toToolDeclaration(tool))`, which is what `declarationsEqual` compares, with one serialization instead of
+ * a JSON round-trip and a serialization: serializing the parsed copy of `parameters` gives the same text as serializing
+ * `parameters`. Computed again on every request, so a schema changed in place is seen. Parameters that do not serialize to
+ * JSON text (undefined, a function, or a `toJSON` method) take the original path, which throws the same errors.
+ */
+function declarationKey(tool: Tool): string {
+	const parameters: unknown = tool.parameters;
+	if (
+		parameters === undefined ||
+		typeof parameters === "function" ||
+		typeof parameters === "symbol" ||
+		typeof (parameters as { toJSON?: unknown } | null)?.toJSON === "function"
+	) {
+		return JSON.stringify(toToolDeclaration(tool));
+	}
+	return JSON.stringify({
+		name: tool.name,
+		description: tool.description,
+		parameters,
+		...(tool.constrainedSampling === undefined ? {} : { constrainedSampling: tool.constrainedSampling }),
+	});
+}
+
+/**
+ * `getToolStateChanges(previous, current.map(toToolDeclaration))`, serializing each declaration once instead of round-tripping
+ * and serializing both sides of every comparison again (about nine JSON passes per tool per request).
+ */
+function getToolChanges(previous: readonly Tool[], current: readonly Tool[]): ToolStateChanges {
+	const currentKeys = current.map(declarationKey);
+	const previousKeys = new Map<Tool, string>();
+	const previousKey = (tool: Tool): string => {
+		let key = previousKeys.get(tool);
+		if (key === undefined) {
+			key = declarationKey(tool);
+			previousKeys.set(tool, key);
+		}
+		return key;
+	};
+	const previousTools = new Map(previous.map((tool) => [tool.name, tool]));
+	const currentIndexes = new Map(current.map((tool, index) => [tool.name, index]));
+	return {
+		toolsAdded: current
+			.filter((tool, index) => {
+				const previousTool = previousTools.get(tool.name);
+				return previousTool === undefined || previousKey(previousTool) !== currentKeys[index];
+			})
+			.map(toToolDeclaration),
+		toolsRemoved: previous
+			.filter((tool) => {
+				const currentIndex = currentIndexes.get(tool.name);
+				return currentIndex === undefined || previousKey(tool) !== currentKeys[currentIndex];
+			})
+			.map((tool) => ({ name: tool.name })),
+	};
+}
 
 /** Copy a system message with its tool fields replaced by `changes`; empty lists omit the field. */
 function withToolChanges(message: SystemMessage, { toolsAdded, toolsRemoved }: ToolStateChanges): SystemMessage {
@@ -467,11 +533,13 @@ async function streamAssistantResponse(
 					) {
 						earlyToolCalls.observe(event);
 					}
-					await emit({
+					// One event per delta: await only a sink that returned a promise.
+					const pending = emit({
 						type: "message_update",
 						assistantMessageEvent: event,
 						message: { ...partialMessage },
-					});
+					}) as Promise<void> | undefined;
+					if (pending) await pending;
 				}
 				break;
 

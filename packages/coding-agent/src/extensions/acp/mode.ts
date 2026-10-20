@@ -511,9 +511,7 @@ class AcpSession {
 		this.unsubscribe?.();
 		this.unsubscribeBackpressure?.();
 		this.unsubscribe = session.subscribe((event) => this.onEvent(event));
-		this.unsubscribeBackpressure = session.agent.subscribe(async () => {
-			await waitForRawStdoutBackpressure();
-		});
+		this.unsubscribeBackpressure = session.agent.subscribe(() => waitForRawStdoutBackpressure());
 	}
 
 	/**
