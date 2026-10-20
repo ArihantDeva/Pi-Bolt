@@ -80,6 +80,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import { formatCacheWarmingStatus, formatCacheWarmingUsage } from "../../core/cache-warmer.ts";
+import { ConnectionWarmer, isModelActivity, runtimePreconnect } from "../../core/connection-warmer.ts";
 import { findExtensionStackMatches, recordCrash, takeUnnotifiedCrash } from "../../core/crash-log.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
@@ -541,6 +542,8 @@ export class InteractiveMode {
 	private unsubscribeCapabilityChanges?: () => void;
 	/** Bun only: a full collection when idle after a run (see idle-gc.ts). */
 	private idleCollector: IdleCollector | undefined;
+	/** Bun only: opens the model connection while the user types after an idle period (see connection-warmer.ts). */
+	private connectionWarmer: ConnectionWarmer | undefined;
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -684,6 +687,8 @@ export class InteractiveMode {
 						}),
 				})
 			: undefined;
+		const preconnect = runtimePreconnect();
+		this.connectionWarmer = preconnect ? new ConnectionWarmer({ preconnect }) : undefined;
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerContainer = new Container();
@@ -3209,6 +3214,11 @@ export class InteractiveMode {
 			if (wasBashMode !== this.isBashMode) {
 				this.updateEditorBorderColor();
 			}
+			if (this.connectionWarmer && !this.session.isStreaming && !this.session.isCompacting) {
+				const model = this.session.model;
+				const baseUrl = model && this.session.modelRuntime.lastRequestBaseUrl(model);
+				this.connectionWarmer.onTyping(text, model, baseUrl);
+			}
 		};
 
 		// Handle clipboard paste (triggered on Ctrl+V). Copied files use their original paths,
@@ -3493,6 +3503,7 @@ export class InteractiveMode {
 
 		this.footer.invalidate();
 		this.programStatus.handleEvent(event);
+		if (isModelActivity(event)) this.connectionWarmer?.markActivity();
 
 		switch (event.type) {
 			case "agent_start":
@@ -3731,7 +3742,14 @@ export class InteractiveMode {
 				if (event.isError) this.maybeShowInstallChangeWarning();
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
-					component.updateResult({ ...event.result, isError: event.isError, durationMs: event.durationMs });
+					// Only what the component draws: the result's structuredContent can hold up to 1 MiB of bash output
+					// (2 MiB as a JavaScript string), which the component would keep for the rest of the session.
+					component.updateResult({
+						content: event.result.content,
+						details: event.result.details,
+						isError: event.isError,
+						durationMs: event.durationMs,
+					});
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}

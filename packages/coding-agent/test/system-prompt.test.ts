@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
-import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+import {
+	type BuildSystemPromptOptions,
+	buildSystemPrompt,
+	buildSystemPromptSections,
+} from "../src/core/system-prompt.ts";
 
 const testSkill: Skill = {
 	name: "test-skill",
@@ -234,5 +238,72 @@ describe("buildSystemPrompt", () => {
 			expect(build(["read"])).toContain("Use bash to load a skill's file");
 			expect(build([])).toContain("Use the read tool to load a skill's file");
 		});
+	});
+});
+
+describe("buildSystemPromptSections reuse", () => {
+	const createOptions = (): BuildSystemPromptOptions => ({
+		selectedTools: ["read", "bash"],
+		toolSnippets: { read: "Read files", bash: "Run commands" },
+		toolGuidelines: { read: ["Use read"] },
+		promptGuidelines: ["Be careful"],
+		contextFiles: [{ path: "/project/AGENTS.md", content: "Rules" }],
+		skills: [{ ...testSkill }],
+		sections: { extra: "Extra" },
+		cwd: "/project",
+	});
+
+	/** Every change is made in place, on the arrays and objects of the previous call. */
+	test("reflects in-place changes of every input", () => {
+		const options = createOptions();
+		const fresh = () => buildSystemPromptSections(structuredClone(options));
+		const changes: Array<() => void> = [
+			// Listing ls drops the rule that says to use bash for listing files.
+			() => options.selectedTools?.push("ls"),
+			() => options.hiddenTools?.push("bash"),
+			() => {
+				if (options.toolSnippets) options.toolSnippets.ls = "List files";
+			},
+			() => options.toolGuidelines?.read.push("Prefer read"),
+			() => options.promptGuidelines?.push("Be brief"),
+			() => {
+				if (options.contextFiles) options.contextFiles[0].content = "Other rules";
+			},
+			() => {
+				if (options.skills) options.skills[0].description = "Another description.";
+			},
+			() => {
+				if (options.skills) options.skills[0].disableModelInvocation = true;
+			},
+			() => {
+				if (options.sections) options.sections.extra = "Changed";
+			},
+			() => {
+				options.appendSystemPrompt = "Appended";
+			},
+			() => {
+				options.customPrompt = "Custom";
+			},
+			() => {
+				options.cwd = "/elsewhere";
+			},
+		];
+		options.hiddenTools = [];
+		let previous = buildSystemPromptSections(options);
+		for (const change of changes) {
+			change();
+			const sections = buildSystemPromptSections(options);
+			expect(sections).toEqual(fresh());
+			expect(sections).not.toEqual(previous);
+			previous = sections;
+		}
+	});
+
+	test("returns equal sections for equal inputs, unaffected by changes to an earlier result", () => {
+		const first = buildSystemPromptSections(createOptions());
+		const expected = { ...first };
+		first.preamble = "edited by a caller";
+		delete first.cwd;
+		expect(buildSystemPromptSections(createOptions())).toEqual(expected);
 	});
 });
