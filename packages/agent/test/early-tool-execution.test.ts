@@ -409,6 +409,29 @@ describe("early tool execution", () => {
 		expect(messages.some((message) => message.role === "toolResult")).toBe(false);
 	});
 
+	it("aborts a used early run when the run is aborted after the message ended", async () => {
+		const script: Script = { content: [call("c1", "lookup", { key: "a" }), { type: "text", text: "text after" }] };
+		const executions: Execution[] = [];
+		const controller = new AbortController();
+		const { messages } = await run(
+			script,
+			[createLookupTool(executions, { delayMs: () => 300 })],
+			{
+				earlyToolExecution: startEarly,
+				// Abort once the loop has reached the call and uses the early run, while it is still running.
+				beforeToolCall: async () => {
+					setTimeout(() => controller.abort(), 30);
+					return undefined;
+				},
+			},
+			controller,
+		);
+		expect(executions).toHaveLength(1);
+		expect(executions[0].signal?.aborted).toBe(true);
+		expect(executions[0].finished).toBe(false);
+		expect(toolResultTexts(messages)).toEqual(["Operation aborted"]);
+	});
+
 	it("drops early runs of a message cut off by the token limit", async () => {
 		const executions: Execution[] = [];
 		const { messages } = await run(

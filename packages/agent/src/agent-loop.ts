@@ -1040,9 +1040,14 @@ class EarlyToolCalls {
 	private readonly runs = new Map<string, EarlyToolCall>();
 	/** Content indexes of calls seen to be candidates (their tool may start early). */
 	private readonly candidates = new Set<number>();
+	/** Controllers of the runs that have not settled, taken or not: an abort of the agent run aborts them all. */
+	private readonly unsettled = new Set<AbortController>();
 	private closed = false;
 	private listening = false;
-	private readonly onAbort = () => this.discard();
+	private readonly onAbort = () => {
+		for (const controller of this.unsettled) controller.abort();
+		this.discard();
+	};
 
 	constructor(tools: readonly AgentTool<any>[], decide: EarlyToolExecution, signal: AbortSignal | undefined) {
 		this.tools = tools;
@@ -1141,7 +1146,10 @@ class EarlyToolCalls {
 		run.controller.abort();
 	}
 
-	/** Abort every early run the loop has not taken. Called when the message's tool calls are done or will not run. */
+	/**
+	 * Abort every early run the loop has not taken. Called when the message's tool calls are done (taken runs have
+	 * settled then) or will not run.
+	 */
 	discard(): void {
 		this.close();
 		for (const run of this.runs.values()) run.controller.abort();
@@ -1194,6 +1202,7 @@ class EarlyToolCalls {
 		const controller = new AbortController();
 		const updates: EarlyToolCall["updates"] = { sink: undefined, buffered: [] };
 		const argsJson = JSON.stringify(args);
+		this.unsettled.add(controller);
 		const outcome = executePreparedToolCall(
 			{ kind: "prepared", toolCall, tool, args },
 			controller.signal,
@@ -1202,6 +1211,7 @@ class EarlyToolCalls {
 				updates.buffered.push(partial);
 			},
 		);
+		void outcome.then(() => this.unsettled.delete(controller));
 		const run: EarlyToolCall = {
 			id: toolCall.id,
 			name: toolCall.name,
