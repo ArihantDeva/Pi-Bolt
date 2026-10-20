@@ -68,7 +68,7 @@ def main():
     for scenario in ["md:5000", "write:50", "light"]:
         for b in builds:
             with harness.fake_model(script="fake_model_stress.py") as port, harness.pi_home(port) as home, harness.workdir() as cwd:
-                p = subprocess.run([*b.argv, "-p", "--no-session", *harness.MODEL_ARGS, f"SCENARIO {scenario} CWD {cwd}"],
+                p = subprocess.run([*b.argv, "-p", "--no-session", *harness.MODEL_ARGS, f"SCENARIO {scenario} CWD {cwd.as_posix()}"],
                                    env=harness.pi_env(home), cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True, timeout=600)
                 out = p.stdout.decode("utf-8", "replace").strip().splitlines()
                 tail = out[-1] if out else ""

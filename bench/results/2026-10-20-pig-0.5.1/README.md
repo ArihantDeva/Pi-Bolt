@@ -16,5 +16,8 @@ each build was obtained and checked, the machine).
   - Pi-Bolt 0.9.6 and 0.9.5 are their release archives; on GitHub's runners, 0.9.6 was built from tag `bolt-v0.9.6` with `scripts/build-pi.sh` (`build-pi.ps1` on Windows) on the release's runtimes, because the release had no archives yet.
   - PiG 0.5.1 is its release archive, checked against its SHA256SUMS (and on CI its sigstore bundle).
   - Node 24 runs `@earendil-works/pi-coding-agent@1.3.0` from npm.
-- **Same work:** `bench/pig_verify.py` (`verify.txt`, and run by hand on the Mac) checks that every build sends the same requests, gets the same tool results, gives the same answers and writes the same files, with one exception. Pi-Bolt enables `grep` and `find` by default, so its requests carry two more tool definitions, about 2 KB each, which slightly handicaps Pi-Bolt.
+- **Same work:** `bench/pig_verify.py` (`verify.txt`, and run by hand on the Mac) checks that every build sends the same requests, gets the same tool results, gives the same answers and writes the same files, with one exception. Pi-Bolt enables `grep` and `find` by default, so its requests carry two more tool definitions, about 2 KB each, which slightly handicaps Pi-Bolt. On Windows the check reported `light: DIFFERS`: the scripted model could not take Windows'
+  work folder (named with backslashes) out of the tool results it compares, most likely the whole difference. The timed
+  scenarios (headless, md, write) matched there too. `bench/pig_verify.py` and `bench/fake_model_stress.py` now handle that
+  path, after these runs.
 - **macOS on GitHub:** GitHub's macOS runner stretches the paced tools (a 17-second answer took about 99 s), so the full suite ran out of time there: `macos-github` is the shorter suite, and the full one comes from the M5 Mac.

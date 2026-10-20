@@ -215,7 +215,8 @@ class Handler(BaseHTTPRequestHandler):
         # And what Pi sent: system prompt, tool definitions, the conversation (without what changes from run to run).
         sent = json.dumps(req, sort_keys=True, ensure_ascii=False)
         if cwd:
-            sent = sent.replace(cwd, "<CWD>").replace(json.dumps(cwd)[1:-1], "<CWD>")
+            for form in cwd_forms(cwd):
+                sent = sent.replace(form, "<CWD>")
         sent = re.sub(r"(?:/tmp|/private/var/folders|/var/folders)/[^\s\"')\]\\]+", "<TMP>", sent)  # (macOS: $TMPDIR)
         sent = re.sub(r"/[^\s\"']+/(README\.md|docs|examples|CHANGELOG\.md)\b", r"<PI>/\1", sent)  # Where Pi is installed.
         sent = re.sub(r"\d{4}-\d\d-\d\d[T ]?[\d:.]*Z?|\b\d{1,2}:\d\d(:\d\d)?( ?[AP]M)?|\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,? [A-Z][a-z]+ \d{1,2},? \d{4}", "<DATE>", sent)
@@ -226,6 +227,15 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(sent)
         sizes = sum(len(r) for r in results)
         self.stream(encode(turn, [intro, f"{len(results)} tool results, {sizes} characters, digest {digest}, sent {sent_digest}. Done: {scenario}."], None, 0))
+
+
+def cwd_forms(cwd):
+    """The ways a work folder appears in requests: as named, JSON-escaped, and on Windows with backslashes too."""
+    if not cwd:
+        return []
+    forms = [cwd, cwd.replace("/", "\\")]
+    forms += [json.dumps(form)[1:-1] for form in forms]
+    return sorted(set(forms), key=len, reverse=True)
 
 
 def read_conversation(api, req):
@@ -245,7 +255,9 @@ def read_conversation(api, req):
 
     def result(content):
         text = content if isinstance(content, str) else json.dumps(content)
-        text = text.replace(cwd, "<CWD>") if cwd else text
+        # (On Windows the prompt names the folder with forward slashes and the tools answer with backslashes: both.)
+        for form in cwd_forms(cwd):
+            text = text.replace(form, "<CWD>")
         # Where Pi saves the whole of a truncated output: a new temporary name every time.
         results.append(re.sub(r"(?:/tmp|/private/var/folders|/var/folders)/[^\s\"')\]]+", "<TMP>", text))
 
