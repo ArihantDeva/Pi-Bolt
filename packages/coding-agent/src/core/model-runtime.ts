@@ -197,6 +197,8 @@ export class ModelRuntime implements Models {
 	private readonly providerAvailabilitySeq = new Map<string, number>();
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	/** The base URL each model's latest request went to, after its auth (which may set its own) was resolved. */
+	private readonly requestBaseUrls = new Map<string, string>();
 
 	private constructor(
 		credentials: RuntimeCredentials,
@@ -660,6 +662,15 @@ export class ModelRuntime implements Models {
 		return check ? { configured: true, source: "environment", label: check.source } : { configured: false };
 	}
 
+	/**
+	 * The base URL the latest request for `model` was sent to, or undefined if there was none in this process. Auth can
+	 * replace the model's own (an OAuth credential's endpoint), and resolving it may itself make requests, so this only
+	 * reports what a request already resolved.
+	 */
+	lastRequestBaseUrl(model: AnyModel): string | undefined {
+		return this.requestBaseUrls.get(`${model.provider}\u0000${model.id}`);
+	}
+
 	private async prepareRequest<
 		TModel extends AnyModel,
 		TOptions extends ProviderRequestOptions<TModel> & ModelsRequestTransforms,
@@ -689,6 +700,7 @@ export class ModelRuntime implements Models {
 				? { ...(resolution.env ?? {}), ...(providerOptions.env ?? {}) }
 				: undefined;
 		const requestModel: TModel = resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model;
+		this.requestBaseUrls.set(`${model.provider}\u0000${model.id}`, requestModel.baseUrl);
 		return {
 			provider,
 			model: requestModel,
