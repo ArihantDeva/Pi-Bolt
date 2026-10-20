@@ -131,22 +131,37 @@ uninstalls it.
 
 ## Benchmarks
 
-Pi-Bolt 0.9.2 against Pi 1.2.0 on stock Bun 1.4.2 and on Node 24, on GitHub's Linux x86-64 runner, one CPU each; lower is
-better.
+Pi-Bolt 0.9.6 against [PiG](https://github.com/MichaelKinsy/PiG) 0.5.1 (Pi ported to Go) and Pi 1.3.0 on Node 24, doing the
+same work against the same local model; lower is better.
 
-| Benchmark | Pi-Bolt | Pi on Bun | Pi on Node 24 |
+On GitHub's Linux x86-64 runner, one CPU each:
+
+| Benchmark | Pi-Bolt 0.9.6 | PiG 0.5.1 | Pi on Node 24 |
 |---|---:|---:|---:|
-| Ready to type | **38 ms** | 84 ms | 277 ms |
-| CPU, one prompt (`pi -p`) | **51 ms** | 128 ms | 385 ms |
-| CPU, interactive session | **142 ms** | 383 ms | 790 ms |
-| CPU, streaming a 60,000-character answer | **1.6 s** | 1.7 s | 28.9 s |
-| CPU, writing a 400 KB file through a tool call | **1.5 s** | 1.9 s | 150 s |
-| Peak memory, one prompt (`pi -p`) | **107 MB** | 114 MB | 138 MB |
-| Memory of a session in tmux | **24 MB** | 77 MB | 212 MB |
-| Memory after 40 prompts | **101 MB** | 164 MB | 520 MB |
+| Ready to type | 42 ms | **15 ms** | 362 ms |
+| CPU, one prompt (`pi -p`) | 56 ms | **25 ms** | 506 ms |
+| CPU, interactive session | 164 ms | **141 ms** | 1,026 ms |
+| CPU, streaming a 60,000-character answer | 2.6 s | **1.5 s** | 34.7 s |
+| CPU, writing files in a terminal (tmux) | **1.1 s** | 2.7 s | 13.5 s |
+| Bytes sent to the terminal for a 20,000-character answer | **528 KB** | 3,573 KB | 3,562 KB |
+| Peak memory, one prompt | 133 MB | **55 MB** | 148 MB |
+| Memory after 40 prompts | 173 MB | **87 MB** | 574 MB |
 
-Against 0.8.5, 0.9.2 streams long answers and large files with 16–37% less CPU, and starts with up to a quarter less memory.
-Linux ARM64, macOS, Windows, other Pi builds (PiG, oh-my-pi, OpenCode) and the method: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+On an Apple M5 Mac:
+
+| Benchmark | Pi-Bolt 0.9.6 | PiG 0.5.1 |
+|---|---:|---:|
+| Ready to type | 31 ms | **22 ms** |
+| CPU, one prompt (`pi -p`) | 27 ms | **18 ms** |
+| CPU, interactive session | **91 ms** | 125 ms |
+| CPU per prompt, 40 prompts into a session | **19 ms** | 27 ms |
+| CPU, streaming a 60,000-character answer | 3.4 s | **2.3 s** |
+| CPU, writing files in a terminal (tmux) | **1.9 s** | 4.4 s |
+| Peak memory, interactive session | 41 MB | **26 MB** |
+
+PiG starts sooner and uses less memory; Pi-Bolt runs Pi's own code, so every Pi extension works unchanged. Against 0.9.5, 0.9.6
+uses up to 31% less CPU per prompt in long sessions and reads images up to 70 times faster ([release notes](docs/releases/0.9.6.md)).
+Linux ARM64, Windows, the raw data and the method: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Plugins
 
