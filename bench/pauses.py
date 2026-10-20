@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import ANSI, MODEL_ARGS, Tty, cpu_ms, fake_model, memory_mb, parse_builds, pi_env, pi_home, pinned, workdir
 
 HERE = Path(__file__).resolve().parent
-GC_PAUSE = re.compile(rb"p=([\d.]+)ms")
+# (Not "tp=": JavaScriptCore also logs the time slice of each increment of a collection, "tp=0.3ms".)
+GC_PAUSE = re.compile(rb"(?<![A-Za-z])p=([\d.]+)ms")
 
 
 def is_node(build):
