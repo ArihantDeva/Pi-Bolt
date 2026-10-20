@@ -1213,8 +1213,27 @@ async function buildSessionInfosWithConcurrency(
 	);
 	// A listing cancelled while its last reads finished is cancelled all the same.
 	signal?.throwIfAborted();
-	await sessionIndex.save();
+	// The index is written in the background when the listing is cancelled meanwhile: it holds what was read, and a
+	// cancelled listing must reject without waiting for the write.
+	await untilAborted(sessionIndex.save(), signal);
+	signal?.throwIfAborted();
 	return results;
+}
+
+/** Waits for `promise`, unless `signal` aborts first: then rejects with its reason. */
+async function untilAborted(promise: Promise<void>, signal: AbortSignal | undefined): Promise<void> {
+	if (!signal) return promise;
+	signal.throwIfAborted();
+	let onAbort: (() => void) | undefined;
+	const aborted = new Promise<never>((_resolve, reject) => {
+		onAbort = () => reject(signal.reason);
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+	try {
+		await Promise.race([promise, aborted]);
+	} finally {
+		if (onAbort) signal.removeEventListener("abort", onAbort);
+	}
 }
 
 async function listSessionsFromDir(
