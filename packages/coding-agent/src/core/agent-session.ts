@@ -56,6 +56,7 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
+import { PIBOLT } from "../pi-bolt.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { processImage } from "../utils/image-process.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -193,6 +194,18 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 	}
 	return null;
 }
+
+/**
+ * Built-in tools whose calls may start before the model's message ends: they only read. grep and find only when they
+ * search in-process; otherwise they may first download ripgrep or fd, which would stay if the early run is dropped.
+ */
+const EARLY_TOOL_NAMES: ReadonlySet<string> = new Set(PIBOLT ? ["read", "ls", "grep", "find"] : ["read", "ls"]);
+
+/**
+ * Extensions whose `tool_call` handlers let calls of the tools in EARLY_TOOL_NAMES through unchanged. The built-in MCP
+ * extension's handler waits only for MCP servers that the called tool reaches (MCP tools, codemode, tool_search).
+ */
+const EARLY_TOOL_CALL_PASSTHROUGH_EXTENSIONS: ReadonlySet<string> = new Set([`${BUILTIN_PATH_PREFIX}mcp`]);
 
 /** Tool execution events of calls a tool made through `ctx.executeTool()` carry `parentToolCallId`. */
 type WithParentToolCallId<E> = E extends {
@@ -483,6 +496,8 @@ export class AgentSession {
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
+	/** `execute` of the registered built-in tools whose calls may start before the model's message ends. */
+	private _earlyToolExecutes = new WeakSet<AgentTool["execute"]>();
 	/** Created on the first `ctx.executeTool()` call. */
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
 	/** Declared tools whose declarations requests leave out, from `prepareLoadout` hooks. */
@@ -665,6 +680,23 @@ export class AgentSession {
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = (context) => this._beforeToolCall(context);
 		this.agent.afterToolCall = (context) => this._afterToolCall(context);
+		this.agent.earlyToolExecution = (_toolCall, tool) => this._earlyToolExecution(tool);
+	}
+
+	/**
+	 * Calls of the built-in read-only tools (read, ls, and grep and find when they search in-process) may start while
+	 * the model's message is still streaming. Only while no `tool_call` handler could block or change them: a call an
+	 * extension blocks must not run at all. Their result depends on the model (read's image handling) and the
+	 * extension runner (cwd), so it is used only if both are still the same when the call is reached.
+	 */
+	private _earlyToolExecution(tool: AgentTool): (() => boolean) | undefined {
+		const runner = this._extensionRunner;
+		const model = this.model;
+		const allowed = () =>
+			this._earlyToolExecutes.has(tool.execute) &&
+			!runner.hasHandlersOutside("tool_call", EARLY_TOOL_CALL_PASSTHROUGH_EXTENSIONS);
+		if (!allowed()) return undefined;
+		return () => this._extensionRunner === runner && this.model === model && allowed();
 	}
 
 	/** `tool_call` handlers. `parentToolCallId` is set for calls another tool made. */
@@ -3668,6 +3700,14 @@ export class AgentSession {
 			toolRegistry.set(tool.name, tool);
 		}
 		this._toolRegistry = toolRegistry;
+		const earlyToolExecutes = new WeakSet<AgentTool["execute"]>();
+		if (!this._baseToolsOverride) {
+			for (const tool of wrappedBuiltInTools) {
+				if (EARLY_TOOL_NAMES.has(tool.name) && toolRegistry.get(tool.name) === tool)
+					earlyToolExecutes.add(tool.execute);
+			}
+		}
+		this._earlyToolExecutes = earlyToolExecutes;
 
 		const nextActiveToolNames = (
 			options?.activeToolNames ? [...options.activeToolNames] : [...previousActiveToolNames]

@@ -832,6 +832,18 @@ export class ExtensionRunner {
 		return false;
 	}
 
+	/** Whether an extension other than those loaded from `extensionPaths` handles `eventType`. */
+	hasHandlersOutside(eventType: string, extensionPaths: ReadonlySet<string>): boolean {
+		for (const ext of this.extensions) {
+			if (extensionPaths.has(ext.path)) continue;
+			const handlers = ext.handlers.get(eventType);
+			if (handlers && handlers.length > 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	getMessageRenderer(customType: string): MessageRenderer | undefined {
 		for (const ext of this.extensions) {
 			const renderer = ext.messageRenderers.get(customType);
