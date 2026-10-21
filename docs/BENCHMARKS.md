@@ -4,7 +4,7 @@ Pi-Bolt compared with the same Pi release on stock Bun and on Node.js. Every fig
 [`bench/`](../bench), and the raw results are in [`bench/results/`](../bench/results). The charts are drawn from those files by
 [`bench/report.py`](../bench/report.py).
 
-**Versions.** [0.9.6 against PiG 0.5.1](#096-against-pig-051) is the latest: Pi-Bolt 0.9.6 against PiG 0.5.1, Pi-Bolt 0.9.5 and Pi 1.3.0 on Node 24, on GitHub's runners and an M5 Mac. [0.9.2 on GitHub's runners](#092-on-githubs-runners) is the one before: Pi-Bolt 0.9.2 (Pi 1.2.0) on GitHub's Linux
+**Versions.** [0.9.7 against Pi as released](#097-against-pi-as-released) is the latest: Pi-Bolt 0.9.7 against Pi 1.3.0 as released on npm, run by stock Bun 1.4.2, Node 22 and Node 24, on GitHub's runners. [0.9.6 against PiG 0.5.1](#096-against-pig-051) is the one before: Pi-Bolt 0.9.6 against PiG 0.5.1, Pi-Bolt 0.9.5 and Pi 1.3.0 on Node 24, on GitHub's runners and an M5 Mac. [0.9.2 on GitHub's runners](#092-on-githubs-runners) is earlier: Pi-Bolt 0.9.2 (Pi 1.2.0) on GitHub's Linux
 x86-64 and ARM64 runners. The sections after it are earlier measurements: Pi-Bolt 0.8.5 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
 its release archive; [against PiG and oh-my-pi](#against-pig-and-oh-my-pi) in the same runs. [With a real model](#with-a-real-model) is an earlier measurement, of Pi-Bolt 0.6.1.
 
@@ -14,6 +14,7 @@ carries over is the comparison, because every run interleaves the runtimes on th
 sooner than Pi on Bun and uses about a quarter of its CPU over an interactive session. The ratio varies by scenario: see
 each table.
 
+- [0.9.7 against Pi as released](#097-against-pi-as-released)
 - [0.9.6 against PiG 0.5.1](#096-against-pig-051)
 - [0.9.2 on GitHub's runners](#092-on-githubs-runners)
 - [0.7.3 against 0.7.2](#073-against-072)
@@ -34,6 +35,35 @@ each table.
 - [Reproduce](#reproduce)
 - [Correctness](#correctness)
 
+## 0.9.7 against Pi as released
+
+Pi-Bolt 0.9.7 against Pi 1.3.0 as released on npm (`@earendil-works/pi-coding-agent`, `dist/bundle/cli.js`), run by stock Bun
+1.4.2, by Node 22 and by Node 24. Every build was installed from its release archive or npm package and checked against its
+checksums, and does the same work against the same local model. Times to start and sessions are medians of 21 runs. Raw data,
+the runners and the workflow: [`bench/results/2026-10-21-stock-bun-0.9.7`](../bench/results/2026-10-21-stock-bun-0.9.7). Lower
+is better.
+
+Pi-Bolt / Pi on Bun / Pi on Node 22 / Pi on Node 24:
+
+| Benchmark | Linux x86-64 | Linux ARM64 | macOS | Windows x64 |
+|---|---|---|---|---|
+| Writing a 400 KB file through a tool call, wall s | **1.3** / 182.2 / 195.3 / 145.8 | **1.3** / 157.3 / 173.7 / 131.8 | **1.7** / 129.7 / 178.9 / 129.2 | **1.6** / 139.4 / 171.2 / 112.1 |
+| 60,000-character answer, CPU s | **2.94** / 41.14 / 40.03 / 37.87 | **3.01** / 40.45 / 39.84 / 37.55 | **5.40** / 66.68 / 74.31 / 63.16 | **3.39** / 44.58 / 42.28 / 38.20 |
+| CPU per prompt, prompts 21 to 40, ms | **65** / 350 / 379 / 362 | **58** / 308 / 329 / 301 | **47** / 272 / 395 / 291 | **59** / 303 / 427 / 361 |
+| Interactive session, CPU ms | **190** / 1,189 / 1,196 / 1,179 | **196** / 1,187 / 1,212 / 1,183 | **199** / 1,133 / 1,295 / 1,287 | **243** / 1,407 / 1,490 / 1,280 |
+| Memory after 40 prompts, MB | **166** / 289 / 508 / 578 | **197** / 267 / 545 / 612 | **182** / 423 / 678 / 762 | **141** / 262 / 292 / 325 |
+| Ready to type, ms | **45** / 382 / 383 / 411 | **44** / 353 / 360 / 410 | **85** / 253 / 341 / 383 | **93** / 315 / 410 / 363 |
+| 20,000-character answer in tmux, Pi CPU s | **0.94** / 9.09 / 7.99 / 7.34 | **0.88** / 8.18 / 7.43 / 7.16 | **2.00** / 14.23 / 13.46 / 12.75 | |
+| Bytes sent to the terminal for it, KB | **528** / 3,517 / 3,554 / 3,563 | **529** / 3,523 / 3,564 / 3,571 | **1,032** / 4,092 / 4,024 / 4,028 | |
+
+GitHub's Linux runners are pinned to one CPU; macOS is `macos-15` on an Apple M1 (virtual, 3 CPUs, not pinned); Windows is
+`windows-2025` with two cores, and its memory is the working set. GitHub's macOS runner stretches the paced tools (the long
+answer and tmux), so their wall times there are not comparable; their CPU times are.
+
+In the runs of 0.9.2 to 0.9.6 ([`2026-10-16-linux-0.9.2`](../bench/results/2026-10-16-linux-0.9.2),
+[`2026-10-20-linux-0.9.6`](../bench/results/2026-10-20-linux-0.9.6)), "Bun" was this repository's Pi on stock Bun, with Pi-Bolt's
+changes to Pi's code; here it is Pi as released.
+
 ## 0.9.6 against PiG 0.5.1
 
 Pi-Bolt 0.9.6 against [PiG](https://github.com/MichaelKinsy/PiG) 0.5.1 (Pi 1.3.0 ported to Go), with Pi-Bolt 0.9.5 and Pi 1.3.0 on
@@ -49,7 +79,7 @@ exact builds: [`bench/results/2026-10-20-pig-0.5.1`](../bench/results/2026-10-20
 | Interactive session, CPU ms | 164 / **141** | 187 / **155** | **229** / 272 | **91** / 125 |
 | 60,000-character answer, CPU s | 2.58 / **1.53** | 2.31 / **1.18** | 2.68 / **2.06** | 3.36 / **2.34** |
 | Files written in tmux (write:50), Pi CPU s | **1.10** / 2.67 | **0.96** / 2.71 | | **1.94** / 4.35 |
-| A prompt 40 into a session, CPU ms | 56.8 / **41.5** | 53.4 / **41.2** | | **18.9** / 27.0 |
+| CPU per prompt, prompts 21 to 40, ms | 56.8 / **41.5** | 53.4 / **41.2** | | **18.9** / 27.0 |
 | Startup, CPU ms | 12 / **5** | 10 / **4** | **17** / 33 | 7 / **6** |
 | Peak memory, interactive, MB | 154 / **66** | 132 / **56** | 102 / **67** (private) | 41 / **26** (footprint) |
 | Idle CPU, ms/s | 0.54 / **0.00** | | | 0.98 / **0.01** |
