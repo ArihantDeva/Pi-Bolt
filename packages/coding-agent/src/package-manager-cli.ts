@@ -52,6 +52,7 @@ import {
 } from "./pi-bolt.ts";
 import { piBoltCompileWanted, runPiBoltCompile } from "./pi-bolt-compile.ts";
 import { rollbackPiBolt } from "./pi-bolt-rollback.ts";
+import { isInProfile, updatePiBoltWindows } from "./pi-bolt-update-windows.ts";
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
 import { canonicalizePath, getCwdRelativePath } from "./utils/paths.ts";
 import { getPiUserAgent } from "./utils/pi-user-agent.ts";
@@ -828,31 +829,50 @@ async function runPiBoltSelfUpdate(
 		console.log(`  npm install -g pi-bolt@latest      (or: bun add -g pi-bolt@latest)`);
 		return false;
 	}
-	console.log(chalk.dim(`Updating Pi-Bolt to ${version} with ${PIBOLT_INSTALL_COMMAND}...`));
-	const status = await new Promise<number | null>((resolve, reject) => {
-		const installer = piBoltInstallerProcess();
-		// (From the home folder: the installer has nothing to do with the folder the update was asked for in.)
-		const child = spawnProcess(installer.command, installer.args, {
-			cwd: homedir(),
-			stdio: "inherit",
-			env: piBoltUpdateEnvironment(version),
-		});
-		child.on("error", reject);
-		child.on("close", (code) => resolve(code));
-	}).catch((error: unknown) => {
-		console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
-		return 1;
-	});
+	const installDir = piBoltUpdateEnvironment(version).PIBOLT_INSTALL ?? "";
+	// On Windows, without PowerShell (#82): a program that starts PowerShell to download a script and run it is what malware does,
+	// and antivirus stops it as such. Not for an installation outside the profile, whose folder permissions install.ps1 manages.
+	const native = process.platform === "win32" && isInProfile(installDir);
+	if (native) console.log(chalk.dim(`Updating Pi-Bolt to ${version}...`));
+	else console.log(chalk.dim(`Updating Pi-Bolt to ${version} with ${PIBOLT_INSTALL_COMMAND}...`));
+	const status = native
+		? await updatePiBoltWindows(version, installDir, PIBOLT?.variant ?? "x64").then(
+				() => 0,
+				(error: unknown) => {
+					console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+					return 1;
+				},
+			)
+		: await new Promise<number | null>((resolve, reject) => {
+				const installer = piBoltInstallerProcess();
+				// (From the home folder: the installer has nothing to do with the folder the update was asked for in.)
+				const child = spawnProcess(installer.command, installer.args, {
+					cwd: homedir(),
+					stdio: "inherit",
+					env: piBoltUpdateEnvironment(version),
+				});
+				child.on("error", reject);
+				child.on("close", (code) => resolve(code));
+			}).catch((error: unknown) => {
+				console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+				return 1;
+			});
 	if (status !== 0) {
-		console.error(chalk.red(`The installer did not finish. You can run it yourself: ${PIBOLT_INSTALL_COMMAND}`));
+		console.error(
+			chalk.red(
+				`${native ? "The update" : "The installer"} did not finish. You can run the installer yourself: ${PIBOLT_INSTALL_COMMAND}`,
+			),
+		);
 		return false;
 	}
 	// What is there now says which version it is: an update that left the old one in place is not reported as done.
-	const installed = piBoltExecutableIn(piBoltUpdateEnvironment(version).PIBOLT_INSTALL ?? "");
+	const installed = piBoltExecutableIn(installDir);
 	const check = spawnProcessSync(installed, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 	// ("1.0.3 (Pi-Bolt 0.8.1, win32-x64, JIT off)": with the comma, 0.8.10 is not taken for 0.8.1.)
 	if (check.status !== 0 || !check.stdout.includes(`Pi-Bolt ${version},`)) {
-		console.error(chalk.red(`The installer finished, but ${installed} is not Pi-Bolt ${version}.`));
+		console.error(
+			chalk.red(`${native ? "The update" : "The installer"} finished, but ${installed} is not Pi-Bolt ${version}.`),
+		);
 		console.error(chalk.red(`You can run the installer yourself: ${PIBOLT_INSTALL_COMMAND}`));
 		return false;
 	}
@@ -864,7 +884,6 @@ async function runPiBoltSelfUpdate(
 		),
 	);
 	// Extensions `pi-bolt compile` compiled in before are compiled into this release too, by the release itself.
-	const installDir = piBoltUpdateEnvironment(version).PIBOLT_INSTALL;
 	if (options.recompile !== false && installDir && piBoltCompileWanted(installDir)) {
 		console.log(chalk.dim(`Compiling the extensions compiled in before into Pi-Bolt ${version}...`));
 		const compiled = spawnProcessSync(installed, ["compile", "--after-update"], {
