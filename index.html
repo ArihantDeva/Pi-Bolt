@@ -567,10 +567,19 @@
   (function () {
     var el = document.getElementById("scramble");
     var target = el.dataset.text, glyphs = "/#<[+{%0>]}=*";
-    if (reduce) return;
+    // A background tab throttles timers, which would leave the glyphs on screen: show the words as they are there.
+    if (reduce || document.hidden) return;
     el.style.minWidth = el.offsetWidth + "px";
-    var frame = 0, total = 26;
+    var frame = 0, total = 26, done = false;
+    function finish() {
+      done = true;
+      el.textContent = target;
+      document.removeEventListener("visibilitychange", finish);
+    }
+    // Hiding the page ends the animation at once, not at the next (throttled) tick.
+    document.addEventListener("visibilitychange", finish);
     function tick() {
+      if (done) return;
       var out = "";
       for (var i = 0; i < target.length; i++) {
         var settle = (i / target.length) * total * 0.8 + 6;
@@ -578,7 +587,7 @@
       }
       el.textContent = out;
       if (++frame <= total + 2) setTimeout(tick, 45);
-      else el.textContent = target;
+      else finish();
     }
     tick();
   })();
