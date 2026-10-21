@@ -5,11 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#050505">
-<title>Pi-Bolt: the Pi coding agent, compiled to machine code</title>
-<meta name="description" content="Pi-Bolt is the Pi coding agent compiled ahead of time into one native executable for Linux x86-64, macOS on Apple silicon and Windows x64. It starts two to three times sooner than Pi on Bun and uses about a third of its CPU.">
-<meta property="og:title" content="Pi-Bolt: the Pi coding agent, compiled to machine code">
-<meta property="og:description" content="One native executable for Linux, macOS and Windows. Starts two to three times sooner than Pi on Bun and uses about a third of its CPU.">
+<title>Pi-Bolt: the Pi coding agent, compiled to native code</title>
+<meta name="description" content="Pi-Bolt is the Pi coding agent compiled ahead of time to native code, for Linux, macOS, Windows and Android. Against Pi on Node it writes large files over 100 times faster and uses 13 times less CPU while an answer streams.">
+<meta property="og:title" content="Pi-Bolt: the Pi coding agent, compiled to native code">
+<meta property="og:description" content="Same Pi, same extensions, same config. Up to 112 times faster large file writes, 13 times less CPU while streaming, 6 times less CPU per session than Pi on Node.">
 <meta property="og:url" content="https://pi-bolt.opensec.in/">
+<meta property="og:image" content="https://pi-bolt.opensec.in/video-poster.jpg">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,405 +22,663 @@
   @font-face { font-family: "Departure Mono"; src: url("departure-mono.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
   :root {
     color-scheme: dark;
-    /* OpenSec's palette (opensec.in). */
-    --black: #050505;
-    --black-2: #0a0b0a;
-    --panel: #0e100e;
-    --lime: #bafc6b;
-    --lime-deep: #9fe04d;
-    --on-lime: #10150d;
+    /* OpenSec's design (opensec.in): canvas, hairlines, lime accent, Space Grotesk, IBM Plex Mono and a pixel face. */
+    --canvas: #050505;
+    --surface: #080808;
+    --surface-2: #0c0d0c;
+    --line: rgba(222, 235, 224, 0.15);
+    --line-soft: rgba(222, 235, 224, 0.08);
     --text: #f1f3ef;
-    --text-soft: #a4aaa2;
-    --text-dim: #7d8980;
-    --rule: #1d211d;
-    --rule-2: #2a302a;
-    --bar: #3d433d;
+    --soft: #b7bcb8;
+    --muted: #858d86;
+    --dim: #5f665f;
+    --accent: #bafc6b;
+    --accent-deep: #a3ea4f;
+    --on-accent: #10150d;
+    --bar: #59605a;
+    --bar-2: rgba(255, 255, 255, 0.06);
     --sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --pixel: "Departure Mono", "IBM Plex Mono", ui-monospace, monospace;
-    accent-color: var(--lime);
+    --ease: cubic-bezier(.2, .7, .2, 1);
+    --frame: 1240px;
+    accent-color: var(--accent);
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; background: var(--black); }
-  body { margin: 0; background: var(--black); color: var(--text); font: 400 1.0625rem/1.6 var(--sans); }
-  ::selection { background: rgba(186, 252, 107, 0.3); color: #fff; }
-  a { color: var(--lime); text-underline-offset: 0.18em; }
-  a:hover { text-decoration-thickness: 2px; }
-  :focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; border-radius: 3px; }
-  code, kbd, pre { font-family: var(--mono); font-size: 0.9em; }
-  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  html { -webkit-text-size-adjust: 100%; background: var(--canvas); scroll-behavior: smooth; scroll-padding-top: 84px; }
+  body { margin: 0; background: var(--canvas); color: var(--text); font: 400 1rem/1.6 var(--sans); overflow-x: hidden; }
+  ::selection { background: rgba(186, 252, 107, 0.28); color: #fff; }
+  a { color: var(--accent); text-underline-offset: 0.18em; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+  code, kbd, pre { font-family: var(--mono); }
+  img, video { max-width: 100%; display: block; }
+
+  /* The frame: two hairlines down the page, and a + where a section's rule meets them. */
+  .frame { position: relative; max-width: var(--frame); margin: 0 auto; border-left: 1px solid var(--line-soft); border-right: 1px solid var(--line-soft); }
+  .rule { position: relative; height: 0; border-top: 1px solid var(--line); }
+  .rule::before, .rule::after { content: "+"; position: absolute; top: -0.78em; font: 300 15px/1 var(--mono); color: var(--muted); }
+  .rule::before { left: -0.34em; }
+  .rule::after { right: -0.34em; }
+  .pad { padding: 0 48px; }
+
+  /* Labels */
+  .micro { font: 400 11px/1.4 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  .micro.accent { color: var(--accent); }
+  .index { font: 400 11px/1 var(--mono); letter-spacing: 0.12em; color: var(--dim); }
+  .bracket::before { content: "[ "; color: var(--dim); }
+  .bracket::after { content: " ]"; color: var(--dim); }
 
   /* Header */
-  header.site { padding: 20px 0; border-bottom: 1px solid var(--rule); background: #080808; }
-  header.site .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 700; font-size: 1.2rem; letter-spacing: -0.01em; }
+  header.site { position: sticky; top: 0; z-index: 40; background: rgba(6, 6, 6, 0.88); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid rgba(255, 255, 255, 0.12); }
+  header.site .in { max-width: var(--frame); margin: 0 auto; height: 72px; padding: 0 32px; display: flex; align-items: center; gap: 28px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 600; font-size: 1.22rem; letter-spacing: -0.035em; }
   .brand img { width: 30px; height: 30px; }
-  nav.top { display: flex; align-items: center; gap: 26px; font-size: 0.95rem; }
-  nav.top a { color: var(--text-soft); text-decoration: none; }
+  .brand b { font-weight: 600; color: var(--accent); }
+  nav.top { display: flex; gap: 26px; margin: 0 auto; }
+  nav.top a { color: var(--soft); text-decoration: none; font-size: 13px; transition: color .18s; }
   nav.top a:hover { color: var(--text); }
-  nav.top a.gh { color: var(--on-lime); background: var(--lime); padding: 7px 14px; border-radius: 3px; font-weight: 600; }
-  nav.top a.gh:hover { background: var(--lime-deep); color: var(--on-lime); }
+  .actions { display: flex; align-items: center; gap: 12px; }
+
+  /* Buttons, as opensec.in draws them: a label and an arrow in its own cell. */
+  .btn { display: inline-flex; align-items: stretch; border-radius: 3px; text-decoration: none; font: 500 13px/1 var(--sans); letter-spacing: -0.015em; border: 1px solid transparent; transition: background .18s, border-color .18s, color .18s; }
+  .btn > span { display: inline-flex; align-items: center; padding: 12px 16px; }
+  .btn > i { display: inline-flex; align-items: center; justify-content: center; width: 40px; font-style: normal; border-left: 1px solid rgba(16, 21, 13, 0.2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+  .btn.ghost { border-color: var(--line); color: var(--text); }
+  .btn.ghost > i { border-left-color: var(--line); }
+  .btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.small > span { padding: 9px 13px; }
+  .btn.small > i { width: 34px; }
+  .link { color: var(--text); text-decoration: none; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; }
+  .link:hover { color: var(--accent); }
 
   /* Hero */
-  .hero { padding: 76px 0 88px; }
-  .hero .wrap { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 56px; align-items: center; }
-  h1 {
-    font-size: clamp(2.5rem, 4.9vw, 4.1rem);
-    line-height: 1.02;
-    letter-spacing: -0.03em;
-    font-weight: 500;
-    margin: 0 0 24px;
-    text-wrap: balance;
-  }
-  h1 .pix { font-family: var(--pixel); font-weight: 400; color: var(--lime); letter-spacing: 0; font-size: 0.92em; }
-  .lede { font-size: 1.15rem; line-height: 1.6; color: var(--text-soft); max-width: 34em; margin: 0 0 32px; text-wrap: pretty; }
-  .install { display: flex; align-items: stretch; max-width: 40em; border: 1px solid var(--rule-2); border-radius: 4px; background: var(--black-2); overflow: hidden; }
-  .install code { flex: 1; padding: 15px 16px; font-size: 0.84rem; white-space: nowrap; overflow-x: auto; scrollbar-width: thin; color: var(--text); }
-  .install code::before { content: "$ "; color: var(--lime); }
-  .copy { border: 0; background: var(--lime); color: var(--on-lime); font: 600 0.95rem var(--sans); padding: 0 16px; cursor: pointer; min-width: 84px; }
-  .copy:hover { background: var(--lime-deep); }
-  .alt { margin: 14px 0 0; font-size: 0.95rem; color: var(--text-dim); }
-  .alt code { color: var(--text); }
+  .hero { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 56px; align-items: center; padding: 88px 48px 96px; }
+  h1 { margin: 22px 0 26px; font-size: clamp(2.6rem, 5.2vw, 4.35rem); line-height: 1.02; letter-spacing: -0.065em; font-weight: 500; }
+  h1 .pix { display: inline-block; font-family: var(--pixel); font-weight: 400; color: var(--accent); letter-spacing: -0.02em; font-size: 0.9em; white-space: nowrap; }
+  .lede-1 { margin: 0 0 6px; color: var(--accent); font-weight: 500; font-size: 15px; }
+  .lede { margin: 0 0 34px; color: var(--soft); font-size: 15px; line-height: 1.65; max-width: 32em; }
 
-  /* The startup race, framed the way opensec.in frames its panels. */
-  .race { position: relative; padding: 26px 24px 20px; background: var(--black-2); border: 1px solid var(--rule); }
-  .race::before, .race::after { content: ""; position: absolute; width: 16px; height: 16px; border: 2px solid var(--lime); pointer-events: none; }
-  .race::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
-  .race::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
-  .race-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; }
-  .race-head h2 { margin: 0; font: 500 0.78rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-soft); }
-  .replay { border: 1px solid var(--rule-2); background: transparent; color: var(--text); border-radius: 3px; padding: 6px 12px; font: 500 0.78rem var(--mono); cursor: pointer; }
-  .replay:hover { border-color: var(--lime); color: var(--lime); }
-  .lane { display: grid; grid-template-columns: 9.5em 1fr 4.6em; align-items: center; gap: 12px; padding: 10px 0; font-family: var(--mono); font-size: 0.85rem; }
-  .lane + .lane { border-top: 1px solid var(--rule); }
-  .lane .who { color: var(--text-dim); }
-  .lane.bolt .who { color: var(--text); font-weight: 500; }
-  .track { position: relative; height: 8px; background: #151815; overflow: hidden; }
+  .install { border: 1px solid var(--line); background: var(--surface); max-width: 36rem; }
+  .install .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .install .tabs button { flex: none; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--muted); font: 400 11px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; padding: 11px 16px; cursor: pointer; }
+  .install .tabs button[aria-selected="true"] { color: var(--accent); background: var(--surface-2); }
+  .install .cmd { display: flex; align-items: stretch; }
+  .install code { flex: 1; min-width: 0; padding: 16px; font-size: 13px; white-space: nowrap; overflow-x: auto; scrollbar-width: none; color: var(--text); }
+  .install code::before { content: "$ "; color: var(--accent); }
+  .install code.ps::before { content: "PS> "; }
+  .copy { flex: none; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--soft); font: 400 11px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; padding: 0 16px; cursor: pointer; min-width: 84px; }
+  .copy:hover { color: var(--accent); }
+  .hero-links { display: flex; flex-wrap: wrap; align-items: center; gap: 22px; margin-top: 28px; }
+
+  /* The startup race, in a panel with opensec.in's corner marks. */
+  .panel { position: relative; border: 1px solid var(--line); background: rgba(8, 8, 8, 0.8); }
+  .panel .corner { position: absolute; width: 12px; height: 12px; border-color: var(--accent); border-style: solid; pointer-events: none; }
+  .panel .tl { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+  .panel .tr { top: -1px; right: -1px; border-width: 1px 1px 0 0; }
+  .panel .bl { bottom: -1px; left: -1px; border-width: 0 0 1px 1px; }
+  .panel .br { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+  .race { padding: 22px 22px 18px; }
+  .race-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 26px; }
+  .replay { border: 1px solid var(--line); background: transparent; color: var(--soft); border-radius: 2px; padding: 7px 11px; font: 400 11px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+  .replay:hover { border-color: var(--accent); color: var(--accent); }
+  .lane { padding: 14px 0; }
+  .lane + .lane { border-top: 1px dashed var(--line-soft); }
+  .lane .row1 { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
+  .lane.bolt .row1 { color: var(--text); }
+  .lane .ms { font: 400 22px/1 var(--pixel); color: var(--dim); font-variant-numeric: tabular-nums; }
+  .lane.bolt .ms { color: var(--accent); }
+  .lane .ms small { font: 400 11px var(--mono); margin-left: 3px; }
+  .track { position: relative; height: 8px; background: var(--bar-2); overflow: hidden; }
   .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--bar); }
-  .lane.bolt .fill { background: var(--lime); }
-  .lane .ms { text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-  .lane.bolt .ms { color: var(--lime); font-weight: 500; }
-  .lane .ready { visibility: hidden; }
-  .race-foot { margin: 16px 0 0; font-size: 0.82rem; color: var(--text-dim); line-height: 1.55; }
+  .lane.bolt .fill { background: var(--accent); box-shadow: 0 0 18px rgba(186, 252, 107, 0.45); }
+  .race-foot { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line-soft); display: flex; justify-content: space-between; gap: 12px; }
+
+  /* Strip under the hero */
+  .strip { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 18px 48px; flex-wrap: wrap; }
+  .strip .plats { display: flex; gap: 22px; flex-wrap: wrap; }
+  .strip .plats span + span::before { content: "+"; margin-right: 22px; color: var(--dim); }
 
   /* Sections */
-  section { padding: 84px 0; border-top: 1px solid var(--rule); }
-  h2.sec { font-size: clamp(1.8rem, 3.2vw, 2.5rem); line-height: 1.1; letter-spacing: -0.025em; font-weight: 500; margin: 0 0 14px; text-wrap: balance; }
-  .sec-lede { color: var(--text-soft); max-width: 40em; margin: 0 0 44px; font-size: 1.08rem; text-wrap: pretty; }
-  .sec-lede code { color: var(--text); }
+  section { padding: 104px 48px; }
+  .sec-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr); gap: 32px 56px; align-items: end; margin-bottom: 56px; }
+  h2 { margin: 16px 0 0; font-size: clamp(2.1rem, 4vw, 2.85rem); line-height: 1.09; letter-spacing: -0.055em; font-weight: 500; }
+  h2 .muted { color: var(--muted); }
+  h2 .pix { font-family: var(--pixel); font-weight: 400; color: var(--accent); letter-spacing: -0.02em; font-size: 0.92em; }
+  .sec-lede { margin: 0; color: var(--soft); font-size: 15px; line-height: 1.7; max-width: 34em; }
+  .sec-lede code { color: var(--text); font-size: 0.92em; }
 
-  .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--rule); }
-  .facts > div { padding: 28px 28px 8px 0; }
-  .facts > div + div { padding-left: 28px; border-left: 1px solid var(--rule); }
-  .facts h3 { font-size: 1.15rem; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 10px; }
-  .facts p { margin: 0; color: var(--text-soft); max-width: 30em; }
-  .facts .mark { display: block; width: 8px; height: 8px; background: var(--lime); margin-bottom: 18px; }
+  /* Video */
+  .video { padding: 10px; }
+  .video video { width: 100%; aspect-ratio: 16 / 9; background: #000; }
+  .video-foot { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); margin-top: 10px; }
+  .video-foot div { padding: 16px 16px 6px; }
+  .video-foot div + div { border-left: 1px solid var(--line-soft); }
+  .video-foot b { display: block; margin-top: 8px; font: 400 26px/1 var(--pixel); color: var(--accent); font-weight: 400; }
+  .video-foot span.what { display: block; margin-top: 6px; font-size: 13px; color: var(--soft); }
 
   /* Benchmarks */
-  .bench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px 56px; }
-  .metric h3 { font-size: 1rem; font-weight: 600; margin: 0 0 12px; }
-  .bars { display: grid; gap: 8px; }
-  .bar { display: grid; grid-template-columns: 7.2em 1fr; align-items: center; gap: 12px; font-size: 0.92rem; }
-  .bar .name { color: var(--text-dim); }
-  .bar.bolt .name { color: var(--text); font-weight: 600; }
-  .bar .line { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .bar .b { height: 12px; background: var(--bar); flex: none; }
-  .bar.bolt .b { background: var(--lime); }
-  .bar .v { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-soft); font-size: 0.9rem; }
-  .bar.bolt .v { color: var(--text); font-weight: 600; }
-  .ratio { display: inline-block; margin-left: 10px; color: var(--text-soft); font: 500 0.78rem var(--mono); }
-  .platforms { display: flex; gap: 8px; margin: 0 0 40px; }
-  .platforms button { border: 1px solid var(--rule-2); background: transparent; color: var(--text-soft); border-radius: 3px; padding: 7px 14px; font: 500 0.92rem var(--sans); cursor: pointer; }
-  .platforms button:hover { color: var(--text); }
-  .platforms button[aria-pressed="true"] { background: var(--text); color: var(--black); border-color: var(--text); }
-  .note { margin: 48px 0 0; padding: 18px 20px; border-left: 2px solid var(--lime); background: var(--black-2); color: var(--text-soft); max-width: 52em; font-size: 0.97rem; }
-  .note strong { color: var(--text); font-weight: 600; }
+  .plat-tabs { display: flex; gap: 1px; background: var(--line); border: 1px solid var(--line); width: fit-content; margin-bottom: 28px; }
+  .plat-tabs button { border: 0; background: var(--canvas); color: var(--muted); font: 400 11px var(--mono); letter-spacing: 0.09em; text-transform: uppercase; padding: 12px 18px; cursor: pointer; }
+  .plat-tabs button:hover { color: var(--text); }
+  .plat-tabs button[aria-pressed="true"] { color: var(--on-accent); background: var(--accent); }
+  .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+  .metric { padding: 26px 26px 24px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-width: 0; }
+  .metric .name { margin: 10px 0 18px; font-size: 16px; font-weight: 500; letter-spacing: -0.02em; min-height: 2.6em; }
+  .metric .x { font: 400 clamp(46px, 5vw, 64px)/0.9 var(--pixel); color: var(--accent); letter-spacing: -0.03em; }
+  .metric .x small { font: 400 12px var(--mono); color: var(--text); letter-spacing: 0.04em; margin-left: 6px; }
+  .metric .vs { margin: 10px 0 22px; font: 400 12px/1.5 var(--mono); color: var(--muted); }
+  .bars { display: grid; gap: 11px; }
+  .bar .l { display: flex; justify-content: space-between; font: 400 11.5px var(--mono); color: var(--muted); margin-bottom: 5px; }
+  .bar.bolt .l { color: var(--text); }
+  .bar .t { height: 5px; background: var(--bar-2); }
+  .bar .t i { display: block; height: 100%; background: var(--bar); width: 0; transition: width .9s var(--ease); }
+  .bar.bolt .t i { background: var(--accent); }
+  .bench-foot { margin-top: 26px; display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  .bench-foot p { margin: 0; color: var(--muted); font-size: 13px; max-width: 46em; }
+
+  /* Why: problem, then what Pi-Bolt does */
+  .why { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+  .why article { padding: 30px 30px 10px 0; }
+  .why article + article { padding-left: 30px; border-left: 1px solid var(--line); }
+  .why h3 { margin: 14px 0 12px; font-size: 21px; line-height: 1.2; letter-spacing: -0.035em; font-weight: 500; }
+  .why p { margin: 0 0 14px; color: var(--soft); font-size: 14.5px; line-height: 1.65; }
+  .why p.fix { color: var(--text); }
+  .why p.fix::before { content: "→ "; color: var(--accent); }
 
   /* Extensions */
-  .ext { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 56px; }
-  .ext article { padding: 24px 0; border-top: 1px solid var(--rule); }
-  .ext h3 { margin: 0 0 6px; font-size: 1.12rem; font-weight: 600; }
+  .ext { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+  .ext article { padding: 26px; display: flex; flex-direction: column; }
+  .ext h3 { margin: 14px 0 10px; font-size: 19px; letter-spacing: -0.03em; font-weight: 500; }
   .ext h3 a { color: var(--text); text-decoration: none; }
-  .ext h3 a:hover { color: var(--lime); }
-  .ext p { margin: 0 0 14px; color: var(--text-soft); }
-  .ext pre { margin: 0; padding: 11px 14px; border: 1px solid var(--rule-2); border-radius: 4px; background: var(--black-2); overflow-x: auto; font-size: 0.85rem; color: var(--text); }
+  .ext h3 a:hover { color: var(--accent); }
+  .ext p { margin: 0 0 20px; color: var(--soft); font-size: 14.5px; flex: 1; }
+  .ext pre { margin: 0; padding: 12px 14px; border: 1px solid var(--line); background: var(--canvas); overflow-x: auto; font-size: 12.5px; color: var(--text); scrollbar-width: none; }
+
+  /* FAQ */
+  .faq { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 56px; }
+  .faq .side p { margin: 22px 0 0; }
+  .qs { border-top: 1px solid var(--line); }
+  details { border-bottom: 1px solid var(--line); }
+  summary { list-style: none; display: grid; grid-template-columns: 1fr 34px; gap: 18px; align-items: center; padding: 22px 0; cursor: pointer; }
+  summary::-webkit-details-marker { display: none; }
+  summary .q { display: block; margin-top: 8px; font-size: 19px; font-weight: 500; letter-spacing: -0.02em; color: #fff; }
+  summary .plus { width: 34px; height: 34px; border: 1px solid var(--line); display: grid; place-items: center; color: var(--soft); font: 300 18px var(--mono); transition: border-color .18s, color .18s; }
+  summary .plus i { font-style: normal; transition: transform .32s var(--ease); }
+  summary:hover .plus { border-color: var(--soft); }
+  details[open] summary .plus { border-color: var(--accent); color: var(--accent); }
+  details[open] summary .plus i { transform: rotate(45deg); }
+  summary .index { text-transform: uppercase; }
+  details .a { padding: 0 52px 24px 0; color: var(--soft); font-size: 15px; line-height: 1.7; }
+  details .a p { margin: 0 0 10px; }
+  details .a code { color: var(--text); font-size: 0.9em; }
+
+  /* Closing */
+  .closing { text-align: center; padding: 120px 48px; background: radial-gradient(600px 300px at 50% 60%, rgba(186, 252, 107, 0.07), transparent 70%); }
+  .closing h2 { font-size: clamp(2.4rem, 5vw, 3.9rem); margin: 18px 0 34px; }
+  .closing .row { display: flex; justify-content: center; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .closing .install { margin: 0 auto 26px; text-align: left; }
+  .closing .micro { margin-top: 22px; }
 
   /* Footer */
-  footer { border-top: 1px solid var(--rule); background: #080808; padding: 48px 0 60px; color: var(--text-dim); font-size: 0.93rem; }
-  footer .wrap { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 32px; }
-  footer h4 { margin: 0 0 12px; color: var(--text); font-size: 0.95rem; font-weight: 600; }
-  footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
-  footer a { color: var(--text-soft); text-decoration: none; }
-  footer a:hover { color: var(--lime); }
-  footer p { margin: 0 0 10px; max-width: 30em; }
-  footer p a { color: var(--text); text-decoration: underline; text-decoration-color: var(--rule-2); }
+  footer { padding: 0; }
+  .foot-top { display: grid; grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(0, 1fr)); }
+  .foot-top > div { padding: 40px 32px 44px; }
+  .foot-top > div + div { border-left: 1px solid var(--line-soft); }
+  .foot-top .about p { margin: 18px 0 0; color: var(--soft); font-size: 14px; max-width: 24em; }
+  .foot-top h4 { margin: 0 0 18px; }
+  .foot-top ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .foot-top li a { color: var(--soft); text-decoration: none; font-size: 14px; }
+  .foot-top li a:hover { color: var(--accent); }
+  .foot-bottom { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding: 20px 32px; color: var(--muted); font-size: 12.5px; }
+  .foot-bottom a { color: var(--soft); text-decoration: none; }
+  .foot-bottom a:hover { color: var(--accent); }
+  .wordmark { overflow: hidden; padding: 6px 0 0; user-select: none; }
+  .wordmark div { font: 600 clamp(88px, 19vw, 260px)/0.82 var(--sans); letter-spacing: -0.07em; color: transparent; -webkit-text-stroke: 1px rgba(186, 252, 107, 0.32); white-space: nowrap; text-align: center; transform: translateY(14%); }
 
-  @media (max-width: 900px) {
-    .hero { padding: 48px 0 64px; }
-    .hero .wrap, .bench, .ext { grid-template-columns: minmax(0, 1fr); }
-    .facts { grid-template-columns: minmax(0, 1fr); }
-    .facts > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--rule); }
-    footer .wrap { grid-template-columns: minmax(0, 1fr); }
-    nav.top a:not(.gh) { display: none; }
+  /* Reveal on scroll */
+  .reveal { opacity: 0; transform: translateY(12px); transition: opacity .5s var(--ease), transform .5s var(--ease); }
+  .reveal.on { opacity: 1; transform: none; }
+
+  @media (max-width: 1000px) {
+    nav.top { display: none; }
+    .actions { margin-left: auto; }
+    .hero { grid-template-columns: minmax(0, 1fr); padding: 64px 32px 72px; gap: 44px; }
+    .sec-head, .faq { grid-template-columns: minmax(0, 1fr); }
+    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .why, .ext { grid-template-columns: minmax(0, 1fr); }
+    .why article, .why article + article { padding: 28px 0 10px; border-left: 0; }
+    .why article + article { border-top: 1px solid var(--line); }
+    .foot-top { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .foot-top > div:nth-child(3) { border-left: 0; }
+    .foot-top > div:nth-child(n+3) { border-top: 1px solid var(--line-soft); }
+    section, .strip, .closing { padding-left: 32px; padding-right: 32px; }
+    .video-foot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .video-foot div:nth-child(3) { border-left: 0; }
   }
-  @media (max-width: 520px) {
-    .lane { grid-template-columns: 6.6em 1fr 4em; font-size: 0.78rem; }
-    .install code { font-size: 0.78rem; padding: 14px 12px; }
+  @media (max-width: 640px) {
+    header.site .in { padding: 0 16px; height: 64px; }
+    .actions .ghost { display: none; }
+    .hero { padding: 48px 16px 56px; }
+    section, .strip, .closing { padding-left: 16px; padding-right: 16px; }
+    section { padding-top: 72px; padding-bottom: 72px; }
+    .metrics { grid-template-columns: minmax(0, 1fr); }
+    .plat-tabs { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+    .foot-top { grid-template-columns: minmax(0, 1fr); }
+    .foot-top > div + div { border-left: 0; border-top: 1px solid var(--line-soft); }
+    .foot-bottom { padding: 18px 16px; }
+    .video { padding: 6px; }
+    details .a { padding-right: 0; }
   }
-  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .bar .t i { transition: none; }
+  }
 </style>
 </head>
 <body>
 <header class="site">
-  <div class="wrap">
-    <a class="brand" href="./"><img src="logo.svg" alt="">Pi-Bolt</a>
+  <div class="in">
+    <a class="brand" href="./"><img src="logo.svg" alt=""><span>Pi-<b>Bolt</b></span></a>
     <nav class="top" aria-label="Main">
+      <a href="#video">Video</a>
       <a href="#benchmarks">Benchmarks</a>
+      <a href="#why">How it works</a>
       <a href="#extensions">Extensions</a>
+      <a href="#faq">FAQ</a>
       <a href="docs/">Docs</a>
-      <a class="gh" href="https://github.com/opensec-git/Pi-Bolt">GitHub</a>
     </nav>
+    <div class="actions">
+      <a class="btn ghost small" href="https://github.com/opensec-git/Pi-Bolt"><span>GitHub</span><i aria-hidden="true">↗</i></a>
+      <a class="btn primary small" href="#install"><span>Install</span><i aria-hidden="true">↓</i></a>
+    </div>
   </div>
 </header>
 
-<main>
+<main class="frame">
   <div class="hero">
-    <div class="wrap">
-      <div>
-        <h1>The Pi coding agent, compiled to <span class="pix">machine&nbsp;code.</span></h1>
-        <p class="lede">Pi-Bolt is Pi as one native executable for Linux, macOS and Windows. Every function is compiled before you run it, so
-          nothing is parsed or JIT-compiled at launch: it starts two to three times sooner than Pi on Bun and uses about a third of its
-          CPU.</p>
-        <div class="install">
+    <div>
+      <span class="micro accent bracket">Pi-Bolt 0.9.7 · Pi 1.3.0</span>
+      <h1>The Pi coding agent,<br>compiled to <span class="pix" id="scramble" data-text="native code.">native code.</span></h1>
+      <p class="lede-1">Same Pi. Same extensions. Same config.</p>
+      <p class="lede">Every function is compiled to machine code before you run it, and Pi only redoes what changed. It's ready the moment
+        you hit Enter, stays light while answers stream, and is still quick hours into a session.</p>
+      <div class="install" id="install">
+        <div class="tabs" role="tablist" aria-label="Your system">
+          <button type="button" role="tab" aria-selected="true" data-os="sh">Linux · macOS · Termux</button>
+          <button type="button" role="tab" aria-selected="false" data-os="ps">Windows</button>
+        </div>
+        <div class="cmd">
           <code id="cmd">curl -fsSL https://pi-bolt.opensec.in/install.sh | sh</code>
           <button class="copy" type="button" data-copy="cmd" aria-label="Copy the install command">Copy</button>
         </div>
-        <p class="alt">On Windows, in PowerShell: <code>irm https://pi-bolt.opensec.in/install.ps1 | iex</code>, or in Command Prompt: <code>powershell -c "irm https://pi-bolt.opensec.in/install.ps1 | iex"</code>. Or <code>npm install -g --allow-scripts=pi-bolt pi-bolt</code>. Then run <code>pi-bolt</code> in your project.</p>
       </div>
+      <div class="hero-links">
+        <a class="btn primary" href="docs/quickstart.html"><span>Get started</span><i aria-hidden="true">→</i></a>
+        <a class="link" href="#video">Watch it race Pi on Node <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
 
-      <div class="race" aria-labelledby="race-title">
-        <div class="race-head">
-          <h2 id="race-title">Launch to prompt</h2>
-          <button class="replay" type="button" id="replay">Run again</button>
-        </div>
-        <div class="lane bolt" data-ms="38"><span class="who">Pi-Bolt</span><span class="track"><span class="fill"></span></span><span class="ms"><span class="ready">38 ms</span></span></div>
-        <div class="lane" data-ms="116"><span class="who">Pi on Bun 1.4.2</span><span class="track"><span class="fill"></span></span><span class="ms"><span class="ready">116 ms</span></span></div>
-        <div class="lane" data-ms="296"><span class="who">Pi on Node 24</span><span class="track"><span class="fill"></span></span><span class="ms"><span class="ready">296 ms</span></span></div>
-        <p class="race-foot">Pi-Bolt 0.8.5 against Pi 1.1.0 on Bun and Node, from launch to an interactive prompt, measured on an AMD EPYC 7B13 server and replayed ten times
-          slower. On your machine the times differ; the order does not.</p>
+    <div class="panel race" aria-labelledby="race-title">
+      <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+      <div class="race-head">
+        <span class="micro" id="race-title">// Launch to prompt</span>
+        <button class="replay" type="button" id="replay">Run again</button>
       </div>
+      <div class="lane bolt" data-ms="45"><div class="row1"><span>Pi-Bolt</span><span class="ms" data-v="45">0<small>ms</small></span></div><div class="track"><span class="fill"></span></div></div>
+      <div class="lane" data-ms="382"><div class="row1"><span>Pi on Bun 1.4.2</span><span class="ms" data-v="382">0<small>ms</small></span></div><div class="track"><span class="fill"></span></div></div>
+      <div class="lane" data-ms="411"><div class="row1"><span>Pi on Node 24</span><span class="ms" data-v="411">0<small>ms</small></span></div><div class="track"><span class="fill"></span></div></div>
+      <div class="race-foot"><span class="micro">Linux x86-64 · one CPU</span><span class="micro">Replayed 10× slower</span></div>
     </div>
   </div>
 
-  <section aria-labelledby="what">
-    <div class="wrap">
-      <h2 class="sec" id="what">The Pi you already use, without the wait</h2>
-      <p class="sec-lede">Your providers, settings, sessions and extensions carry over from <code>~/.pi/agent</code>. Pi-Bolt changes
-        how Pi runs, not what it does.</p>
-      <div class="facts">
-        <div>
-          <span class="mark" aria-hidden="true"></span>
-          <h3>Compiled ahead of time</h3>
-          <p>Every function is turned into x86-64 or ARM64 machine code when the executable is built, and Pi's modules are stored
-            already loaded. Launching maps them from the file.</p>
-        </div>
-        <div>
-          <span class="mark" aria-hidden="true"></span>
-          <h3>Less CPU over a session</h3>
-          <p>Long answers are drawn incrementally and large files are written without freezing the screen, so a session costs about
-            a third of the CPU of Pi on Bun.</p>
-        </div>
-        <div>
-          <span class="mark" aria-hidden="true"></span>
-          <h3>Self-contained</h3>
-          <p>One executable, no Node.js or Bun required. Releases are signed, the installer checks them, and extensions install with
-            Pi-Bolt's own package manager when npm is absent.</p>
-        </div>
+  <div class="rule"></div>
+  <div class="strip">
+    <span class="micro">Runs on</span>
+    <div class="plats micro"><span>Linux x86-64</span><span>Linux ARM64</span><span>macOS Apple silicon</span><span>Windows x64</span><span>Android (Termux)</span></div>
+  </div>
+
+  <div class="rule"></div>
+  <section id="video" aria-labelledby="video-title">
+    <div class="sec-head">
+      <div>
+        <span class="index">// 01</span> <span class="micro">Side by side</span>
+        <h2 id="video-title">Same agent.<br><span class="muted">One compiled to native code.</span></h2>
+      </div>
+      <p class="sec-lede">A real model, a real task, the same prompt on both: start-up, a game built with todos and two subagents, and a long
+        answer streamed into tmux and cmux. Pi on Node on the left, Pi-Bolt on the right.</p>
+    </div>
+    <div class="panel video reveal">
+      <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+      <video controls preload="none" playsinline poster="video-poster.jpg" src="pi-bolt.mp4" aria-label="Pi-Bolt and Pi on Node 24 side by side, 2 minutes 11 seconds"></video>
+      <div class="video-foot">
+        <div><span class="micro">Ready to type</span><b>6×</b><span class="what">sooner: 133 ms, not 840 ms</span></div>
+        <div><span class="micro">Building a game</span><b>3×</b><span class="what">less CPU and memory</span></div>
+        <div><span class="micro">Streaming into tmux</span><b>4×</b><span class="what">less CPU</span></div>
+        <div><span class="micro">Every platform</span><b>4/4</b><span class="what">Linux, ARM64, macOS, Windows</span></div>
       </div>
     </div>
   </section>
 
+  <div class="rule"></div>
   <section id="benchmarks" aria-labelledby="bench-title">
-    <div class="wrap">
-      <h2 class="sec" id="bench-title">Benchmarks</h2>
-      <p class="sec-lede">Pi run three ways: compiled by Pi-Bolt 0.8.5, and Pi 1.1.0 as released on stock Bun and from its npm
-        package on Node. Medians of fresh processes, interleaved across the runtimes. Lower
-        is better.</p>
-      <div class="platforms" role="group" aria-label="Platform">
-        <button type="button" data-platform="linux" aria-pressed="true">Linux x86-64</button>
-        <button type="button" data-platform="mac" aria-pressed="false">macOS on Apple silicon</button>
+    <div class="sec-head">
+      <div>
+        <span class="index">// 02</span> <span class="micro">Benchmarks</span>
+        <h2 id="bench-title">Faster where you feel it.<br><span class="muted">On every platform.</span></h2>
       </div>
-      <div class="bench" id="bench"></div>
-      <p class="note"><strong>These are measurements, not guarantees.</strong> Each set comes from one machine: an AMD EPYC 7B13
-        server for Linux, an M5 MacBook Air for macOS. On other hardware the times differ; what carries over is the comparison.
-        Every figure, the method and the raw data are in <a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
+      <p class="sec-lede">Pi-Bolt 0.9.7 against Pi 1.3.0 as released, run by stock Bun 1.4.2, Node 22 and Node 24. The same work against the
+        same local model on GitHub's runners. Lower is better.</p>
+    </div>
+    <div class="plat-tabs" role="group" aria-label="Platform">
+      <button type="button" data-platform="lx" aria-pressed="true">Linux x86-64</button>
+      <button type="button" data-platform="la" aria-pressed="false">Linux ARM64</button>
+      <button type="button" data-platform="mac" aria-pressed="false">macOS</button>
+      <button type="button" data-platform="win" aria-pressed="false">Windows</button>
+    </div>
+    <div class="metrics" id="metrics"></div>
+    <div class="bench-foot">
+      <p id="bench-machine"></p>
+      <a class="link" href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/BENCHMARKS.md#097-against-pi-as-released">Method and raw data <span aria-hidden="true">↗</span></a>
     </div>
   </section>
 
+  <div class="rule"></div>
+  <section id="why" aria-labelledby="why-title">
+    <div class="sec-head">
+      <div>
+        <span class="index">// 03</span> <span class="micro">How it works</span>
+        <h2 id="why-title">Not a faster model.<br><span class="muted">Less work for the same output.</span></h2>
+      </div>
+      <p class="sec-lede">What you see on screen and the bytes sent to the model are the same as Pi's, line for line. Pi-Bolt changes how much
+        work it takes to get there.</p>
+    </div>
+    <div class="why">
+      <article class="reveal">
+        <span class="index">// 01</span> <span class="micro">Streaming</span>
+        <h3>Redraws only what changed</h3>
+        <p>Stock Pi redraws the message every time a few words arrive, and each redraw re-lexes the whole Markdown, re-wraps every block and
+          re-highlights every code block. The longer the answer, the more each redraw costs.</p>
+        <p class="fix">Pi-Bolt keeps what it has rendered and redoes the last block or two, with highlighted code cached.</p>
+      </article>
+      <article class="reveal">
+        <span class="index">// 02</span> <span class="micro">Large files and long sessions</span>
+        <h3>Never starts over</h3>
+        <p>A file written through a tool call arrives in thousands of chunks, and stock Pi re-parses all of it for each one. Every request also
+          serializes the whole conversation from scratch, so each prompt costs more than the last.</p>
+        <p class="fix">Pi-Bolt parses as the file grows and builds each request from the previous one's bytes plus what's new.</p>
+      </article>
+      <article class="reveal">
+        <span class="index">// 03</span> <span class="micro">Start-up</span>
+        <h3>Compiled ahead of time</h3>
+        <p>Pi on Node or Bun parses and compiles its JavaScript every time it starts. Pi-Bolt turns every function into x86-64 or ARM64
+          machine code when the executable is built, and stores Pi's modules already loaded.</p>
+        <p class="fix">One executable, no Node.js or Bun required. Launching maps the code from the file.</p>
+      </article>
+    </div>
+  </section>
+
+  <div class="rule"></div>
   <section id="extensions" aria-labelledby="ext-title">
-    <div class="wrap">
-      <h2 class="sec" id="ext-title">Extensions</h2>
-      <p class="sec-lede">Pi extensions and Pi packages work as they do in Pi. The installer offers two that OpenSec maintains for
-        Pi-Bolt, prebuilt for Bun so that they load without being transpiled.</p>
-      <div class="ext">
-        <article>
-          <h3><a href="https://www.npmjs.com/package/opensec-pi-subagents">opensec-pi-subagents</a></h3>
-          <p>Specialized agents in separate sessions that inherit the parent's model and thinking level, with parallel workflows and
-            scheduled jobs.</p>
-          <pre><code>pi-bolt install npm:opensec-pi-subagents</code></pre>
-        </article>
-        <article>
-          <h3><a href="https://www.npmjs.com/package/opensec-pi-todo">opensec-pi-todo</a></h3>
-          <p>A todo list for the model, shown as a live panel above the editor. It survives <code>/reload</code> and conversation
-            compaction.</p>
-          <pre><code>pi-bolt install npm:opensec-pi-todo</code></pre>
-        </article>
+    <div class="sec-head">
+      <div>
+        <span class="index">// 04</span> <span class="micro">Extensions</span>
+        <h2 id="ext-title">Your extensions work.<br><span class="muted">Ours are built for it.</span></h2>
+      </div>
+      <p class="sec-lede">Pi extensions and packages work unchanged. Run <code>pi-bolt compile</code> to compile the ones you use every day into
+        your build. The installer offers three that OpenSec maintains, and asks first.</p>
+    </div>
+    <div class="ext">
+      <article class="panel reveal">
+        <span class="micro accent">Subagents</span>
+        <h3><a href="https://www.npmjs.com/package/opensec-pi-subagents">opensec-pi-subagents</a></h3>
+        <p>Specialized agents in separate sessions, parallel workflows and scheduled jobs.</p>
+        <pre><code>pi-bolt install npm:opensec-pi-subagents</code></pre>
+      </article>
+      <article class="panel reveal">
+        <span class="micro accent">Todo</span>
+        <h3><a href="https://www.npmjs.com/package/opensec-pi-todo">opensec-pi-todo</a></h3>
+        <p>A todo list for the model, shown as a live panel above the editor.</p>
+        <pre><code>pi-bolt install npm:opensec-pi-todo</code></pre>
+      </article>
+      <article class="panel reveal">
+        <span class="micro accent">Search</span>
+        <h3><a href="https://www.npmjs.com/package/opensec-pi-fff">opensec-pi-fff</a></h3>
+        <p>pi-fff's fast fuzzy find, grep and <code>@</code>-mentions, at full speed on the default build.</p>
+        <pre><code>pi-bolt install npm:opensec-pi-fff</code></pre>
+      </article>
+    </div>
+  </section>
+
+  <div class="rule"></div>
+  <section id="faq" aria-labelledby="faq-title">
+    <div class="faq">
+      <div class="side">
+        <span class="micro">The details</span>
+        <h2 id="faq-title">A few <span class="pix">questions.</span></h2>
+        <p><a class="link" href="docs/faq.html">All questions <span aria-hidden="true">→</span></a></p>
+      </div>
+      <div class="qs">
+        <details>
+          <summary><span><span class="index">// 01 Extensions</span><span class="q">Do my extensions work?</span></span><span class="plus" aria-hidden="true"><i>+</i></span></summary>
+          <div class="a"><p>Yes, unchanged. Pi's own code is compiled to machine code; an extension loaded at run time is interpreted, which light
+            extensions don't notice. For heavy ones, <code>pi-bolt compile</code> compiles them into your build, or install the JIT build.</p></div>
+        </details>
+        <details>
+          <summary><span><span class="index">// 02 Pi</span><span class="q">Does it replace Pi?</span></span><span class="plus" aria-hidden="true"><i>+</i></span></summary>
+          <div class="a"><p>No. It installs next to Pi as <code>pi-bolt</code> and uses your configuration in <code>~/.pi/agent</code> as it is,
+            so both can stay installed and you can switch back anytime.</p></div>
+        </details>
+        <details>
+          <summary><span><span class="index">// 03 Platforms</span><span class="q">Where does it run?</span></span><span class="plus" aria-hidden="true"><i>+</i></span></summary>
+          <div class="a"><p>Linux x86-64 and ARM64 with glibc 2.17 or later, macOS 13 or later on Apple silicon, Windows 10 (1809) or 11 on x64,
+            and Android 7 or later in Termux. Windows on ARM runs the x64 build.</p></div>
+        </details>
+        <details>
+          <summary><span><span class="index">// 04 Updates</span><span class="q">How do I update, or go back?</span></span><span class="plus" aria-hidden="true"><i>+</i></span></summary>
+          <div class="a"><p><code>pi-bolt update</code> installs the latest release, and <code>pi-bolt update --rollback</code> puts back the build
+            it replaced. Every release is signed, and the installer and the updater check the signature before installing anything.</p></div>
+        </details>
       </div>
     </div>
   </section>
+
+  <div class="rule"></div>
+  <div class="closing">
+    <span class="micro accent">The same Pi</span>
+    <h2>Less waiting.<br>More <span class="pix">building.</span></h2>
+    <div class="install">
+      <div class="tabs" role="tablist" aria-label="Your system">
+        <button type="button" role="tab" aria-selected="true" data-os="sh">Linux · macOS · Termux</button>
+        <button type="button" role="tab" aria-selected="false" data-os="ps">Windows</button>
+      </div>
+      <div class="cmd">
+        <code id="cmd2">curl -fsSL https://pi-bolt.opensec.in/install.sh | sh</code>
+        <button class="copy" type="button" data-copy="cmd2" aria-label="Copy the install command">Copy</button>
+      </div>
+    </div>
+    <div class="row">
+      <a class="btn primary" href="https://github.com/opensec-git/Pi-Bolt"><span>Star it on GitHub</span><i aria-hidden="true">↗</i></a>
+      <a class="link" href="docs/">Read the documentation <span aria-hidden="true">→</span></a>
+    </div>
+    <p class="micro">Open source · MIT licensed · Signed releases</p>
+  </div>
+
+  <div class="rule"></div>
+  <footer>
+    <div class="foot-top">
+      <div class="about">
+        <a class="brand" href="./"><img src="logo.svg" alt=""><span>Pi-<b>Bolt</b></span></a>
+        <p>An independent fork of <a href="https://github.com/earendil-works/pi">Pi</a> by OpenSec, not affiliated with Pi's authors or with
+          Oven. Built on Pi by Mario Zechner and contributors, and on Bun by Oven.</p>
+      </div>
+      <div>
+        <h4><span class="index">// 01</span> <span class="micro">Use it</span></h4>
+        <ul>
+          <li><a href="docs/quickstart.html">Getting started</a></li>
+          <li><a href="docs/installation.html">Installation</a></li>
+          <li><a href="https://github.com/opensec-git/Pi-Bolt/releases/latest">Latest release</a></li>
+          <li><a href="https://www.npmjs.com/package/pi-bolt">npm package</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="index">// 02</span> <span class="micro">Learn</span></h4>
+        <ul>
+          <li><a href="docs/">Documentation</a></li>
+          <li><a href="docs/how-it-works.html">How it works</a></li>
+          <li><a href="docs/benchmarks.html">Benchmarks</a></li>
+          <li><a href="docs/troubleshooting.html">Troubleshooting</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="index">// 03</span> <span class="micro">Project</span></h4>
+        <ul>
+          <li><a href="https://github.com/opensec-git/Pi-Bolt">Source on GitHub</a></li>
+          <li><a href="https://github.com/opensec-git/Pi-Bolt/issues">Issues</a></li>
+          <li><a href="https://github.com/opensec-git/Pi-Bolt/security/advisories/new">Report a vulnerability</a></li>
+          <li><a href="https://opensec.in">OpenSec</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="rule"></div>
+    <div class="foot-bottom">
+      <span>© 2026 OpenSec · MIT licensed</span>
+      <span class="micro">The same Pi, compiled.</span>
+      <a href="#top" onclick="window.scrollTo(0, 0); return false;">Back to top ↑</a>
+    </div>
+    <div class="wordmark" aria-hidden="true"><div>Pi-Bolt</div></div>
+  </footer>
 </main>
 
-<footer>
-  <div class="wrap">
-    <div>
-      <p><strong>Pi-Bolt</strong> is an independent fork of <a href="https://github.com/earendil-works/pi">Pi</a>, not affiliated
-        with Pi's authors or with Oven. Built on Pi by Mario Zechner and contributors, and on Bun by Oven.</p>
-      <p>MIT licensed. Linux x86-64 with glibc 2.17 or later; macOS 13 or later on Apple silicon; Windows 10 (1809) or 11 on x64.</p>
-    </div>
-    <div>
-      <h4>Use it</h4>
-      <ul>
-        <li><a href="docs/quickstart.html">Getting started</a></li>
-        <li><a href="docs/">Documentation</a></li>
-        <li><a href="https://github.com/opensec-git/Pi-Bolt/releases/latest">Latest release</a></li>
-        <li><a href="https://www.npmjs.com/package/pi-bolt">npm package</a></li>
-        <li><a href="docs/troubleshooting.html">Troubleshooting</a></li>
-      </ul>
-    </div>
-    <div>
-      <h4>Learn more</h4>
-      <ul>
-        <li><a href="docs/how-it-works.html">How it works</a></li>
-        <li><a href="docs/extensions.html">Extensions</a></li>
-        <li><a href="https://github.com/opensec-git/Pi-Bolt">Source on GitHub</a></li>
-        <li><a href="https://github.com/opensec-git/Pi-Bolt/security/advisories/new">Report a vulnerability</a></li>
-      </ul>
-    </div>
-  </div>
-</footer>
-
 <script>
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Install commands, per system.
+  var commands = {
+    sh: "curl -fsSL https://pi-bolt.opensec.in/install.sh | sh",
+    ps: "irm https://pi-bolt.opensec.in/install.ps1 | iex"
+  };
+  document.querySelectorAll(".install").forEach(function (box) {
+    var code = box.querySelector("code");
+    box.querySelectorAll("[data-os]").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        box.querySelectorAll("[data-os]").forEach(function (t) { t.setAttribute("aria-selected", String(t === tab)); });
+        code.textContent = commands[tab.dataset.os];
+        code.classList.toggle("ps", tab.dataset.os === "ps");
+      });
+    });
+  });
+  if (/Windows/.test(navigator.userAgent)) document.querySelectorAll('[data-os="ps"]').forEach(function (t) { t.click(); });
+
   // Copy buttons.
   document.querySelectorAll("[data-copy]").forEach(function (button) {
     button.addEventListener("click", function () {
       var text = document.getElementById(button.dataset.copy).textContent;
-      var done = function () {
+      if (!navigator.clipboard) return;
+      navigator.clipboard.writeText(text).then(function () {
         button.textContent = "Copied";
         setTimeout(function () { button.textContent = "Copy"; }, 1600);
-      };
-      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+      }, function () {});
     });
   });
 
-  // The startup race: each lane fills in its measured time, ten times slower.
-  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+  // The headline's last words resolve from scrambled glyphs, as on opensec.in.
+  (function () {
+    var el = document.getElementById("scramble");
+    var target = el.dataset.text, glyphs = "/#<[+{%0>]}=*";
+    if (reduce) return;
+    el.style.minWidth = el.offsetWidth + "px";
+    var frame = 0, total = 26;
+    function tick() {
+      var out = "";
+      for (var i = 0; i < target.length; i++) {
+        var settle = (i / target.length) * total * 0.8 + 6;
+        out += target[i] === " " || frame >= settle ? target[i] : glyphs[(Math.random() * glyphs.length) | 0];
+      }
+      el.textContent = out;
+      if (++frame <= total + 2) setTimeout(tick, 45);
+      else el.textContent = target;
+    }
+    tick();
+  })();
+
+  // The start-up race: each lane fills in its measured time, ten times slower, and counts up.
   function race() {
-    var lanes = document.querySelectorAll(".lane");
-    var longest = 0;
+    var lanes = document.querySelectorAll(".lane"), longest = 0;
     lanes.forEach(function (lane) { longest = Math.max(longest, +lane.dataset.ms); });
     lanes.forEach(function (lane) {
-      var ms = +lane.dataset.ms;
-      var fill = lane.querySelector(".fill");
-      var ready = lane.querySelector(".ready");
+      var ms = +lane.dataset.ms, fill = lane.querySelector(".fill"), label = lane.querySelector(".ms");
       var width = (100 * ms / longest).toFixed(1) + "%";
+      var show = function (v) { label.firstChild.nodeValue = String(Math.round(v)); };
       fill.getAnimations().forEach(function (a) { a.cancel(); });
-      ready.style.visibility = "hidden";
-      if (reduce.matches) {
-        fill.style.width = width;
-        ready.style.visibility = "visible";
-        return;
-      }
+      if (reduce) { fill.style.width = width; show(ms); return; }
       fill.style.width = "0";
-      var animation = fill.animate([{ width: "0" }, { width: width }], { duration: ms * 10, easing: "linear", fill: "forwards", delay: 250 });
-      animation.onfinish = function () { fill.style.width = width; ready.style.visibility = "visible"; };
+      show(0);
+      var start = performance.now() + 250, duration = ms * 10;
+      fill.animate([{ width: "0" }, { width: width }], { duration: duration, easing: "linear", fill: "forwards", delay: 250 })
+        .onfinish = function () { fill.style.width = width; };
+      (function count(now) {
+        var t = Math.min(1, Math.max(0, (now - start) / duration));
+        show(ms * t);
+        if (t < 1) requestAnimationFrame(count);
+      })(performance.now());
     });
   }
   document.getElementById("replay").addEventListener("click", race);
   race();
 
-  // Benchmarks, from docs/BENCHMARKS.md (Pi-Bolt 0.8.5; Pi 1.1.0 as released). [Pi-Bolt, Bun, Node]
+  // Benchmarks: Pi-Bolt 0.9.7 against Pi 1.3.0 as released (bench/results/2026-10-21-stock-bun-0.9.7).
+  // [Pi-Bolt, Pi on Bun 1.4.2, Pi on Node 22, Pi on Node 24]
+  var builds = ["Pi-Bolt", "Pi on Bun", "Pi on Node 22", "Pi on Node 24"];
+  var metrics = [
+    ["Writing a 400 KB file through a tool call", "s", "faster", "write"],
+    ["CPU while a 60,000-character answer streams", "s", "less", "answer"],
+    ["CPU per prompt, 40 prompts into a session", "ms", "less", "prompt"],
+    ["CPU for an interactive session", "ms", "less", "session"],
+    ["Memory after 40 prompts", "MB", "less", "memory"],
+    ["Ready to type", "ms", "sooner", "ready"]
+  ];
   var data = {
-    linux: {
-      runtimes: ["Pi-Bolt", "Bun 1.4.2", "Node 24"],
-      metrics: [
-        ["Ready to type", "ms", [38, 116, 296], "faster"],
-        ["One prompt (pi -p), CPU", "ms", [61, 283, 550], "less"],
-        ["Interactive session, CPU", "ms", [193, 746, 1093], "less"],
-        ["Streaming a 60,000-character answer, CPU", "s", [2.6, 40.2, 38.7], "less"],
-        ["Writing a 200 KB file through a tool call", "s", [0.6, 24.0, 32.5], "faster"],
-        ["Memory after a 4.2M-token session", "MB", [134, 253, 536], "less"]
-      ]
-    },
-    mac: {
-      runtimes: ["Pi-Bolt", "Bun 1.4.2", "Node 26"],
-      metrics: [
-        ["Ready to type", "ms", [41, 100, 348], "faster"],
-        ["One prompt (pi -p), CPU", "ms", [49, 221, 512], "less"],
-        ["Interactive session, CPU", "ms", [139, 561, 937], "less"],
-        ["Streaming a 60,000-character answer, CPU", "s", [6.5, 37.9, 37.6], "less"],
-        ["Writing a 200 KB file through a tool call", "s", [0.4, 22.6, 28.1], "faster"],
-        ["Memory after a 4.2M-token session", "MB", [38, 92, 1581], "less"]
-      ]
-    }
+    lx: { machine: "GitHub's ubuntu-24.04 runner, Intel Xeon Platinum 8370C, pinned to one CPU.",
+      write: [1.3, 182.2, 195.3, 145.8], answer: [2.94, 41.14, 40.03, 37.87], prompt: [65.2, 349.8, 379.2, 362.1],
+      session: [190, 1189, 1196, 1179], memory: [165.5, 289.4, 508.4, 578.0], ready: [45, 382, 383, 411] },
+    la: { machine: "GitHub's ubuntu-24.04-arm runner, Neoverse-N2, pinned to one CPU.",
+      write: [1.3, 157.3, 173.7, 131.8], answer: [3.01, 40.45, 39.84, 37.55], prompt: [57.8, 308.3, 328.7, 301.0],
+      session: [196, 1187, 1212, 1183], memory: [196.5, 267.4, 545.0, 612.2], ready: [44, 353, 360, 410] },
+    mac: { machine: "GitHub's macos-15 runner, Apple M1 (virtual), 3 CPUs.",
+      write: [1.7, 129.7, 178.9, 129.2], answer: [5.40, 66.68, 74.31, 63.16], prompt: [47.3, 271.9, 395.3, 291.1],
+      session: [199, 1133, 1295, 1287], memory: [181.7, 422.6, 678.0, 761.9], ready: [85, 253, 341, 383] },
+    win: { machine: "GitHub's windows-2025 runner, AMD EPYC 9V74, 2 cores; memory is the working set.",
+      write: [1.6, 139.4, 171.2, 112.1], answer: [3.39, 44.58, 42.28, 38.20], prompt: [59.2, 303.1, 426.7, 360.7],
+      session: [243, 1407, 1490, 1280], memory: [141.0, 262.3, 292.3, 325.2], ready: [93, 315, 410, 363] }
   };
-  // Seconds get one decimal, or two when a value of the metric needs them (0.20 s beside 0.49 s, not 0.2 s).
-  function fmt(v, unit, places) {
-    var n = unit === "s" ? v.toFixed(places) : v.toLocaleString("en-US");
-    return n + " " + unit;
+  function fmt(v, unit) {
+    if (unit === "s") return (v < 10 ? v.toFixed(1) : Math.round(v)) + " s";
+    return Math.round(v).toLocaleString("en-US") + " " + unit;
   }
-  function render(platform) {
-    var set = data[platform];
-    var root = document.getElementById("bench");
+  function times(x) { return (x >= 10 ? Math.round(x) : x.toFixed(1)) + "×"; }
+  function render(key) {
+    var set = data[key], root = document.getElementById("metrics");
     root.textContent = "";
-    set.metrics.forEach(function (m) {
-      var values = m[2], top = Math.max.apply(null, values);
-      var places = values.some(function (v) { return Math.round(v * 10) !== v * 10; }) ? 2 : 1;
-      var box = document.createElement("div");
-      box.className = "metric";
-      var h = document.createElement("h3");
-      h.textContent = m[0];
-      box.appendChild(h);
-      var bars = document.createElement("div");
-      bars.className = "bars";
-      values.forEach(function (v, i) {
-        var row = document.createElement("div");
-        row.className = "bar" + (i === 0 ? " bolt" : "");
-        var name = document.createElement("span");
-        name.className = "name";
-        name.textContent = set.runtimes[i];
-        var line = document.createElement("span");
-        line.className = "line";
-        var b = document.createElement("span");
-        b.className = "b";
-        b.style.width = "calc((100% - 8.5em) * " + (v / top).toFixed(4) + ")";
-        var val = document.createElement("span");
-        val.className = "v";
-        val.textContent = fmt(v, m[1], places);
-        if (i === 0) {
-          var r = values[1] / v;
-          var pill = document.createElement("span");
-          pill.className = "ratio";
-          pill.textContent = (r >= 10 ? r.toFixed(0) : r.toFixed(1)) + "× " + m[3] + " than Bun";
-          val.appendChild(pill);
-        }
-        line.appendChild(b);
-        line.appendChild(val);
-        row.appendChild(name);
-        row.appendChild(line);
-        bars.appendChild(row);
-      });
-      box.appendChild(bars);
-      root.appendChild(box);
+    metrics.forEach(function (m, n) {
+      var values = set[m[3]], top = Math.max.apply(null, values);
+      var card = document.createElement("div");
+      card.className = "metric";
+      var head = '<span class="index">// 0' + (n + 1) + "</span>";
+      var bars = values.map(function (v, i) {
+        return '<div class="bar' + (i === 0 ? " bolt" : "") + '"><div class="l"><span>' + builds[i] + "</span><span>" + fmt(v, m[1]) +
+          '</span></div><div class="t"><i data-w="' + Math.max(1.5, 100 * v / top).toFixed(1) + '%"></i></div></div>';
+      }).join("");
+      card.innerHTML = head + '<div class="name">' + m[0] + '</div><div class="x">' + times(values[3] / values[0]) + "<small>" + m[2] +
+        '</small></div><div class="vs">than Pi on Node 24 · ' + times(values[1] / values[0]) + " than on Bun</div>" +
+        '<div class="bars">' + bars + "</div>";
+      root.appendChild(card);
+    });
+    document.getElementById("bench-machine").textContent = set.machine;
+    requestAnimationFrame(function () {
+      root.querySelectorAll(".t i").forEach(function (i) { i.style.width = i.dataset.w; });
     });
   }
   document.querySelectorAll("[data-platform]").forEach(function (button) {
@@ -427,7 +687,17 @@
       render(button.dataset.platform);
     });
   });
-  render("linux");
+  render("lx");
+
+  // Reveal sections as they scroll in.
+  if ("IntersectionObserver" in window && !reduce) {
+    var seen = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("on"); seen.unobserve(e.target); } });
+    }, { rootMargin: "0px 0px -8% 0px" });
+    document.querySelectorAll(".reveal").forEach(function (el) { seen.observe(el); });
+  } else {
+    document.querySelectorAll(".reveal").forEach(function (el) { el.classList.add("on"); });
+  }
 </script>
 </body>
 </html>
