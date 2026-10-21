@@ -22,17 +22,19 @@
 One executable for Linux x86-64 and ARM64, macOS on Apple silicon and Windows x64. No JIT, no Node.js or Bun required.</p>
 
 Pi-Bolt is the Pi you already use, with the same commands, sessions, settings, providers and extensions. Every function is
-compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. It is ready to type 2.4
-times sooner than Pi on Bun and uses 2.7 times less CPU over a session; against Pi on Node, 9 times sooner, 6 times less CPU,
-11 times less for a long answer and a third of the memory.
+compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. Against Pi as released on
+Node 24, it writes a 400 KB file 112 times faster, uses 13 times less CPU while a long answer streams, 6 times less over a
+session and a third of the memory; against Pi on stock Bun, much the same.
+
+<a href="docs/media/pi-bolt.mp4"><img alt="Video, 2:11: Pi-Bolt and Pi on Node 24 side by side with a real model: startup, a game built with todos and two subagents, a long answer streamed into tmux and cmux, and benchmarks on every platform" src="docs/images/video-poster.jpg" width="880"></a>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-hero-dark.svg">
-  <img alt="Pi-Bolt vs Pi on Bun, Node 22 and Node 24: ready to type 52 / 123 / 426 / 463 ms; CPU per session 214 / 571 / 1,339 / 1,309 ms; CPU for a 60,000-character answer 3.4 / 3.7 / 40.9 / 38.5 s; memory after 40 prompts 177 / 211 / 533 / 552 MB" src="docs/images/bench-hero-light.svg">
+  <img alt="Pi-Bolt vs Pi 1.3.0 as released on Bun, Node 22 and Node 24: writing a 400 KB file 1.3 / 182.2 / 195.3 / 145.8 s; CPU for a 60,000-character answer 2.9 / 41.1 / 40.0 / 37.9 s; CPU per session 190 / 1,189 / 1,196 / 1,179 ms; memory after 40 prompts 166 / 289 / 508 / 578 MB" src="docs/images/bench-hero-light.svg">
 </picture>
 
-<sub>GitHub's Linux x86-64 runner, one CPU each. Pi-Bolt against the same Pi on stock Bun and on Node 22 and 24; the long answer
-is 60,000 characters; lower is better. See [Benchmarks](#benchmarks), also against PiG.</sub>
+<sub>GitHub's Linux x86-64 runner, one CPU each. Pi-Bolt 0.9.7 against Pi 1.3.0 as released, on stock Bun 1.4.2 and on Node 22
+and 24; the long answer is 60,000 characters; lower is better. See [Benchmarks](#benchmarks), on every platform and against PiG.</sub>
 
 > [!NOTE]
 > Pi-Bolt is an independent fork of [Pi](https://github.com/earendil-works/pi), not affiliated with Pi's authors or with Oven.
@@ -131,6 +133,24 @@ uninstalls it.
 
 ## Benchmarks
 
+Pi-Bolt 0.9.7 against Pi 1.3.0 as released on npm, run by stock Bun 1.4.2 and by Node 24, doing the same work against the same
+local model; lower is better. Pi-Bolt / Pi on Bun / Pi on Node 24:
+
+| Benchmark | Linux x86-64 | Linux ARM64 | macOS | Windows x64 |
+|---|---:|---:|---:|---:|
+| Writing a 400 KB file through a tool call, s | **1.3** / 182.2 / 145.8 | **1.3** / 157.3 / 131.8 | **1.7** / 129.7 / 129.2 | **1.6** / 139.4 / 112.1 |
+| CPU, streaming a 60,000-character answer, s | **2.94** / 41.14 / 37.87 | **3.01** / 40.45 / 37.55 | **5.40** / 66.68 / 63.16 | **3.39** / 44.58 / 38.20 |
+| CPU per prompt, 40 prompts into a session, ms | **65** / 350 / 362 | **58** / 308 / 301 | **47** / 272 / 291 | **59** / 303 / 361 |
+| CPU, interactive session, ms | **190** / 1,189 / 1,179 | **196** / 1,187 / 1,183 | **199** / 1,133 / 1,287 | **243** / 1,407 / 1,280 |
+| Memory after 40 prompts, MB | **166** / 289 / 578 | **197** / 267 / 612 | **182** / 423 / 762 | **141** / 262 / 325 |
+| Ready to type, ms | **45** / 382 / 411 | **44** / 353 / 410 | **85** / 253 / 383 | **93** / 315 / 363 |
+
+GitHub's runners: Linux pinned to one CPU, macOS on Apple M1 (3 CPUs), Windows on 2 cores; memory on Windows is the working
+set. Node 22, the method and the raw data: [`bench/results/2026-10-21-stock-bun-0.9.7`](bench/results/2026-10-21-stock-bun-0.9.7)
+and [docs/BENCHMARKS.md](docs/BENCHMARKS.md#097-against-pi-as-released).
+
+### Against PiG
+
 Pi-Bolt 0.9.6 against [PiG](https://github.com/MichaelKinsy/PiG) 0.5.1 (Pi ported to Go) and Pi 1.3.0 on Node 24, doing the
 same work against the same local model; lower is better.
 
@@ -159,9 +179,8 @@ On an Apple M5 Mac:
 | CPU, writing files in a terminal (tmux) | **1.9 s** | 4.4 s |
 | Peak memory, interactive session | 41 MB | **26 MB** |
 
-PiG starts sooner and uses less memory; Pi-Bolt runs Pi's own code, so every Pi extension works unchanged. Against 0.9.5, 0.9.6
-uses up to 31% less CPU per prompt in long sessions and reads images up to 70 times faster ([release notes](docs/releases/0.9.6.md)).
-Linux ARM64, Windows, the raw data and the method: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+PiG starts sooner and uses less memory; Pi-Bolt runs Pi's own code, so every Pi extension works unchanged. Linux ARM64,
+Windows, the raw data and the method: [docs/BENCHMARKS.md](docs/BENCHMARKS.md#096-against-pig-051).
 
 ## Plugins
 
