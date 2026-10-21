@@ -6,9 +6,9 @@
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#050505">
 <title>Benchmarks · Pi-Bolt documentation</title>
-<meta name="description" content="Pi-Bolt against Pi on Bun and Node, PiG and oh-my-pi on Linux, macOS and Windows: startup, CPU, memory, long answers and large files.">
+<meta name="description" content="Pi-Bolt 0.9.7 against Pi 1.3.0 as released on stock Bun, Node 22 and Node 24 on Linux x86-64, Linux ARM64, macOS and Windows, and against PiG: large files, streaming, sessions, memory and startup.">
 <meta property="og:title" content="Benchmarks · Pi-Bolt documentation">
-<meta property="og:description" content="Pi-Bolt against Pi on Bun and Node, PiG and oh-my-pi on Linux, macOS and Windows: startup, CPU, memory, long answers and large files.">
+<meta property="og:description" content="Pi-Bolt 0.9.7 against Pi 1.3.0 as released on stock Bun, Node 22 and Node 24 on Linux x86-64, Linux ARM64, macOS and Windows, and against PiG: large files, streaming, sessions, memory and startup.">
 <meta property="og:url" content="https://pi-bolt.opensec.in/docs/benchmarks.html">
 <link rel="canonical" href="https://pi-bolt.opensec.in/docs/benchmarks.html">
 <link rel="icon" href="../logo.svg" type="image/svg+xml">
@@ -68,120 +68,130 @@
     <article class="doc">
       <p class="eyebrow">Reference</p>
 <h1>Benchmarks</h1>
-<p class="lede">Pi-Bolt against Pi as released, on stock Bun and on Node, on three machines. Medians of fresh processes,
-  interleaved across the builds. Lower is better in every row.</p>
+<p class="lede">Pi-Bolt 0.9.7 against Pi 1.3.0 as released, run by stock Bun 1.4.2, Node 22 and Node 24, on GitHub's Linux
+  x86-64, Linux ARM64, macOS and Windows runners. Lower is better in every row.</p>
 
 <h2 id="how-it-is-measured">How it is measured<a class="anchor" href="#how-it-is-measured" aria-label="Link to this section">#</a></h2>
 <ul>
   <li><strong>The same work for every build.</strong> Each build runs the same prompts against a local server that replays the
     same model responses, so there is no network or provider variance.</li>
-  <li><strong>Pi as released.</strong> "Pi on Bun" and "Pi on Node" are Pi 1.1.0 built from its release tag, not Pi-Bolt's
-    tree.</li>
-  <li><strong>Interleaved.</strong> Builds take turns, so a change in the machine's state affects all of them alike.</li>
+  <li><strong>Pi as released.</strong> "Pi on Bun" and "Pi on Node" are Pi 1.3.0 from its npm package
+    (<code>@earendil-works/pi-coding-agent</code>), not Pi-Bolt's tree. Pi-Bolt is the release's own archive. Every build is
+    checked against its checksums.</li>
+  <li><strong>Interleaved.</strong> Builds take turns, so a change in the machine's state affects all of them alike. Times to start
+    and sessions are medians of 21 runs.</li>
   <li><strong>CPU time</strong> is user plus system time of the process. <strong>Memory</strong> is the process's own memory:
-    the pages it wrote, not file pages it shares with the system.</li>
+    the pages it wrote, not file pages it shares with the system (on Windows, the working set).</li>
 </ul>
 <p>The benchmark scripts, the method in full and the raw data are in the repository:
-  <a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
+  <a href="https://github.com/opensec-git/Pi-Bolt/blob/pi-bolt/docs/BENCHMARKS.md#097-against-pi-as-released">BENCHMARKS.md</a> and
+  <a href="https://github.com/opensec-git/Pi-Bolt/tree/pi-bolt/bench/results/2026-10-21-stock-bun-0.9.7">bench/results</a>.</p>
 
-<h2 id="linux">Linux<a class="anchor" href="#linux" aria-label="Link to this section">#</a></h2>
-<p>AMD EPYC 7B13, pinned to four cores. Pi 1.1.0 as released.</p>
+<h2 id="against-pi-on-bun-and-node">Against Pi on Bun and Node<a class="anchor" href="#against-pi-on-bun-and-node" aria-label="Link to this section">#</a></h2>
+<div class="tabs" data-group="platform">
+  <div data-tab="linux-x64" data-title="Linux x86-64">
+<p>GitHub's <code>ubuntu-24.04</code> runner, Intel Xeon Platinum 8370C, every build pinned to one CPU.</p>
 <div class="table"><table>
-  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 24</th></tr></thead>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.9.7</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 22</th><th class="n">Pi on Node 24</th></tr></thead>
   <tbody>
-    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.6 s</td><td class="n">24.0 s</td><td class="n">32.5 s</td></tr>
-    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">2.6 s</td><td class="n">40.2 s</td><td class="n">38.7 s</td></tr>
-    <tr><td>Memory after a 4.2M-token session</td><td class="n best">134 MB</td><td class="n">253 MB</td><td class="n">536 MB</td></tr>
-    <tr><td>Memory of a session in tmux</td><td class="n best">22 MB</td><td class="n">84 MB</td><td class="n">185 MB</td></tr>
-    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">193 ms</td><td class="n">746 ms</td><td class="n">1,093 ms</td></tr>
-    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">61 ms</td><td class="n">283 ms</td><td class="n">550 ms</td></tr>
-    <tr><td>Ready to type</td><td class="n best">38 ms</td><td class="n">116 ms</td><td class="n">296 ms</td></tr>
+    <tr><td>Writing a 400 KB file through a tool call</td><td class="n best">1.3 s</td><td class="n">182.2 s</td><td class="n">195.3 s</td><td class="n">145.8 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">2.94 s</td><td class="n">41.14 s</td><td class="n">40.03 s</td><td class="n">37.87 s</td></tr>
+    <tr><td>CPU, a 20,000-character answer in tmux</td><td class="n best">0.94 s</td><td class="n">9.09 s</td><td class="n">7.99 s</td><td class="n">7.34 s</td></tr>
+    <tr><td>Bytes sent to the terminal for it</td><td class="n best">528 KB</td><td class="n">3,517 KB</td><td class="n">3,554 KB</td><td class="n">3,563 KB</td></tr>
+    <tr><td>CPU per prompt, 40 prompts into a session</td><td class="n best">65 ms</td><td class="n">350 ms</td><td class="n">379 ms</td><td class="n">362 ms</td></tr>
+    <tr><td>Memory after 40 prompts</td><td class="n best">166 MB</td><td class="n">289 MB</td><td class="n">508 MB</td><td class="n">578 MB</td></tr>
+    <tr><td>CPU, interactive session</td><td class="n best">190 ms</td><td class="n">1,189 ms</td><td class="n">1,196 ms</td><td class="n">1,179 ms</td></tr>
+    <tr><td>Ready to type</td><td class="n best">45 ms</td><td class="n">382 ms</td><td class="n">383 ms</td><td class="n">411 ms</td></tr>
   </tbody>
 </table></div>
-
-
-<h2 id="macos">macOS<a class="anchor" href="#macos" aria-label="Link to this section">#</a></h2>
-<p>Apple M5 (MacBook Air). Pi 1.1.0 as released.</p>
+  </div>
+  <div data-tab="linux-arm64" data-title="Linux ARM64">
+<p>GitHub's <code>ubuntu-24.04-arm</code> runner, Neoverse-N2, every build pinned to one CPU.</p>
 <div class="table"><table>
-  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 26</th></tr></thead>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.9.7</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 22</th><th class="n">Pi on Node 24</th></tr></thead>
   <tbody>
-    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.4 s</td><td class="n">22.6 s</td><td class="n">28.1 s</td></tr>
-    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">6.5 s</td><td class="n">37.9 s</td><td class="n">37.6 s</td></tr>
-    <tr><td>Memory after a 4.2M-token session</td><td class="n best">38 MB</td><td class="n">92 MB</td><td class="n">1,581 MB</td></tr>
-    <tr><td>Memory of a session in tmux</td><td class="n best">24 MB</td><td class="n">65 MB</td><td class="n">162 MB</td></tr>
-    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">139 ms</td><td class="n">561 ms</td><td class="n">937 ms</td></tr>
-    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">49 ms</td><td class="n">221 ms</td><td class="n">512 ms</td></tr>
-    <tr><td>Ready to type</td><td class="n best">41 ms</td><td class="n">100 ms</td><td class="n">348 ms</td></tr>
+    <tr><td>Writing a 400 KB file through a tool call</td><td class="n best">1.3 s</td><td class="n">157.3 s</td><td class="n">173.7 s</td><td class="n">131.8 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">3.01 s</td><td class="n">40.45 s</td><td class="n">39.84 s</td><td class="n">37.55 s</td></tr>
+    <tr><td>CPU, a 20,000-character answer in tmux</td><td class="n best">0.88 s</td><td class="n">8.18 s</td><td class="n">7.43 s</td><td class="n">7.16 s</td></tr>
+    <tr><td>Bytes sent to the terminal for it</td><td class="n best">529 KB</td><td class="n">3,523 KB</td><td class="n">3,564 KB</td><td class="n">3,571 KB</td></tr>
+    <tr><td>CPU per prompt, 40 prompts into a session</td><td class="n best">58 ms</td><td class="n">308 ms</td><td class="n">329 ms</td><td class="n">301 ms</td></tr>
+    <tr><td>Memory after 40 prompts</td><td class="n best">197 MB</td><td class="n">267 MB</td><td class="n">545 MB</td><td class="n">612 MB</td></tr>
+    <tr><td>CPU, interactive session</td><td class="n best">196 ms</td><td class="n">1,187 ms</td><td class="n">1,212 ms</td><td class="n">1,183 ms</td></tr>
+    <tr><td>Ready to type</td><td class="n best">44 ms</td><td class="n">353 ms</td><td class="n">360 ms</td><td class="n">410 ms</td></tr>
   </tbody>
 </table></div>
-
-
-<h2 id="windows">Windows<a class="anchor" href="#windows" aria-label="Link to this section">#</a></h2>
-<p>Intel Core i5-1335U laptop. Pi 1.1.0 as released. Memory on Windows is the private working set.</p>
-<div class="table"><table>
-  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 24</th></tr></thead>
-  <tbody>
-    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.5 s</td><td class="n">38.1 s</td><td class="n">26.6 s</td></tr>
-    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">6.9 s</td><td class="n">41.1 s</td><td class="n">32.6 s</td></tr>
-    <tr><td>Memory after a 4.2M-token session</td><td class="n best">122 MB</td><td class="n">248 MB</td><td class="n">413 MB</td></tr>
-    <tr><td>Memory of a session in a terminal (ConPTY)</td><td class="n best">32 MB</td><td class="n">97 MB</td><td class="n">60 MB</td></tr>
-    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">278 ms</td><td class="n">805 ms</td><td class="n">1,125 ms</td></tr>
-    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">92 ms</td><td class="n">329 ms</td><td class="n">544 ms</td></tr>
-    <tr><td>Ready to type</td><td class="n best">105 ms</td><td class="n">177 ms</td><td class="n">311 ms</td></tr>
-  </tbody>
-</table></div>
-
-
-<h2 id="against-pig-oh-my-pi-and-opencode">Against PiG, oh-my-pi and OpenCode<a class="anchor" href="#against-pig-oh-my-pi-and-opencode" aria-label="Link to this section">#</a></h2>
-<p>Pi-Bolt against two other fast Pi builds: <a href="https://github.com/MichaelKinsy/PiG">PiG</a> 0.4.1, a port of Pi to Go
-  (based on Pi 1.0.3), and <a href="https://github.com/can1357/oh-my-pi">oh-my-pi</a> 18.8.7, a fork of Pi with many more
-  built-in features, on Bun; and <a href="https://github.com/anomalyco/opencode">OpenCode</a> 2.0, in a run of its own next to
-  Pi-Bolt on the same machines, with its own server in the same process tree (<code>--standalone</code>).</p>
-<div class="tabs" data-group="bench">
-  <div data-tab="linux" data-title="Linux">
-<div class="table"><table>
-  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">PiG 0.4.1</th><th class="n">oh-my-pi 18.8.7</th><th class="n">OpenCode 2.0</th></tr></thead>
-  <tbody>
-    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.6 s</td><td class="n">77.5 s</td><td class="n">3.3 s</td><td class="n">2.4 s</td></tr>
-    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">2.6 s</td><td class="n">16.7 s</td><td class="n best">2.2 s</td><td class="n">8.6 s</td></tr>
-    <tr><td>Memory after a 4.2M-token session</td><td class="n best">134 MB</td><td class="n">349 MB</td><td class="n">–</td><td class="n">273 MB¹</td></tr>
-    <tr><td>Memory of a session in tmux</td><td class="n best">22 MB</td><td class="n">48 MB</td><td class="n">334 MB</td><td class="n">–²</td></tr>
-    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">193 ms</td><td class="n">2,458 ms</td><td class="n">2,800 ms</td><td class="n">8,593 ms</td></tr>
-    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">61 ms</td><td class="n">227 ms</td><td class="n">1,524 ms</td><td class="n">2,220 ms</td></tr>
-    <tr><td>Peak memory, one prompt (<code>-p</code>)</td><td class="n">123 MB</td><td class="n best">55 MB</td><td class="n">505 MB</td><td class="n">346 MB</td></tr>
-    <tr><td>Ready to type</td><td class="n">38 ms</td><td class="n best">31 ms</td><td class="n">890 ms</td><td class="n">1,687 ms</td></tr>
-  </tbody>
-</table></div>
-
   </div>
   <div data-tab="macos" data-title="macOS">
+<p>GitHub's <code>macos-15</code> runner, Apple M1 (virtual), 3 CPUs, not pinned. This runner stretches the paced tests, so only
+  their CPU times compare.</p>
 <div class="table"><table>
-  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.8.5</th><th class="n">PiG 0.4.1</th><th class="n">oh-my-pi 18.8.7</th><th class="n">OpenCode 2.0</th></tr></thead>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.9.7</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 22</th><th class="n">Pi on Node 24</th></tr></thead>
   <tbody>
-    <tr><td>Writing a 200 KB file through a tool call</td><td class="n best">0.4 s</td><td class="n">56.8 s</td><td class="n">2.5 s</td><td class="n">1.7 s</td></tr>
-    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n">6.5 s</td><td class="n">16.5 s</td><td class="n best">5.1 s</td><td class="n">13.6 s</td></tr>
-    <tr><td>Memory after a 4.2M-token session</td><td class="n best">38 MB</td><td class="n">330 MB</td><td class="n">–</td><td class="n">260 MB¹</td></tr>
-    <tr><td>Memory of a session in tmux</td><td class="n best">24 MB</td><td class="n">55 MB</td><td class="n">330 MB</td><td class="n">–²</td></tr>
-    <tr><td>CPU, interactive session (5 prompts)</td><td class="n best">139 ms</td><td class="n">2,367 ms</td><td class="n">2,374 ms</td><td class="n">6,493 ms</td></tr>
-    <tr><td>CPU, one prompt (<code>-p</code>)</td><td class="n best">49 ms</td><td class="n">230 ms</td><td class="n">1,030 ms</td><td class="n">1,548 ms</td></tr>
-    <tr><td>Peak memory, one prompt (<code>-p</code>)</td><td class="n">70 MB</td><td class="n best">50 MB</td><td class="n">419 MB</td><td class="n">379 MB</td></tr>
-    <tr><td>Ready to type</td><td class="n">41 ms</td><td class="n best">39 ms</td><td class="n">612 ms</td><td class="n">1,489 ms</td></tr>
+    <tr><td>Writing a 400 KB file through a tool call</td><td class="n best">1.7 s</td><td class="n">129.7 s</td><td class="n">178.9 s</td><td class="n">129.2 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">5.40 s</td><td class="n">66.68 s</td><td class="n">74.31 s</td><td class="n">63.16 s</td></tr>
+    <tr><td>CPU, a 20,000-character answer in tmux</td><td class="n best">2.00 s</td><td class="n">14.23 s</td><td class="n">13.46 s</td><td class="n">12.75 s</td></tr>
+    <tr><td>Bytes sent to the terminal for it</td><td class="n best">1,032 KB</td><td class="n">4,092 KB</td><td class="n">4,024 KB</td><td class="n">4,028 KB</td></tr>
+    <tr><td>CPU per prompt, 40 prompts into a session</td><td class="n best">47 ms</td><td class="n">272 ms</td><td class="n">395 ms</td><td class="n">291 ms</td></tr>
+    <tr><td>Memory after 40 prompts</td><td class="n best">182 MB</td><td class="n">423 MB</td><td class="n">678 MB</td><td class="n">762 MB</td></tr>
+    <tr><td>CPU, interactive session</td><td class="n best">199 ms</td><td class="n">1,133 ms</td><td class="n">1,295 ms</td><td class="n">1,287 ms</td></tr>
+    <tr><td>Ready to type</td><td class="n best">85 ms</td><td class="n">253 ms</td><td class="n">341 ms</td><td class="n">383 ms</td></tr>
   </tbody>
 </table></div>
-
+  </div>
+  <div data-tab="windows" data-title="Windows">
+<p>GitHub's <code>windows-2025</code> runner, AMD EPYC 9V74, 2 cores. Memory is the working set. There is no tmux test on
+  Windows.</p>
+<div class="table"><table>
+  <thead><tr><th>Benchmark</th><th class="n">Pi-Bolt 0.9.7</th><th class="n">Pi on Bun 1.4.2</th><th class="n">Pi on Node 22</th><th class="n">Pi on Node 24</th></tr></thead>
+  <tbody>
+    <tr><td>Writing a 400 KB file through a tool call</td><td class="n best">1.6 s</td><td class="n">139.4 s</td><td class="n">171.2 s</td><td class="n">112.1 s</td></tr>
+    <tr><td>CPU, streaming a 60,000-character answer</td><td class="n best">3.39 s</td><td class="n">44.58 s</td><td class="n">42.28 s</td><td class="n">38.20 s</td></tr>
+    <tr><td>CPU per prompt, 40 prompts into a session</td><td class="n best">59 ms</td><td class="n">303 ms</td><td class="n">427 ms</td><td class="n">361 ms</td></tr>
+    <tr><td>Memory after 40 prompts</td><td class="n best">141 MB</td><td class="n">262 MB</td><td class="n">292 MB</td><td class="n">325 MB</td></tr>
+    <tr><td>CPU, interactive session</td><td class="n best">243 ms</td><td class="n">1,407 ms</td><td class="n">1,490 ms</td><td class="n">1,280 ms</td></tr>
+    <tr><td>Ready to type</td><td class="n best">93 ms</td><td class="n">315 ms</td><td class="n">410 ms</td><td class="n">363 ms</td></tr>
+  </tbody>
+</table></div>
   </div>
 </div>
-<p>PiG starts a little sooner and its single-prompt process is smaller; oh-my-pi streams a long answer with a little less CPU. Pi-Bolt uses the least CPU in sessions and per prompt, the least memory over a session, and writes large files
-  fastest. oh-my-pi compacts a long conversation on its own, so the long session does not compare it (–). ¹ OpenCode's process
-  without its server process, so its memory is higher. ² OpenCode did not finish its answers in tmux.</p>
+<p>Against Pi on Node 24, Pi-Bolt writes the large file 70 to 112 times faster, uses 11 to 13 times less CPU while a long answer
+  streams, 5 to 6 times less per prompt and per session, 2 to 4 times less memory, and is ready to type 4 to 9 times sooner.</p>
+
+<h2 id="against-pig">Against PiG<a class="anchor" href="#against-pig" aria-label="Link to this section">#</a></h2>
+<p>Pi-Bolt 0.9.6 against <a href="https://github.com/MichaelKinsy/PiG">PiG</a> 0.5.1, a port of Pi 1.3.0 to Go, doing the same
+  work. GitHub's Linux runners pinned to one CPU, and an Apple M5 Mac.</p>
+<div class="table"><table>
+  <thead><tr><th>Benchmark</th><th class="n">Linux x86-64</th><th class="n">Linux ARM64</th><th class="n">Windows x64</th><th class="n">Apple M5</th></tr></thead>
+  <tbody>
+    <tr><td>Ready to type, ms</td><td class="n">42 / <strong>15</strong></td><td class="n">43 / <strong>15</strong></td><td class="n">78 / <strong>75</strong></td><td class="n">31 / <strong>22</strong></td></tr>
+    <tr><td>One prompt (<code>-p</code>), CPU ms</td><td class="n">56 / <strong>25</strong></td><td class="n">63 / <strong>27</strong></td><td class="n">87 / <strong>70</strong></td><td class="n">27 / <strong>18</strong></td></tr>
+    <tr><td>Interactive session, CPU ms</td><td class="n">164 / <strong>141</strong></td><td class="n">187 / <strong>155</strong></td><td class="n"><strong>229</strong> / 272</td><td class="n"><strong>91</strong> / 125</td></tr>
+    <tr><td>60,000-character answer, CPU s</td><td class="n">2.58 / <strong>1.53</strong></td><td class="n">2.31 / <strong>1.18</strong></td><td class="n">2.68 / <strong>2.06</strong></td><td class="n">3.36 / <strong>2.34</strong></td></tr>
+    <tr><td>Files written in tmux, Pi CPU s</td><td class="n"><strong>1.10</strong> / 2.67</td><td class="n"><strong>0.96</strong> / 2.71</td><td class="n">–</td><td class="n"><strong>1.94</strong> / 4.35</td></tr>
+    <tr><td>A prompt 40 into a session, CPU ms</td><td class="n">56.8 / <strong>41.5</strong></td><td class="n">53.4 / <strong>41.2</strong></td><td class="n">–</td><td class="n"><strong>18.9</strong> / 27.0</td></tr>
+    <tr><td>Peak memory, interactive, MB</td><td class="n">154 / <strong>66</strong></td><td class="n">132 / <strong>56</strong></td><td class="n">102 / <strong>67</strong></td><td class="n">41 / <strong>26</strong></td></tr>
+  </tbody>
+</table></div>
+<p class="caption">Pi-Bolt 0.9.6 / PiG 0.5.1; the lower of each pair is in bold.</p>
+<p>PiG starts sooner and uses less memory. Pi-Bolt runs Pi's own code, so every Pi extension works unchanged, and it uses less CPU
+  in a terminal, in sessions on Windows and the Mac, and deep into a session on the Mac.</p>
 
 <h2 id="why-a-large-file-write-takes-so-long-on-stock-pi">Why a large file write takes so long on stock Pi<a class="anchor" href="#why-a-large-file-write-takes-so-long-on-stock-pi" aria-label="Link to this section">#</a></h2>
-<p>Those 20 to 40 seconds are not the disk. A model writes a file by streaming the <code>write</code> tool call's arguments, the whole
-  file, a few characters at a time, so a 200 KB file arrives in thousands of chunks. Stock Pi parses and redraws the whole tool
-  call again for every chunk: each chunk costs more than the last, and the total grows with the square of the file's size.
-  Pi-Bolt processes only the new part of each chunk.</p>
+<p>Those two to three minutes are not the disk. A model writes a file by streaming the <code>write</code> tool call's arguments,
+  the whole file, a few characters at a time, so a 400 KB file arrives in thousands of chunks. For every chunk, stock Pi parses the
+  whole tool call again, redraws the screen even when nothing shown has changed, and highlights every line of the file. Each chunk
+  costs more than the last, and the total grows with the square of the file's size. Pi-Bolt parses again only once the arguments
+  have grown by an eighth, draws a frame only when what is shown changes, and highlights only the lines it shows.</p>
 <p>In the benchmark the model streams as fast as it can, so the cost shows as wall time. With a real model, which streams more
-  slowly, it shows as CPU: about 40 seconds of it for a 200 KB file on stock Pi.</p>
+  slowly, it shows as CPU.</p>
+
+<h2 id="why-streaming-and-long-sessions-cost-less">Why streaming and long sessions cost less<a class="anchor" href="#why-streaming-and-long-sessions-cost-less" aria-label="Link to this section">#</a></h2>
+<p><strong>Streaming.</strong> Stock Pi redraws the message every time a few words arrive, and each redraw re-lexes the whole
+  Markdown, re-wraps every block and re-highlights every code block. Pi-Bolt keeps what it has rendered and redoes only the last
+  block or two, with highlighted code cached. The screen shows the same output, line for line.</p>
+<p><strong>Long sessions.</strong> Every request sends the whole conversation to the model again, and stock Pi serializes all of it
+  from scratch each time, so each prompt costs more than the last. Pi-Bolt builds each request from the previous one's bytes plus
+  what is new. The bytes sent are identical.</p>
 
 <div class="callout">
   <span class="title">Measurements, not guarantees</span>
@@ -196,7 +206,7 @@
   </main>
 
   <aside class="toc-col">
-    <nav class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#how-it-is-measured">How it is measured</a></li><li class="l2"><a href="#linux">Linux</a></li><li class="l2"><a href="#macos">macOS</a></li><li class="l2"><a href="#windows">Windows</a></li><li class="l2"><a href="#against-pig-oh-my-pi-and-opencode">Against PiG, oh-my-pi and OpenCode</a></li><li class="l2"><a href="#why-a-large-file-write-takes-so-long-on-stock-pi">Why a large file write takes so long on stock Pi</a></li></ul></nav>
+    <nav class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#how-it-is-measured">How it is measured</a></li><li class="l2"><a href="#against-pi-on-bun-and-node">Against Pi on Bun and Node</a></li><li class="l2"><a href="#against-pig">Against PiG</a></li><li class="l2"><a href="#why-a-large-file-write-takes-so-long-on-stock-pi">Why a large file write takes so long on stock Pi</a></li><li class="l2"><a href="#why-streaming-and-long-sessions-cost-less">Why streaming and long sessions cost less</a></li></ul></nav>
   </aside>
 </div>
 
