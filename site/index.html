@@ -567,10 +567,12 @@
   (function () {
     var el = document.getElementById("scramble");
     var target = el.dataset.text, glyphs = "/#<[+{%0>]}=*";
-    if (reduce) return;
+    // A background tab throttles timers, which would leave the glyphs on screen: show the words as they are there.
+    if (reduce || document.hidden) return;
     el.style.minWidth = el.offsetWidth + "px";
     var frame = 0, total = 26;
     function tick() {
+      if (document.hidden) { el.textContent = target; return; }
       var out = "";
       for (var i = 0; i < target.length; i++) {
         var settle = (i / target.length) * total * 0.8 + 6;
