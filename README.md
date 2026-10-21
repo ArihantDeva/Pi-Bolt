@@ -134,7 +134,13 @@ uninstalls it.
 ## Benchmarks
 
 Pi-Bolt 0.9.7 against Pi 1.3.0 as released on npm, run by stock Bun 1.4.2 and by Node 24, doing the same work against the same
-local model; lower is better. Pi-Bolt / Pi on Bun / Pi on Node 24:
+local model; lower is better.
+
+<img alt="Pi-Bolt 0.9.7 against Pi 1.3.0 as released, Linux x86-64: writing a 400 KB file 112 times faster than on Node 24 (140 times than on Bun), 13 times less CPU while a long answer streams, 6.2 times less CPU over an interactive session, 3.5 times less memory after 40 prompts" src="docs/images/pi-bolt-benchmarks.png" width="880">
+
+<img alt="Pi-Bolt 0.9.7 against Pi 1.3.0 as released on Node 24 and on Bun, on Linux x86-64, Linux ARM64, macOS and Windows: 70 to 140 times faster writing a 400 KB file, 11 to 14 times less CPU streaming a long answer, 5 to 6 times less CPU per prompt and per session, 1.4 to 4.2 times less memory, 3 to 9 times sooner ready to type" src="docs/images/pi-bolt-every-platform.png" width="880">
+
+Pi-Bolt / Pi on Bun / Pi on Node 24:
 
 | Benchmark | Linux x86-64 | Linux ARM64 | macOS | Windows x64 |
 |---|---:|---:|---:|---:|
