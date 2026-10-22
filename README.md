@@ -30,7 +30,7 @@ session and a third of the memory; against Pi on stock Bun, much the same.
 
 <img alt="Pi-Bolt 0.9.7 against Pi 1.3.0 as released on Node 24 and on Bun, on Linux x86-64, Linux ARM64, macOS and Windows: 70 to 140 times faster writing a 400 KB file, 11 to 14 times less CPU streaming a long answer, 5 to 6 times less CPU per prompt and per session, 1.4 to 4.2 times less memory, 3 to 9 times sooner ready to type" src="docs/images/pi-bolt-every-platform.png" width="880">
 
-<a href="https://pi-bolt.opensec.in/pi-bolt.mp4"><img alt="Video, 2:11: Pi-Bolt and Pi on Node 24 side by side with a real model: startup, a game built with todos and two subagents, a long answer streamed into tmux and cmux, and benchmarks on every platform" src="docs/images/video-poster.jpg" width="880"></a>
+https://github.com/user-attachments/assets/a9531e80-9e94-4b9c-8223-650a9fb8dc7a
 
 > [!NOTE]
 > Pi-Bolt is an independent fork of [Pi](https://github.com/earendil-works/pi), not affiliated with Pi's authors or with Oven.
