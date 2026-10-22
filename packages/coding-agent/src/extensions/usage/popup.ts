@@ -1,13 +1,8 @@
-import {
-	type Component,
-	type Focusable,
-	getKeybindings,
-	type TuiMouseEvent,
-	type TuiMouseEventResult,
-} from "@earendil-works/pi-tui";
-import type { UsageBar, UsageLine, UsageOverview } from "../../../core/usage-overview.ts";
-import { theme } from "../theme/theme.ts";
-import { formatKeyText } from "./keybinding-hints.ts";
+import type { Component, Focusable, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+import type { KeybindingsManager } from "../../core/keybindings.ts";
+import { formatKeyText } from "../../modes/interactive/components/keybinding-hints.ts";
+import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import type { UsageBar, UsageLine, UsageOverview } from "./overview.ts";
 
 const BAR_WIDTH = 24;
 
@@ -18,7 +13,7 @@ const TONE_COLOR = {
 	success: "success",
 } as const;
 
-function renderBar(bar: UsageBar): string {
+function renderBar(theme: Theme, bar: UsageBar): string {
 	const frac = bar.total && bar.total > 0 ? Math.min(1, Math.max(0, bar.used / bar.total)) : 0;
 	const filled = Math.round(frac * BAR_WIDTH);
 	const fill = theme.fg(TONE_COLOR[bar.tone], "█".repeat(filled));
@@ -27,25 +22,26 @@ function renderBar(bar: UsageBar): string {
 }
 
 /**
- * A read-only full-screen view showing account/session usage with tqdm-style
- * progress bars. Mounted through the same `showSelector` path as /settings, so
- * it appears in the editor area and Esc (or a click) closes it and restores the
- * editor.
+ * A read-only view showing account/session usage with tqdm-style progress
+ * bars. Esc (or a click) closes it.
  */
 export class UsagePopupComponent implements Component, Focusable {
 	focused = false;
 
+	private readonly theme: Theme;
+	private readonly keybindings: KeybindingsManager;
 	private readonly overview: UsageOverview;
 	private readonly onClose: () => void;
 
-	constructor(overview: UsageOverview, onClose: () => void) {
+	constructor(theme: Theme, keybindings: KeybindingsManager, overview: UsageOverview, onClose: () => void) {
+		this.theme = theme;
+		this.keybindings = keybindings;
 		this.overview = overview;
 		this.onClose = onClose;
 	}
 
 	handleInput(data: string): void {
-		const keybindings = getKeybindings();
-		if (keybindings.matches(data, "tui.select.cancel") || keybindings.matches(data, "app.clear")) {
+		if (this.keybindings.matches(data, "tui.select.cancel") || this.keybindings.matches(data, "app.clear")) {
 			this.onClose();
 		}
 	}
@@ -58,6 +54,7 @@ export class UsagePopupComponent implements Component, Focusable {
 	invalidate(): void {}
 
 	render(_width: number): string[] {
+		const theme = this.theme;
 		const { providerId, modelId, bars, lines, notes } = this.overview;
 		const out: string[] = [];
 		const pad = "  ";
@@ -75,7 +72,7 @@ export class UsagePopupComponent implements Component, Focusable {
 		if (bars.length > 0) {
 			for (const bar of bars) {
 				out.push(theme.fg("dim", bar.label));
-				out.push(`${pad}${renderBar(bar)}  ${theme.fg("dim", bar.display)}`);
+				out.push(`${pad}${renderBar(theme, bar)}  ${theme.fg("dim", bar.display)}`);
 				if (bar.note) out.push(`${pad}${theme.fg("dim", bar.note)}`);
 			}
 			out.push("");
@@ -93,7 +90,7 @@ export class UsagePopupComponent implements Component, Focusable {
 			}
 		}
 
-		const closeKey = formatKeyText(getKeybindings().getKeys("tui.select.cancel")[0] ?? "escape");
+		const closeKey = formatKeyText(this.keybindings.getKeys("tui.select.cancel")[0] ?? "escape");
 		out.push("");
 		out.push(theme.fg("muted", `${closeKey} to close`));
 

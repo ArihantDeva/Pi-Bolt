@@ -5,7 +5,7 @@ import {
 	formatMoney,
 	formatTokens,
 	parseClaudeUtilization,
-} from "../src/core/usage-overview.ts";
+} from "../src/extensions/usage/overview.ts";
 
 describe("formatTokens", () => {
 	it("formats compact token counts", () => {

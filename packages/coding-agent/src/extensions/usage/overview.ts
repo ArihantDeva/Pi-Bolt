@@ -5,7 +5,7 @@
  * limits are not exposed through its API).
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -244,14 +244,15 @@ export function parseClaudeUtilization(raw: unknown): UsageBar[] {
  * with the user's OAuth token and stores it in ~/.claude.json, so reading it is
  * a zero-network way to surface the real 5h / weekly numbers.
  */
-export function readClaudeCachedUsage(): UsageBar[] | { error: string } {
+export async function readClaudeCachedUsage(): Promise<UsageBar[] | { error: string }> {
 	try {
-		const path = join(homedir(), ".claude.json");
-		if (!existsSync(path)) return { error: "~/.claude.json not found." };
-		const data = JSON.parse(readFileSync(path, "utf8")) as { cachedUsageUtilization?: unknown };
+		const data = JSON.parse(await readFile(join(homedir(), ".claude.json"), "utf8")) as {
+			cachedUsageUtilization?: unknown;
+		};
 		if (!data.cachedUsageUtilization) return { error: "No cached Claude usage found." };
 		return parseClaudeUtilization(data.cachedUsageUtilization);
 	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { error: "~/.claude.json not found." };
 		return { error: err instanceof Error ? err.message : String(err) };
 	}
 }

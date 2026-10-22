@@ -126,14 +126,6 @@ import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
-import {
-	buildUsageOverview,
-	type DeepSeekBalance,
-	type OpenRouterCredits,
-	readClaudeCachedUsage,
-	type UsageBar,
-	type UsageOverview,
-} from "../../core/usage-overview.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { addMcpServerConfig, loadMcpConfig } from "../../extensions/mcp/config.ts";
 import { PIBOLT, PIBOLT_RELEASES_URL } from "../../pi-bolt.ts";
@@ -201,7 +193,6 @@ import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TranscriptContainer } from "./components/transcript-container.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
-import { UsagePopupComponent } from "./components/usage-popup.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
@@ -3314,11 +3305,6 @@ export class InteractiveMode {
 			}
 			if (text === "/session") {
 				this.handleSessionCommand();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/usage") {
-				await this.handleUsageCommand();
 				this.editor.setText("");
 				return;
 			}
@@ -6866,115 +6852,6 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ThemedText(renderInfo, 1, 0));
 		this.ui.requestRender();
-	}
-
-	private async handleUsageCommand(): Promise<void> {
-		const model = this.session.model;
-		const stats = this.session.getSessionStats();
-		const providerId = model?.provider ?? "deepseek";
-
-		// DeepSeek is the only provider with a documented account-balance endpoint.
-		let deepseekBalance: DeepSeekBalance | { error: string } | null = null;
-		if (providerId === "deepseek") {
-			try {
-				const auth = await this.session.modelRuntime.getAuth("deepseek");
-				const apiKey = auth?.auth.apiKey;
-				if (!apiKey) {
-					deepseekBalance = { error: "No DeepSeek API key configured. Run /login deepseek." };
-				} else {
-					const controller = new AbortController();
-					const timer = setTimeout(() => controller.abort(), 10_000);
-					try {
-						const res = await fetch("https://api.deepseek.com/user/balance", {
-							headers: { Authorization: `Bearer ${apiKey}` },
-							signal: controller.signal,
-						});
-						if (!res.ok) {
-							deepseekBalance = { error: `DeepSeek returned HTTP ${res.status}.` };
-						} else {
-							deepseekBalance = (await res.json()) as DeepSeekBalance;
-						}
-					} finally {
-						clearTimeout(timer);
-					}
-				}
-			} catch (err) {
-				deepseekBalance = { error: err instanceof Error ? err.message : String(err) };
-			}
-		}
-
-		const header = this.sessionManager.getHeader();
-		const durationMs = header?.timestamp ? Date.now() - new Date(header.timestamp).getTime() : null;
-		const subscriptionBacked = this.session.modelRuntime.isUsingSubscription(providerId);
-
-		// Claude Code caches its subscription usage (5h / weekly) in ~/.claude.json,
-		// fetched with the user's OAuth token. Read it when running on Anthropic.
-		let accountBars: UsageBar[] | undefined;
-		if (providerId === "anthropic") {
-			const claude = readClaudeCachedUsage();
-			if (Array.isArray(claude)) accountBars = claude;
-		}
-
-		// OpenRouter exposes remaining credits at a documented endpoint.
-		let openrouterCredits: OpenRouterCredits | { error: string } | null = null;
-		if (providerId === "openrouter") {
-			try {
-				const auth = await this.session.modelRuntime.getAuth("openrouter");
-				const apiKey = auth?.auth.apiKey;
-				if (!apiKey) {
-					openrouterCredits = { error: "No OpenRouter API key configured. Run /login openrouter." };
-				} else {
-					const controller = new AbortController();
-					const timer = setTimeout(() => controller.abort(), 10_000);
-					try {
-						const res = await fetch("https://openrouter.ai/api/v1/credits", {
-							headers: { Authorization: `Bearer ${apiKey}` },
-							signal: controller.signal,
-						});
-						if (!res.ok) {
-							openrouterCredits = { error: `OpenRouter returned HTTP ${res.status}.` };
-						} else {
-							const body = (await res.json()) as { data?: { total_credits?: unknown; total_usage?: unknown } };
-							const totalCredits = Number(body.data?.total_credits);
-							const totalUsage = Number(body.data?.total_usage);
-							openrouterCredits = {
-								total_credits: Number.isFinite(totalCredits) ? totalCredits : 0,
-								total_usage: Number.isFinite(totalUsage) ? totalUsage : 0,
-							};
-						}
-					} finally {
-						clearTimeout(timer);
-					}
-				}
-			} catch (err) {
-				openrouterCredits = { error: err instanceof Error ? err.message : String(err) };
-			}
-		}
-
-		const overview = buildUsageOverview({
-			providerId,
-			modelId: model?.id ?? "unknown",
-			stats: {
-				tokens: { input: stats.tokens.input, output: stats.tokens.output },
-				cost: stats.cost,
-				contextUsage: stats.contextUsage,
-			},
-			durationMs,
-			deepseekBalance,
-			openrouterCredits,
-			// Only warn about unexposed limits when we have nothing to show.
-			subscriptionBacked: subscriptionBacked && (accountBars?.length ?? 0) === 0,
-			accountBars,
-		});
-
-		this.openUsageView(overview);
-	}
-
-	private openUsageView(overview: UsageOverview): void {
-		this.showSelector((done) => {
-			const component = new UsagePopupComponent(overview, done);
-			return { component, focus: component };
-		});
 	}
 
 	private handleChangelogCommand(): void {

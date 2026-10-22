@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { UsageOverview } from "../src/core/usage-overview.ts";
-import { UsagePopupComponent } from "../src/modes/interactive/components/usage-popup.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
+import type { UsageOverview } from "../src/extensions/usage/overview.ts";
+import { UsagePopupComponent } from "../src/extensions/usage/popup.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 
@@ -20,7 +21,10 @@ describe("UsagePopupComponent", () => {
 			notes: ["Subscription limits are not exposed by this provider's API."],
 		};
 
-		const text = new UsagePopupComponent(overview, () => {}).render(80).map(stripAnsi).join("\n");
+		const text = new UsagePopupComponent(theme, new KeybindingsManager(), overview, () => {})
+			.render(80)
+			.map(stripAnsi)
+			.join("\n");
 
 		expect(text).toContain("Usage");
 		expect(text).toContain("deepseek · deepseek-v4-pro");
@@ -49,7 +53,10 @@ describe("UsagePopupComponent", () => {
 			notes: [],
 		};
 
-		const text = new UsagePopupComponent(overview, () => {}).render(80).map(stripAnsi).join("\n");
+		const text = new UsagePopupComponent(theme, new KeybindingsManager(), overview, () => {})
+			.render(80)
+			.map(stripAnsi)
+			.join("\n");
 
 		expect(text).toContain("█".repeat(24));
 		expect(text).toContain("░".repeat(24));
