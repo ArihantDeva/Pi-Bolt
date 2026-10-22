@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { normalizeSessionName, parseArgs } from "../src/cli/args.ts";
+import { missingExtensionPaths, normalizeSessionName, parseArgs } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
 	describe("--version flag", () => {
@@ -583,5 +586,33 @@ describe("parseArgs", () => {
 			expect(result.fileArgs).toEqual(["prompt.md"]);
 			expect(result.messages).toEqual(["Do the task"]);
 		});
+	});
+});
+
+describe("missingExtensionPaths", () => {
+	test("reports a local path that does not exist", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-bolt-ext-"));
+		try {
+			const missing = join(dir, "nope.ts");
+			expect(missingExtensionPaths([missing])).toEqual([missing]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("leaves an existing file, builtin names and package sources alone", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-bolt-ext-"));
+		try {
+			const present = join(dir, "ext.ts");
+			writeFileSync(present, "export default function () {}\n");
+			expect(missingExtensionPaths([present, "builtin:mcp", "npm:pi-intercom", "git:github.com/x/y"])).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("returns nothing when no extension was given", () => {
+		expect(missingExtensionPaths(undefined)).toEqual([]);
+		expect(missingExtensionPaths([])).toEqual([]);
 	});
 });
