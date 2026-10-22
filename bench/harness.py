@@ -21,6 +21,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -245,6 +246,47 @@ def peak_footprint_mb(pid: int, block: bool = True) -> float | None:
 
 
 last_exit_counters: dict = {}
+
+
+class PeakOwnSampler:
+    """Linux: the largest private memory a running process reached, the counterpart of macOS's peak footprint. ru_maxrss also
+    counts the clean pages of the files it maps (Pi-Bolt's executable maps its 114 MB static heap and compiled code; a Go
+    binary maps its own text), which the kernel can drop and share. RssAnon (in /proc/<pid>/status) is the process's own
+    resident memory: its heaps, and file pages it has written to. Linux keeps no peak of it, so a thread samples it every
+    `interval` seconds from start() until the process is gone or stop(): a spike shorter than that can be missed.
+    Elsewhere it does nothing and `peak_mb` stays None."""
+
+    def __init__(self, pid: int, interval: float = 0.002):
+        self.pid, self.interval, self.peak_mb = pid, interval, None
+        self._stop = threading.Event()
+        self._thread = None
+        if sys.platform.startswith("linux"):
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+
+    def _sample(self) -> bool:
+        try:
+            with open(f"/proc/{self.pid}/status") as f:
+                for line in f:
+                    if line.startswith("RssAnon:"):
+                        mb = round(int(line.split()[1]) / 1024, 1)
+                        self.peak_mb = mb if self.peak_mb is None else max(self.peak_mb, mb)
+                        return True
+        except OSError:
+            pass
+        return False  # gone, or reaped (a zombie's status has no RssAnon line)
+
+    def _run(self):
+        while not self._stop.is_set() and self._sample():
+            self._stop.wait(self.interval)
+
+    def stop(self) -> float | None:
+        """Stops sampling (call it before the process is reaped, or right after) and returns the peak in MB."""
+        if self._thread:
+            self._sample()
+            self._stop.set()
+            self._thread.join()
+        return self.peak_mb
 
 
 class WinTty:
