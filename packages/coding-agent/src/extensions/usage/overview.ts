@@ -239,6 +239,42 @@ export function parseClaudeUtilization(raw: unknown): UsageBar[] {
 	return bars;
 }
 
+/** Label a rate-limit window by its length, e.g. 18000s -> "5h window", 604800s -> "Weekly". */
+function windowLabel(seconds: unknown): string {
+	if (typeof seconds !== "number" || seconds <= 0) return "Limit";
+	if (seconds >= 6 * 86400 && seconds <= 8 * 86400) return "Weekly";
+	if (seconds % 86400 === 0) return `${seconds / 86400}d window`;
+	return `${Number((seconds / 3600).toFixed(1))}h window`;
+}
+
+/**
+ * Parse the ChatGPT backend `wham/usage` response (used by Codex) into progress bars. This endpoint is
+ * undocumented, so every field is read defensively and window lengths are taken from the response.
+ */
+export function parseCodexUsage(raw: unknown): UsageBar[] {
+	const bars: UsageBar[] = [];
+	const rateLimit = (raw as { rate_limit?: Record<string, unknown> } | null)?.rate_limit;
+	if (!rateLimit || typeof rateLimit !== "object") return bars;
+
+	for (const key of ["primary_window", "secondary_window"]) {
+		const window = rateLimit[key] as
+			| { used_percent?: unknown; limit_window_seconds?: unknown; reset_after_seconds?: unknown }
+			| undefined;
+		if (!window || typeof window.used_percent !== "number") continue;
+		const resetAfter = window.reset_after_seconds;
+		bars.push({
+			id: `codex-${key}`,
+			label: windowLabel(window.limit_window_seconds),
+			used: window.used_percent,
+			total: 100,
+			display: `${window.used_percent.toFixed(0)}% used`,
+			tone: percentTone(window.used_percent),
+			note: typeof resetAfter === "number" ? `resets in ${formatDuration(resetAfter * 1000)}` : undefined,
+		});
+	}
+	return bars;
+}
+
 /**
  * Read Claude Code's cached subscription usage. Claude Code itself fetches this
  * with the user's OAuth token and stores it in ~/.claude.json, so reading it is

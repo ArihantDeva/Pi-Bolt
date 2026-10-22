@@ -5,6 +5,7 @@ import {
 	formatMoney,
 	formatTokens,
 	parseClaudeUtilization,
+	parseCodexUsage,
 } from "../src/extensions/usage/overview.ts";
 
 describe("formatTokens", () => {
@@ -198,5 +199,41 @@ describe("parseClaudeUtilization", () => {
 	it("returns empty bars for missing or malformed data", () => {
 		expect(parseClaudeUtilization(undefined)).toEqual([]);
 		expect(parseClaudeUtilization({})).toEqual([]);
+	});
+});
+
+describe("parseCodexUsage", () => {
+	it("builds bars from the primary and secondary windows using their lengths", () => {
+		const bars = parseCodexUsage({
+			rate_limit: {
+				primary_window: { used_percent: 42, limit_window_seconds: 18000, reset_after_seconds: 3725 },
+				secondary_window: { used_percent: 95, limit_window_seconds: 604800 },
+			},
+		});
+		expect(bars).toEqual([
+			{
+				id: "codex-primary_window",
+				label: "5h window",
+				used: 42,
+				total: 100,
+				display: "42% used",
+				tone: "accent",
+				note: "resets in 1h 2m 5s",
+			},
+			{
+				id: "codex-secondary_window",
+				label: "Weekly",
+				used: 95,
+				total: 100,
+				display: "95% used",
+				tone: "error",
+				note: undefined,
+			},
+		]);
+	});
+
+	it("returns no bars for an unexpected payload", () => {
+		expect(parseCodexUsage(null)).toEqual([]);
+		expect(parseCodexUsage({ rate_limit: { primary_window: { used_percent: "x" } } })).toEqual([]);
 	});
 });

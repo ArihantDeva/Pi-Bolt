@@ -142,6 +142,48 @@ describe("/usage extension command", () => {
 		});
 	});
 
+	test("fetches Codex limits with the account id from the token", async () => {
+		const payload = Buffer.from(
+			JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acct-1" } }),
+		).toString("base64url");
+		const token = `h.${payload}.s`;
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => ({ rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000 } } }),
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const { overview } = await runUsage({
+			model: { provider: "openai-codex", id: "m", baseUrl: "https://chatgpt.com/backend-api" },
+			auth: { ok: true, apiKey: token },
+			subscription: true,
+		});
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://chatgpt.com/backend-api/wham/usage",
+			expect.objectContaining({ headers: { Authorization: `Bearer ${token}`, "chatgpt-account-id": "acct-1" } }),
+		);
+		expect(overview?.bars).toContainEqual(
+			expect.objectContaining({ id: "codex-primary_window", label: "5h window" }),
+		);
+		expect(overview?.notes).toHaveLength(0);
+	});
+
+	test("shows an error line when the Codex token has no account id", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		const { overview } = await runUsage({
+			model: { provider: "openai-codex", id: "m", baseUrl: "https://chatgpt.com/backend-api" },
+			auth: { ok: true, apiKey: "not-a-jwt" },
+			subscription: true,
+		});
+
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(overview?.lines).toContainEqual(expect.objectContaining({ label: "limits", tone: "error" }));
+	});
+
 	test("does not call fetch for other providers", async () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);

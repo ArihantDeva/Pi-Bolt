@@ -9,8 +9,10 @@ import {
 	buildUsageOverview,
 	type DeepSeekBalance,
 	type OpenRouterCredits,
+	parseCodexUsage,
 	readClaudeCachedUsage,
 	type UsageBar,
+	type UsageLine,
 } from "./overview.ts";
 import { UsagePopupComponent } from "./popup.ts";
 
@@ -31,11 +33,18 @@ async function resolveOrigin(
 	return { apiKey: auth.apiKey, origin: new URL(auth.baseUrl ?? model.baseUrl).origin };
 }
 
-async function fetchJson(url: string, apiKey: string): Promise<{ ok: true; body: unknown } | { error: string }> {
+async function fetchJson(
+	url: string,
+	apiKey: string,
+	extraHeaders: Record<string, string> = {},
+): Promise<{ ok: true; body: unknown } | { error: string }> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 	try {
-		const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` }, signal: controller.signal });
+		const res = await fetch(url, {
+			headers: { Authorization: `Bearer ${apiKey}`, ...extraHeaders },
+			signal: controller.signal,
+		});
 		if (!res.ok) return { error: `${new URL(url).host} returned HTTP ${res.status}.` };
 		return { ok: true, body: await res.json() };
 	} catch (err) {
@@ -67,6 +76,27 @@ async function fetchOpenRouterCredits(
 		total_credits: Number.isFinite(totalCredits) ? totalCredits : 0,
 		total_usage: Number.isFinite(totalUsage) ? totalUsage : 0,
 	};
+}
+
+/** The ChatGPT account id is a claim in the OAuth access token, which Codex sends as `chatgpt-account-id`. */
+function chatGptAccountId(token: string): string | undefined {
+	try {
+		const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+		const id = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+		return typeof id === "string" && id.length > 0 ? id : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+async function fetchCodexUsage(ctx: ExtensionContext, model: Model): Promise<UsageBar[] | { error: string }> {
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+	if (!auth.ok || !auth.apiKey) return { error: "No Codex login found. Run /login." };
+	const accountId = chatGptAccountId(auth.apiKey);
+	if (!accountId) return { error: "Could not read the ChatGPT account id from the Codex login." };
+	const base = (auth.baseUrl ?? model.baseUrl).replace(/\/+$/, "");
+	const res = await fetchJson(`${base}/wham/usage`, auth.apiKey, { "chatgpt-account-id": accountId });
+	return "error" in res ? res : parseCodexUsage(res.body);
 }
 
 export function createUsageExtension(): ExtensionFactory {
@@ -104,9 +134,14 @@ export function createUsageExtension(): ExtensionFactory {
 
 				// Claude Code caches its subscription usage (5h / weekly) in ~/.claude.json.
 				let accountBars: UsageBar[] | undefined;
+				const extraLines: UsageLine[] = [];
 				if (providerId === "anthropic") {
 					const claude = await readClaudeCachedUsage();
 					if (Array.isArray(claude)) accountBars = claude;
+				} else if (providerId === "openai-codex" && subscriptionBacked) {
+					const codex = await fetchCodexUsage(ctx, model);
+					if (Array.isArray(codex)) accountBars = codex;
+					else extraLines.push({ label: "limits", value: codex.error, tone: "error" });
 				}
 
 				const header = ctx.sessionManager.getHeader();
@@ -125,6 +160,8 @@ export function createUsageExtension(): ExtensionFactory {
 					subscriptionBacked: subscriptionBacked && (accountBars?.length ?? 0) === 0,
 					accountBars,
 				});
+
+				overview.lines.push(...extraLines);
 
 				await ctx.ui.custom<void>((_tui, theme, keybindings, done) => {
 					return new UsagePopupComponent(theme, keybindings, overview, () => done());
