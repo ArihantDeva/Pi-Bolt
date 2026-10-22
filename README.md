@@ -26,7 +26,7 @@ compiled to machine code when the executable is built, so nothing is parsed or J
 Node 24, it writes a 400 KB file 112 times faster, uses 13 times less CPU while a long answer streams, 6 times less over a
 session and a third of the memory; against Pi on stock Bun, much the same.
 
-<a href="docs/media/pi-bolt.mp4"><img alt="Video, 2:11: Pi-Bolt and Pi on Node 24 side by side with a real model: startup, a game built with todos and two subagents, a long answer streamed into tmux and cmux, and benchmarks on every platform" src="docs/images/video-poster.jpg" width="880"></a>
+<a href="https://pi-bolt.opensec.in/pi-bolt.mp4"><img alt="Video, 2:11: Pi-Bolt and Pi on Node 24 side by side with a real model: startup, a game built with todos and two subagents, a long answer streamed into tmux and cmux, and benchmarks on every platform" src="docs/images/video-poster.jpg" width="880"></a>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/bench-hero-dark.svg">
