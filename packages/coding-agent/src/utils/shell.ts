@@ -78,8 +78,8 @@ function findExecutableOnPath(executable: string, accept?: (file: string) => boo
 		const cached = foundOnWindowsPath.get(key);
 		if (cached && shellPathExists(cached)) return cached;
 		for (const dir of windowsPathDirectories(path)) {
-			if (!isAbsolute(dir)) continue;
-			const file = join(dir, executable);
+			if (!win32.isAbsolute(dir)) continue;
+			const file = win32.join(dir, executable);
 			if ((!accept || accept(file)) && isProgramFile(file)) {
 				foundOnWindowsPath.set(key, file);
 				return file;
@@ -499,7 +499,8 @@ export function killProcessTree(pid: number, options?: { sync?: boolean }): void
 			if (msys) killMsysGroup(msys.bash, msys.group);
 		};
 		// Use the trusted System32 executable so cleanup does not depend on PATH.
-		const taskkill = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+		// (`||`: an empty SystemRoot is no Windows directory either, and would make the path relative, #6596.)
+		const taskkill = join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe");
 		const taskkillArgs = ["/F", "/T", "/PID", String(pid)];
 		if (options?.sync) {
 			// Pi is exiting: there is no later to wait for.

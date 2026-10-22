@@ -2,6 +2,7 @@ import type * as ChildProcess from "node:child_process";
 import type * as Fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPowerShellConfig, getShellConfig } from "../src/utils/shell.ts";
+import type * as WindowsPath from "../src/utils/windows-path.ts";
 
 const { accessSyncMock, spawnSyncMock } = vi.hoisted(() => ({
 	accessSyncMock: vi.fn(),
@@ -19,6 +20,20 @@ vi.mock("node:fs", async (importOriginal) => {
 vi.mock("child_process", async (importOriginal) => ({
 	...(await importOriginal<typeof ChildProcess>()),
 	spawnSync: spawnSyncMock,
+}));
+
+// Pi-Bolt looks shells up in PATH's directories itself (not with `where`, which also searches the working directory): a PATH
+// entry counts when the existence check passes for the file in it.
+vi.mock("../src/utils/windows-path.ts", async (importOriginal) => ({
+	...(await importOriginal<typeof WindowsPath>()),
+	isProgramFile: (file: string) => {
+		try {
+			accessSyncMock(file);
+			return true;
+		} catch {
+			return false;
+		}
+	},
 }));
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -45,11 +60,16 @@ afterEach(() => {
 describe("Windows Store shell aliases", () => {
 	beforeEach(() => {
 		stubPlatform("win32");
+		vi.stubEnv("LOCALAPPDATA", undefined);
+		vi.stubEnv("USERPROFILE", undefined);
 	});
 
 	it.each(["bash.exe", "pwsh.exe"])("accepts %s found on PATH", (executable) => {
 		const alias = `${aliasesDir}\\${executable}`;
-		spawnSyncMock.mockReturnValue({ status: 0, stdout: `${alias}\r\n` });
+		vi.stubEnv("PATH", aliasesDir);
+		accessSyncMock.mockImplementation((path: string) => {
+			if (path !== alias) throw Object.assign(new Error("not found"), { code: "ENOENT" });
+		});
 
 		const config = executable === "pwsh.exe" ? getPowerShellConfig() : getShellConfig();
 
@@ -64,11 +84,9 @@ describe("Windows Store shell aliases", () => {
 
 	it("still rejects PATH results that fail the existence check", () => {
 		const windowsPowerShell = "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-		spawnSyncMock
-			.mockReturnValueOnce({ status: 0, stdout: `${aliasesDir}\\pwsh.exe` })
-			.mockReturnValueOnce({ status: 0, stdout: windowsPowerShell });
-		accessSyncMock.mockImplementationOnce(() => {
-			throw Object.assign(new Error("not found"), { code: "ENOENT" });
+		vi.stubEnv("PATH", `${aliasesDir};D:\\Windows\\System32\\WindowsPowerShell\\v1.0`);
+		accessSyncMock.mockImplementation((path: string) => {
+			if (path !== windowsPowerShell) throw Object.assign(new Error("not found"), { code: "ENOENT" });
 		});
 
 		expect(getPowerShellConfig().shell).toBe(windowsPowerShell);
