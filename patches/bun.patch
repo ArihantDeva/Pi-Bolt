@@ -13464,3 +13464,1649 @@ index 4d76ec8e..c7fe4ecd 100644
 -- 
 2.54.0 (Apple Git-157)
 
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jarred Sumner <jarred@jarredsumner.com>
+Date: Sat, 3 Oct 2026 01:07:44 -0700
+Subject: [PATCH] dns(macOS): use DNSServiceQueryRecord so split DNS can fail
+ over (#44519)
+
+Fixes #44075. Closes #44449. On macOS, dns.lookup(), fetch() and sockets
+now resolve split-DNS names, for example a VPN resolver behind iCloud
+Private Relay. getaddrinfo(3) resolves these names, but Bun reported
+ENOTFOUND. mDNSResponder asks the next resolver after a negative answer
+only when the client sends the failover attribute.
+DNSServiceGetAddrInfoEx (#40675) accepts that attribute but never sends
+it, and the daemon reads it only for QueryRecord requests. This PR does
+what libinfo does: one DNSServiceQueryRecordWithAttribute per family.
+macOS 12 falls back to plain DNSServiceQueryRecord on the same code
+path. Thanks to @mimi1vx for the diagnosis. Compared with #44449: the
+hostname is sent as written (a trailing dot turns off search domains, so
+http://intranet/ would stop resolving), a link-local AAAA keeps its
+interface scope (fe80::1%7), and removed records are still ignored.
+Verified: new tests put a scripted mDNSResponder behind the unix socket
+of the daemon and check the requests and the answers. All 10 pass with
+bun bd test test/js/bun/dns/. The 9 that existed at that time all fail
+on 1.4.3 with USE_SYSTEM_BUN=1, and the tenth was not run there. The
+requests are now identical to those of getaddrinfo(3), and 21 lookups
+through the real daemon match 1.4.3. Not verified: real failover, which
+needs a split-DNS machine. @mimi1vx @sassdavid, can you try this build
+with bunx bun-pr?
+
+(cherry picked from commit 0ba17d5f7cc607262aa14e9d45ab425233fcee02)
+---
+ src/runtime/dns_jsc/dns.rs               |  63 +---
+ src/runtime/dns_jsc/dns_sd.rs            | 361 ++++++++++++++---------
+ test/js/bun/dns/mdnsresponder-fixture.ts | 222 ++++++++++++++
+ test/js/bun/dns/resolve-dns.test.ts      | 242 ++++++++++++++-
+ 4 files changed, 686 insertions(+), 202 deletions(-)
+ create mode 100644 test/js/bun/dns/mdnsresponder-fixture.ts
+
+diff --git a/src/runtime/dns_jsc/dns.rs b/src/runtime/dns_jsc/dns.rs
+index d9889aa6b2..6cb0b0aed5 100644
+--- a/src/runtime/dns_jsc/dns.rs
++++ b/src/runtime/dns_jsc/dns.rs
+@@ -118,7 +118,7 @@ bun_output::declare_scope!(DNSResolver, visible);
+ const IANA_DNS_PORT: i32 = 53;
+ 
+ // ──────────────────────────────────────────────────────────────────────────
+-// dns_sd (macOS): DNSServiceGetAddrInfo over one shared mDNSResponder connection, no per-lookup threads.
++// dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
+ // ──────────────────────────────────────────────────────────────────────────
+ 
+ #[cfg(target_os = "macos")]
+@@ -1209,33 +1209,6 @@ impl GetAddrInfoRequest {
+         request
+     }
+ 
+-    /// Reply callback (inside `DNSServiceProcessResult`): records state; completion happens in `on_readable`.
+-    /// # Safety
+-    /// `context` is the registered `*mut GetAddrInfoRequest`; `address`, if non-null, is a valid sockaddr.
+-    #[cfg(target_os = "macos")]
+-    pub(crate) unsafe extern "C" fn dns_sd_reply(
+-        _sd_ref: dns_sd::DNSServiceRef,
+-        flags: u32,
+-        _interface_index: u32,
+-        error_code: i32,
+-        _hostname: *const c_char,
+-        address: *const Sockaddr,
+-        ttl: u32,
+-        context: *mut c_void,
+-    ) {
+-        dns_sd::SharedConnection::note_reply(context);
+-        // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
+-        let this: *mut Self = context.cast();
+-        // SAFETY: `this` is the live heap request (JS thread); `address` is valid per dns_sd.h.
+-        unsafe {
+-            (*this)
+-                .backend
+-                .as_dns_sd_mut()
+-                .query
+-                .record_reply(flags, error_code, address, ttl);
+-        }
+-    }
+-
+     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
+     #[cfg(target_os = "macos")]
+     #[allow(clippy::not_unsafe_ptr_arg_deref)]
+@@ -2791,39 +2764,7 @@ pub(crate) mod internal {
+                 query: dns_sd::QueryState::new(protocol),
+             };
+         }
+-        let Some(_) = shared.start(
+-            dns_sd::Inflight::Internal(req),
+-            protocol,
+-            host,
+-            dns_sd_reply,
+-            req.cast::<c_void>(),
+-        ) else {
+-            return false;
+-        };
+-
+-        true
+-    }
+-
+-    #[cfg(target_os = "macos")]
+-    unsafe extern "C" fn dns_sd_reply(
+-        _sd_ref: dns_sd::DNSServiceRef,
+-        flags: u32,
+-        _interface_index: u32,
+-        error_code: i32,
+-        _hostname: *const c_char,
+-        address: *const Sockaddr,
+-        ttl: u32,
+-        context: *mut c_void,
+-    ) {
+-        dns_sd::SharedConnection::note_reply(context);
+-        let req: *mut Request = context.cast();
+-        // SAFETY: `context` is the registered `req` (event-loop thread); `address` is valid per dns_sd.h.
+-        unsafe {
+-            (*req)
+-                .dns_sd
+-                .query
+-                .record_reply(flags, error_code, address, ttl)
+-        };
++        shared.start(dns_sd::Inflight::Internal(req), protocol, host)
+     }
+ 
+     /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
+diff --git a/src/runtime/dns_jsc/dns_sd.rs b/src/runtime/dns_jsc/dns_sd.rs
+index a2a7d844f6..95d0b2a01b 100644
+--- a/src/runtime/dns_jsc/dns_sd.rs
++++ b/src/runtime/dns_jsc/dns_sd.rs
+@@ -1,9 +1,9 @@
+-//! macOS DNSServiceGetAddrInfo backend: all lookups share one mDNSResponder connection (see dns.rs banner).
++//! macOS DNSServiceQueryRecord backend: all lookups share one mDNSResponder connection (see dns.rs banner).
+ 
+ use super::*;
+ use bun_collections::index_sort;
+ 
+-pub(crate) type DNSServiceRef = *mut c_void;
++type DNSServiceRef = *mut c_void;
+ type DNSServiceFlags = u32;
+ type DNSServiceErrorType = i32;
+ pub(crate) type DNSServiceProtocol = u32;
+@@ -18,18 +18,23 @@ const FLAGS_TIMEOUT: DNSServiceFlags = 0x10000;
+ pub(crate) const PROTOCOL_IPV4: DNSServiceProtocol = 0x01;
+ pub(crate) const PROTOCOL_IPV6: DNSServiceProtocol = 0x02;
+ 
++const TYPE_A: u16 = 1;
++const TYPE_AAAA: u16 = 28;
++const CLASS_IN: u16 = 1;
++
+ pub(crate) const ERR_NO_ERROR: DNSServiceErrorType = 0;
+-pub(crate) const ERR_NO_SUCH_RECORD: DNSServiceErrorType = -65554;
+ pub(crate) const ERR_TIMEOUT: DNSServiceErrorType = -65568;
+-const ERR_DEFUNCT_CONNECTION: DNSServiceErrorType = -65569;
+ 
+-type GetAddrInfoReply = unsafe extern "C" fn(
++type QueryRecordReply = unsafe extern "C" fn(
+     sd_ref: DNSServiceRef,
+     flags: DNSServiceFlags,
+     interface_index: u32,
+     error_code: DNSServiceErrorType,
+-    hostname: *const c_char,
+-    address: *const Sockaddr,
++    fullname: *const c_char,
++    rrtype: u16,
++    rrclass: u16,
++    rdlen: u16,
++    rdata: *const c_void,
+     ttl: u32,
+     context: *mut c_void,
+ );
+@@ -40,35 +45,37 @@ unsafe extern "C" {
+     fn DNSServiceRefSockFD(sd_ref: DNSServiceRef) -> c_int;
+     fn DNSServiceProcessResult(sd_ref: DNSServiceRef) -> DNSServiceErrorType;
+     fn DNSServiceRefDeallocate(sd_ref: DNSServiceRef);
+-    fn DNSServiceGetAddrInfo(
++    fn DNSServiceQueryRecord(
+         sd_ref: *mut DNSServiceRef,
+         flags: DNSServiceFlags,
+         interface_index: u32,
+-        protocol: DNSServiceProtocol,
+-        hostname: *const c_char,
+-        callback: GetAddrInfoReply,
++        fullname: *const c_char,
++        rrtype: u16,
++        rrclass: u16,
++        callback: QueryRecordReply,
+         context: *mut c_void,
+     ) -> DNSServiceErrorType;
+ }
+ 
+-/// SPI: `DNSServiceGetAddrInfo` plus the attribute libinfo's getaddrinfo passes. Absent on macOS 12, so resolved at runtime.
+-type GetAddrInfoExFn = unsafe extern "C" fn(
++/// `DNSServiceQueryRecord` plus an attribute. Absent on macOS 12, so resolved at runtime.
++type QueryRecordWithAttributeFn = unsafe extern "C" fn(
+     sd_ref: *mut DNSServiceRef,
+     flags: DNSServiceFlags,
+     interface_index: u32,
+-    protocol: DNSServiceProtocol,
+-    hostname: *const c_char,
++    fullname: *const c_char,
++    rrtype: u16,
++    rrclass: u16,
+     attr: *const DNSServiceAttribute,
+-    callback: GetAddrInfoReply,
++    callback: QueryRecordReply,
+     context: *mut c_void,
+ ) -> DNSServiceErrorType;
+ 
+-/// `DNSServiceGetAddrInfoEx` with `kDNSServiceAttrAllowFailover` (lets mDNSResponder fail a query over to
+-/// scoped/supplemental resolvers, as getaddrinfo does), when this OS has both.
+-fn getaddrinfo_ex() -> Option<(GetAddrInfoExFn, *const DNSServiceAttribute)> {
++/// libinfo's getaddrinfo call: only QueryRecord sends `kDNSServiceAttrAllowFailover` to the daemon (`DNSServiceGetAddrInfoEx` drops it).
++fn query_record_allowing_failover()
++-> Option<(QueryRecordWithAttributeFn, *const DNSServiceAttribute)> {
+     let f = bun_sys::dlsym_with_handle!(
+-        GetAddrInfoExFn,
+-        "DNSServiceGetAddrInfoEx",
++        QueryRecordWithAttributeFn,
++        "DNSServiceQueryRecordWithAttribute",
+         Some(libc::RTLD_DEFAULT)
+     )?;
+     let attr = bun_sys::dlsym_with_handle!(
+@@ -150,41 +157,75 @@ enum Attempt {
+     Reissued,
+ }
+ 
++/// The A and the AAAA subordinate of one lookup; null for a family that was not asked for.
++type FamilyRefs = [DNSServiceRef; 2];
++
++fn deallocate_refs(sd_refs: FamilyRefs) {
++    for sd_ref in sd_refs {
++        if !sd_ref.is_null() {
++            // SAFETY: FFI; a non-null entry is a live subordinate that nothing else releases.
++            unsafe { DNSServiceRefDeallocate(sd_ref) };
++        }
++    }
++}
++
++/// What dnssd_clientstub's `handle_addrinfo_response` builds: a link-local address is scoped to the interface it was seen on.
++fn address_from_record(
++    rrtype: u16,
++    rdata: &[u8],
++    interface_index: u32,
++) -> Option<bun_dns::Address> {
++    match rrtype {
++        TYPE_A => {
++            let ip = Ipv4Addr::from(<[u8; 4]>::try_from(rdata).ok()?);
++            Some(bun_dns::Address::from_ip(ip.into(), 0))
++        }
++        TYPE_AAAA => {
++            let ip = Ipv6Addr::from(<[u8; 16]>::try_from(rdata).ok()?);
++            let mut address = bun_dns::Address::from_ip(ip.into(), 0);
++            if ip.is_unicast_link_local() {
++                address.set_scope_id(interface_index);
++            }
++            Some(address)
++        }
++        _ => None,
++    }
++}
++
+ /// Per-query state shared by the JS `dns.lookup` path and the internal connect path.
+ pub(crate) struct QueryState {
+-    pub(crate) sd_ref: DNSServiceRef,
++    sd_refs: FamilyRefs,
+     pub(crate) results: bun_dns::ResultList,
+-    /// First hard error (NoSuchRecord/Timeout are per-family negatives, not errors).
+-    pub(crate) sd_error: DNSServiceErrorType,
+     /// A family timed out: an unsuppressed reissue would only wait out the timeout again.
+     saw_timeout: bool,
+     /// Last reply had `MoreComing` and no other request's reply followed: more is queued daemon-side.
+     awaiting_more: bool,
+-    /// Protocol bits with no reply yet; any family-tagged callback clears its bit.
++    /// Protocol bits with no reply yet; an address record or any error for a family's question clears its bit.
+     pub(crate) pending_proto: DNSServiceProtocol,
+     stragglers: Stragglers,
+     attempt: Attempt,
+     /// Kept so `finish()` can reissue the query for the retry.
+     hostname: bun::ZBox,
+-    callback: Option<GetAddrInfoReply>,
+ }
+ 
+ impl QueryState {
+     pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
+         Self {
+-            sd_ref: ptr::null_mut(),
++            sd_refs: [ptr::null_mut(); 2],
+             results: Default::default(),
+-            sd_error: 0,
+             saw_timeout: false,
+             awaiting_more: false,
+             pending_proto: protocol,
+             stragglers: Stragglers::None,
+             attempt: Attempt::Plain,
+             hostname: bun::ZBox::from_bytes(b""),
+-            callback: None,
+         }
+     }
+ 
++    fn deallocate_refs(&mut self) {
++        deallocate_refs(core::mem::replace(&mut self.sd_refs, [ptr::null_mut(); 2]));
++    }
++
+     /// Back to a fresh in-flight state for the unsuppressed reissue.
+     pub(crate) fn reset_for_retry(&mut self, protocol: DNSServiceProtocol) {
+         self.attempt = Attempt::Reissued;
+@@ -200,49 +241,40 @@ impl QueryState {
+ 
+     /// A suppressed query that returned nothing at all gets one unsuppressed retry.
+     fn should_retry_unsuppressed(&self) -> bool {
+-        self.attempt == Attempt::Suppressed
+-            && self.results.is_empty()
+-            && self.sd_error == 0
+-            && !self.saw_timeout
++        self.attempt == Attempt::Suppressed && self.results.is_empty() && !self.saw_timeout
+     }
+ 
+-    /// Absorb one callback. SAFETY: `address`, if non-null, is a valid sockaddr (dnssd_clientstub guarantees it).
+-    pub(crate) unsafe fn record_reply(
++    /// Absorb one callback for the question `sd_ref`.
++    fn record_reply(
+         &mut self,
++        sd_ref: DNSServiceRef,
+         flags: DNSServiceFlags,
++        interface_index: u32,
+         error_code: DNSServiceErrorType,
+-        address: *const Sockaddr,
++        rrtype: u16,
++        rdata: &[u8],
+         ttl: u32,
+     ) {
+         self.awaiting_more = flags & FLAGS_MORE_COMING != 0;
+-        // Only PolicyDenied passes a null sockaddr; A/AAAA replies (incl. negatives) are family-tagged.
+-        if address.is_null() {
+-            if self.sd_error == 0 {
+-                self.sd_error = error_code;
+-            }
+-            return;
++        // As in libinfo, any error ends only its own family. The daemon's refusals carry no rrtype, so `sd_ref` names the family.
++        if error_code != ERR_NO_ERROR || matches!(rrtype, TYPE_A | TYPE_AAAA) {
++            self.pending_proto &= !if sd_ref == self.sd_refs[0] {
++                PROTOCOL_IPV4
++            } else {
++                PROTOCOL_IPV6
++            };
+         }
+-        // SAFETY: caller contract.
+-        let fam = unsafe { (*address).sa_family } as i32;
+-        // Any reply retires the family's bit; completeness is tracked by `awaiting_more`.
+-        self.pending_proto &= !if fam == netc::AF_INET6 {
+-            PROTOCOL_IPV6
+-        } else {
+-            PROTOCOL_IPV4
+-        };
+-        if error_code == ERR_NO_ERROR && flags & FLAGS_ADD != 0 {
+-            self.results.push(GetAddrInfoResult {
+-                // SAFETY: caller contract.
+-                address: unsafe { bun_dns::Address::init_posix(address.cast()) },
+-                ttl: ttl as i32,
+-            });
+-        } else if error_code == ERR_TIMEOUT {
+-            self.saw_timeout = true;
+-        } else if error_code != ERR_NO_ERROR
+-            && error_code != ERR_NO_SUCH_RECORD
+-            && self.sd_error == 0
+-        {
+-            self.sd_error = error_code;
++        match error_code {
++            ERR_NO_ERROR if flags & FLAGS_ADD != 0 => {
++                if let Some(address) = address_from_record(rrtype, rdata, interface_index) {
++                    self.results.push(GetAddrInfoResult {
++                        address,
++                        ttl: ttl as i32,
++                    });
++                }
++            }
++            ERR_TIMEOUT => self.saw_timeout = true,
++            _ => {}
+         }
+         self.stragglers = match (self.only_stragglers_left(), self.stragglers) {
+             (false, _) => Stragglers::None,
+@@ -258,9 +290,7 @@ impl QueryState {
+     }
+ 
+     pub(crate) fn is_ready(&self) -> bool {
+-        self.sd_error != 0
+-            || self.stragglers == Stragglers::GaveUp
+-            || (self.pending_proto == 0 && !self.awaiting_more)
++        self.stragglers == Stragglers::GaveUp || (self.pending_proto == 0 && !self.awaiting_more)
+     }
+ 
+     /// Deadline for giving up on stragglers (a silent second family, or a dangling `MoreComing`).
+@@ -295,6 +325,21 @@ impl Inflight {
+         }
+     }
+ 
++    /// The `on_reply` that turns `context()` back into this variant.
++    fn reply_callback(&self) -> QueryRecordReply {
++        match *self {
++            Inflight::Jsc(_) => on_reply::<false>,
++            Inflight::Internal(_) => on_reply::<true>,
++        }
++    }
++
++    fn complete(self) {
++        match self {
++            Inflight::Jsc(r) => GetAddrInfoRequest::complete_dns_sd(r),
++            Inflight::Internal(r) => internal::dns_sd_complete(r),
++        }
++    }
++
+     /// SAFETY: the request behind `self` is live (pinned in `inflight`);
+     /// the `&mut` derives from the stored raw pointer, not from a borrow.
+     unsafe fn query<'a>(self) -> &'a mut QueryState {
+@@ -308,6 +353,41 @@ impl Inflight {
+     }
+ }
+ 
++/// Records a reply; `on_readable` completes. SAFETY: `context` is a live request of the `INTERNAL` kind; `rdata` spans `rdlen` bytes.
++unsafe extern "C" fn on_reply<const INTERNAL: bool>(
++    sd_ref: DNSServiceRef,
++    flags: DNSServiceFlags,
++    interface_index: u32,
++    error_code: DNSServiceErrorType,
++    _fullname: *const c_char,
++    rrtype: u16,
++    _rrclass: u16,
++    rdlen: u16,
++    rdata: *const c_void,
++    ttl: u32,
++    context: *mut c_void,
++) {
++    SharedConnection::note_reply(context);
++    let owner = if INTERNAL {
++        Inflight::Internal(context.cast())
++    } else {
++        Inflight::Jsc(context.cast())
++    };
++    // SAFETY: caller contract; the slice is only read before this callback returns.
++    let rdata = unsafe { bun::ffi::slice(rdata.cast::<u8>(), rdlen as usize) };
++    // SAFETY: caller contract; event-loop thread, and no other borrow of the query is live here.
++    let query = unsafe { owner.query() };
++    query.record_reply(
++        sd_ref,
++        flags,
++        interface_index,
++        error_code,
++        rrtype,
++        rdata,
++        ttl,
++    );
++}
++
+ /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
+ pub(crate) struct SharedConnection {
+     main_ref: DNSServiceRef,
+@@ -400,76 +480,88 @@ impl SharedConnection {
+         Self::current()
+     }
+ 
+-    /// Start a subordinate query and track it (keeps the process alive); `None` if the daemon refused.
++    /// Start `owner`'s queries and track it (keeps the process alive); `false` if the daemon refused.
+     pub(crate) fn start(
+         &mut self,
+         owner: Inflight,
+         protocol: DNSServiceProtocol,
+         hostname: &ZStr,
+-        callback: GetAddrInfoReply,
+-        context: *mut c_void,
+-    ) -> Option<DNSServiceRef> {
++    ) -> bool {
+         let suppress = addrconfig_flags(protocol);
+-        let sub = self.issue(protocol, suppress, hostname, callback, context)?;
++        let Some(sd_refs) = self.issue(owner, protocol, suppress, hostname) else {
++            return false;
++        };
+         if self.inflight.is_empty() {
+             let ctx = self.ctx;
+             self.file_poll().enable_keeping_process_alive(ctx);
+         }
+         // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
+         let q = unsafe { owner.query() };
+-        q.sd_ref = sub;
++        q.sd_refs = sd_refs;
+         q.attempt = if suppress != 0 {
+             Attempt::Suppressed
+         } else {
+             Attempt::Plain
+         };
+         q.hostname = bun::ZBox::from_bytes(hostname.as_bytes());
+-        q.callback = Some(callback);
+         self.inflight.push(owner);
+-        Some(sub)
++        true
+     }
+ 
++    /// One query per family in `protocol`, as libinfo does; `None`, with none left running, if the daemon refused one.
+     fn issue(
+         &mut self,
++        owner: Inflight,
+         protocol: DNSServiceProtocol,
+         suppress: DNSServiceFlags,
+         hostname: &ZStr,
+-        callback: GetAddrInfoReply,
+-        context: *mut c_void,
+-    ) -> Option<DNSServiceRef> {
+-        // ShareConnection requires `sub` to start as a copy of the primary ref.
+-        let mut sub: DNSServiceRef = self.main_ref;
++    ) -> Option<FamilyRefs> {
+         let flags = FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress;
+-        let hostname = hostname.as_ptr().cast::<c_char>();
+-        // SAFETY: FFI; `hostname` is NUL-terminated (copied by dns_sd); `context` is only stored.
+-        let err = unsafe {
+-            match getaddrinfo_ex() {
+-                Some((ex, attr)) => ex(
+-                    &raw mut sub,
+-                    flags,
+-                    0,
+-                    protocol,
+-                    hostname,
+-                    attr,
+-                    callback,
+-                    context,
+-                ),
+-                None => DNSServiceGetAddrInfo(
+-                    &raw mut sub,
+-                    flags,
+-                    0,
+-                    protocol,
+-                    hostname,
+-                    callback,
+-                    context,
+-                ),
++        // Sent as given: the daemon tries search domains only for a name with no trailing dot.
++        let name = hostname.as_ptr().cast::<c_char>();
++        let (callback, context) = (owner.reply_callback(), owner.context());
++        let mut sd_refs: FamilyRefs = [ptr::null_mut(); 2];
++        let families = [(PROTOCOL_IPV4, TYPE_A), (PROTOCOL_IPV6, TYPE_AAAA)];
++        for (i, (family, rrtype)) in families.into_iter().enumerate() {
++            if protocol & family == 0 {
++                continue;
+             }
+-        };
+-        if err != ERR_NO_ERROR {
+-            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
+-            return None;
++            // ShareConnection requires `sub` to start as a copy of the primary ref.
++            let mut sub: DNSServiceRef = self.main_ref;
++            // SAFETY: FFI; `name` is NUL-terminated (copied by dns_sd); `context` is only stored.
++            let err = unsafe {
++                match query_record_allowing_failover() {
++                    Some((query_record, allow_failover)) => query_record(
++                        &raw mut sub,
++                        flags,
++                        0,
++                        name,
++                        rrtype,
++                        CLASS_IN,
++                        allow_failover,
++                        callback,
++                        context,
++                    ),
++                    None => DNSServiceQueryRecord(
++                        &raw mut sub,
++                        flags,
++                        0,
++                        name,
++                        rrtype,
++                        CLASS_IN,
++                        callback,
++                        context,
++                    ),
++                }
++            };
++            if err != ERR_NO_ERROR {
++                bun_output::scoped_log!(dns, "DNSServiceQueryRecord failed: {}", err);
++                deallocate_refs(sd_refs);
++                return None;
++            }
++            sd_refs[i] = sub;
+         }
+-        Some(sub)
++        Some(sd_refs)
+     }
+ 
+     /// Called first from every reply callback: a different `context` ends the previous request's `MoreComing` run.
+@@ -507,7 +599,7 @@ impl SharedConnection {
+             let ready = core::mem::take(&mut this.inflight);
+             let detached = SHARED.replace(ptr::null_mut());
+             for inf in ready {
+-                Self::finish(inf, Some(rc));
++                Self::fail(inf);
+             }
+             // SAFETY: `detached` was just removed from SHARED and drained.
+             unsafe { Self::destroy(detached) };
+@@ -516,7 +608,7 @@ impl SharedConnection {
+         let ready = this.take_ready(|q| q.is_ready());
+         this.arm_early_out();
+         for inf in ready {
+-            Self::finish(inf, None);
++            Self::finish(inf);
+         }
+     }
+ 
+@@ -600,7 +692,7 @@ impl SharedConnection {
+             ready
+         };
+         for inf in ready {
+-            Self::finish(inf, None);
++            Self::finish(inf);
+         }
+     }
+ 
+@@ -626,22 +718,23 @@ impl SharedConnection {
+         drop(conn);
+     }
+ 
+-    /// `force_err` drops partial results so teardown rejects instead of resolving.
+-    fn finish(inf: Inflight, force_err: Option<DNSServiceErrorType>) {
++    fn finish(inf: Inflight) {
+         // SAFETY: `inf` is a live heap request just removed from `inflight`.
+         let q = unsafe { inf.query() };
+-        // SAFETY: FFI; `sd_ref` is this request's live subordinate.
+-        unsafe { DNSServiceRefDeallocate(q.sd_ref) };
+-        if let Some(e) = force_err {
+-            q.results.clear();
+-            q.sd_error = e;
+-        } else if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
++        q.deallocate_refs();
++        if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
+             return;
+         }
+-        match inf {
+-            Inflight::Jsc(r) => GetAddrInfoRequest::complete_dns_sd(r),
+-            Inflight::Internal(r) => internal::dns_sd_complete(r),
+-        }
++        inf.complete();
++    }
++
++    /// The connection is going away: drops partial results so the request rejects instead of resolving.
++    fn fail(inf: Inflight) {
++        // SAFETY: `inf` is a live heap request just removed from `inflight`.
++        let q = unsafe { inf.query() };
++        q.deallocate_refs();
++        q.results.clear();
++        inf.complete();
+     }
+ 
+     /// Reissue `inf`'s query without SuppressUnusable; `false` if it couldn't be reissued.
+@@ -652,11 +745,8 @@ impl SharedConnection {
+         // SAFETY: `inf` is a live heap request removed from `inflight` by the caller.
+         let q = unsafe { inf.query() };
+         let (protocol, hostname) = (protocol_for_pending(q), q.hostname.clone());
+-        let Some(callback) = q.callback else {
+-            return false;
+-        };
+         q.reset_for_retry(protocol);
+-        let Some(sub) = this.issue(protocol, 0, &hostname, callback, inf.context()) else {
++        let Some(sd_refs) = this.issue(inf, protocol, 0, &hostname) else {
+             return false;
+         };
+         bun_output::scoped_log!(
+@@ -664,7 +754,7 @@ impl SharedConnection {
+             "retrying {} without SuppressUnusable",
+             bstr::BStr::new(hostname.as_bytes())
+         );
+-        q.sd_ref = sub;
++        q.sd_refs = sd_refs;
+         if this.inflight.is_empty() {
+             let ctx = this.ctx;
+             this.file_poll().enable_keeping_process_alive(ctx);
+@@ -687,13 +777,12 @@ impl SharedConnection {
+                 // have waiters on other threads (and its outcome is cached): this
+                 // thread going away is not an answer. Finish it on the work pool.
+                 Inflight::Internal(req) => {
+-                    // SAFETY: `inf` is a live heap request just removed from `inflight`;
+-                    // FFI releases this thread's subordinate for it.
+-                    unsafe { DNSServiceRefDeallocate(inf.query().sd_ref) };
++                    // SAFETY: `inf` is a live heap request just removed from `inflight`.
++                    unsafe { inf.query() }.deallocate_refs();
+                     internal::run_on_work_pool(req);
+                 }
+                 // A dns.lookup() from this thread's script: only this VM waits on it.
+-                Inflight::Jsc(_) => Self::finish(inf, Some(ERR_DEFUNCT_CONNECTION)),
++                Inflight::Jsc(_) => Self::fail(inf),
+             }
+         }
+         // SAFETY: `this` is detached and drained.
+@@ -755,13 +844,7 @@ pub(crate) fn lookup(
+     let promise_value = unsafe { (*request).head.promise.value() };
+ 
+     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
+-    let Some(_) = shared.start(
+-        Inflight::Jsc(request),
+-        protocol,
+-        &name_z,
+-        GetAddrInfoRequest::dns_sd_reply,
+-        request.cast::<c_void>(),
+-    ) else {
++    if !shared.start(Inflight::Jsc(request), protocol, &name_z) {
+         // SAFETY: request is exclusively owned; dns_sd never accepted it.
+         unsafe {
+             if let Some(pos) = (*request).pending_slot {
+@@ -775,7 +858,7 @@ pub(crate) fn lookup(
+             drop(bun_core::heap::take(request));
+         }
+         return lib_c::lookup(this, query, global_this, context);
+-    };
++    }
+ 
+     this.request_sent(this.vm());
+ 
+diff --git a/test/js/bun/dns/mdnsresponder-fixture.ts b/test/js/bun/dns/mdnsresponder-fixture.ts
+new file mode 100644
+index 0000000000..fca1c89771
+--- /dev/null
++++ b/test/js/bun/dns/mdnsresponder-fixture.ts
+@@ -0,0 +1,222 @@
++// A scripted stand-in for mDNSResponder. libsystem_dnssd connects to $DNSSD_UDS_PATH when it is set.
++//
++//   bun mdnsresponder-fixture.ts <socket path> <answers JSON> <client script>
++//
++// Runs the client script in a child Bun, answers its queries from `answers`, and after the client has
++// gone prints every request it made as one line of JSON. The client's own stdout comes first.
++import { dlopen, ptr } from "bun:ffi";
++import { closeSync, writeSync } from "node:fs";
++
++export type Answer = {
++  rrtype: number;
++  /** An IPv4 or IPv6 address as bytes, or any other rdata. */
++  rdata?: number[];
++  /** Defaults to kDNSServiceFlagsAdd. */
++  flags?: number;
++  error?: number;
++  ifindex?: number;
++  ttl?: number;
++  /** Held back until a query for this name arrives. */
++  after?: string;
++};
++/** Keyed by `${name} ${rrtype}`. A query with no entry gets kDNSServiceErr_NoSuchRecord. */
++export type Answers = Record<string, Answer[]>;
++
++const [socketPath, answersJSON, clientScript] = process.argv.slice(2);
++const answers: Answers = JSON.parse(answersJSON);
++
++const { symbols: libc } = dlopen("libSystem.B.dylib", {
++  socket: { args: ["i32", "i32", "i32"], returns: "i32" },
++  bind: { args: ["i32", "ptr", "u32"], returns: "i32" },
++  listen: { args: ["i32", "i32"], returns: "i32" },
++  accept: { args: ["i32", "ptr", "ptr"], returns: "i32" },
++  poll: { args: ["ptr", "u32", "i32"], returns: "i32" },
++  recvmsg: { args: ["i32", "ptr", "i32"], returns: "i64" },
++});
++
++const AF_UNIX = 1;
++const SOCK_STREAM = 1;
++const SOL_SOCKET = 0xffff;
++const SCM_RIGHTS = 1;
++const POLLIN = 1;
++
++const HEADER_SIZE = 28;
++const IPC_FLAGS_TRAILING_TLVS = 2;
++const ops = { 1: "connection", 8: "query", 15: "addrinfo", 63: "cancel" } as const;
++const QUERY_REPLY = 68;
++const ADDRINFO_REPLY = 72;
++
++const FLAGS_ADD = 0x2;
++const ERR_NO_SUCH_RECORD = -65554;
++const ERR_UNSUPPORTED = -65544;
++const TYPE_A = 1;
++const TYPE_AAAA = 28;
++
++function check(rc: number, what: string) {
++  if (rc < 0) throw new Error(`${what} failed`);
++  return rc;
++}
++
++function listenOn(path: string) {
++  const pathBytes = Buffer.from(path);
++  if (pathBytes.length >= 104) throw new Error(`socket path is too long for sun_path: ${path}`);
++  const addr = new Uint8Array(106);
++  addr[0] = addr.length;
++  addr[1] = AF_UNIX;
++  addr.set(pathBytes, 2);
++  const fd = check(libc.socket(AF_UNIX, SOCK_STREAM, 0), "socket");
++  check(libc.bind(fd, ptr(addr), addr.length), "bind");
++  check(libc.listen(fd, 8), "listen");
++  return fd;
++}
++
++/** One recvmsg(): the bytes read (empty at EOF) and any descriptors that came with them. */
++function receive(fd: number) {
++  const data = new Uint8Array(4096);
++  const control = new Uint8Array(64);
++  const iov = new BigUint64Array([BigInt(ptr(data)), BigInt(data.length)]);
++  const msg = new DataView(new ArrayBuffer(48));
++  msg.setBigUint64(16, BigInt(ptr(iov)), true);
++  msg.setInt32(24, 1, true);
++  msg.setBigUint64(32, BigInt(ptr(control)), true);
++  msg.setUint32(40, control.length, true);
++  const n = Number(libc.recvmsg(fd, ptr(new Uint8Array(msg.buffer)), 0));
++  const fds: number[] = [];
++  const cmsg = new DataView(control.buffer);
++  if (msg.getUint32(40, true) >= 16 && cmsg.getInt32(4, true) === SOL_SOCKET && cmsg.getInt32(8, true) === SCM_RIGHTS) {
++    for (let at = 12; at + 4 <= cmsg.getUint32(0, true); at += 4) fds.push(cmsg.getInt32(at, true));
++  }
++  return { bytes: Buffer.from(data.subarray(0, Math.max(n, 0))), fds };
++}
++
++function reply(op: number, context: Buffer, name: string, qtype: number) {
++  const fullname = Buffer.from((name.endsWith(".") ? name : name + ".") + "\0");
++  const list = answers[`${name} ${qtype}`] ?? [{ rrtype: qtype, error: ERR_NO_SUCH_RECORD }];
++  return list.map(({ rrtype, rdata = [], flags = FLAGS_ADD, error = 0, ifindex = 0, ttl = 60, after }) => {
++    const body = Buffer.alloc(12 + fullname.length + 6 + rdata.length + 4);
++    body.writeUInt32BE(flags, 0);
++    body.writeUInt32BE(ifindex, 4);
++    body.writeInt32BE(error, 8);
++    let at = 12 + fullname.copy(body, 12);
++    at = body.writeUInt16BE(rrtype, at);
++    at = body.writeUInt16BE(1, at);
++    at = body.writeUInt16BE(rdata.length, at);
++    at += Buffer.from(rdata).copy(body, at);
++    body.writeUInt32BE(ttl, at);
++    const header = Buffer.alloc(HEADER_SIZE);
++    header.writeUInt32BE(1, 0);
++    header.writeUInt32BE(body.length, 4);
++    header.writeUInt32BE(op, 12);
++    context.copy(header, 16);
++    return { after, bytes: Buffer.concat([header, body]) };
++  });
++}
++
++function cstring(data: Buffer, at: number) {
++  const end = data.indexOf(0, at);
++  return { value: data.toString("latin1", at, end), next: end + 1 };
++}
++
++function tlvs(data: Buffer, at: number) {
++  const out: Record<number, number[]> = {};
++  while (at + 4 <= data.length) {
++    const length = data.readUInt16BE(at + 2);
++    out[data.readUInt16BE(at)] = [...data.subarray(at + 4, at + 4 + length)];
++    at += 4 + length;
++  }
++  return out;
++}
++
++const requests: object[] = [];
++let held: { conn: number; after: string; bytes: Buffer }[] = [];
++
++function handle(conn: number, header: Buffer, data: Buffer, errorFds: number[]) {
++  const op = header.readUInt32BE(12);
++  const context = header.subarray(16, 24);
++  const hasTLVs = (header.readUInt32BE(8) & IPC_FLAGS_TRAILING_TLVS) !== 0;
++  const status = Buffer.alloc(4);
++
++  if (ops[op] === "connection") {
++    writeSync(conn, status);
++    return;
++  }
++  if (ops[op] === "cancel") return;
++
++  // Byte 0 is the empty control path that marks a request whose status goes to a descriptor of its own.
++  const flags = data.readUInt32BE(1);
++  const ifindex = data.readUInt32BE(5);
++  const replies: ReturnType<typeof reply> = [];
++  if (ops[op] === "query") {
++    const { value: name, next } = cstring(data, 9);
++    const rrtype = data.readUInt16BE(next);
++    for (const { conn, bytes } of held.filter(({ after }) => after === name)) writeSync(conn, bytes);
++    held = held.filter(({ after }) => after !== name);
++    requests.push({ op: "query", name, rrtype, flags, ifindex, tlvs: hasTLVs ? tlvs(data, next + 4) : {} });
++    replies.push(...reply(QUERY_REPLY, context, name, rrtype));
++  } else if (ops[op] === "addrinfo") {
++    const protocol = data.readUInt32BE(9);
++    const { value: name, next } = cstring(data, 13);
++    requests.push({ op: "addrinfo", name, protocol, flags, ifindex, tlvs: hasTLVs ? tlvs(data, next) : {} });
++    if (protocol & 2) replies.push(...reply(ADDRINFO_REPLY, context, name, TYPE_AAAA));
++    if (protocol & 1) replies.push(...reply(ADDRINFO_REPLY, context, name, TYPE_A));
++  } else {
++    requests.push({ op });
++    status.writeInt32BE(ERR_UNSUPPORTED);
++  }
++
++  const errorFd = errorFds.shift();
++  if (errorFd === undefined) throw new Error(`request with op ${op} came without a descriptor for its status`);
++  writeSync(errorFd, status);
++  closeSync(errorFd);
++  for (const { after, bytes } of replies) {
++    if (after === undefined) writeSync(conn, bytes);
++    else held.push({ conn, after, bytes });
++  }
++}
++
++const listener = listenOn(socketPath);
++const client = Bun.spawn({
++  cmd: [process.execPath, "-e", clientScript],
++  env: { ...process.env, DNSSD_UDS_PATH: socketPath },
++  stdio: ["ignore", "inherit", "inherit", "pipe"],
++});
++// Only the client holds the other end, so this becomes readable when the client is gone.
++const clientGone = client.stdio[3] as number;
++
++const conns = new Map<number, { pending: Buffer; errorFds: number[] }>();
++serving: while (true) {
++  const fds = [clientGone, listener, ...conns.keys()];
++  const pollfds = new DataView(new ArrayBuffer(fds.length * 8));
++  fds.forEach((fd, i) => {
++    pollfds.setInt32(i * 8, fd, true);
++    pollfds.setInt16(i * 8 + 4, POLLIN, true);
++  });
++  check(libc.poll(ptr(new Uint8Array(pollfds.buffer)), fds.length, -1), "poll");
++  for (let i = 0; i < fds.length; i++) {
++    if (pollfds.getInt16(i * 8 + 6, true) === 0) continue;
++    const fd = fds[i];
++    if (fd === clientGone) break serving;
++    if (fd === listener) {
++      conns.set(check(libc.accept(listener, null, null), "accept"), { pending: Buffer.alloc(0), errorFds: [] });
++      continue;
++    }
++    const conn = conns.get(fd)!;
++    const { bytes, fds: passed } = receive(fd);
++    if (bytes.length === 0) {
++      closeSync(fd);
++      conns.delete(fd);
++      continue;
++    }
++    conn.errorFds.push(...passed);
++    conn.pending = Buffer.concat([conn.pending, bytes]);
++    while (conn.pending.length >= HEADER_SIZE) {
++      const size = HEADER_SIZE + conn.pending.readUInt32BE(4);
++      if (conn.pending.length < size) break;
++      handle(fd, conn.pending.subarray(0, HEADER_SIZE), conn.pending.subarray(HEADER_SIZE, size), conn.errorFds);
++      conn.pending = conn.pending.subarray(size);
++    }
++  }
++}
++
++console.log(JSON.stringify(requests));
++process.exitCode = await client.exited;
+diff --git a/test/js/bun/dns/resolve-dns.test.ts b/test/js/bun/dns/resolve-dns.test.ts
+index a9d7efde6f..6f2fec086a 100644
+--- a/test/js/bun/dns/resolve-dns.test.ts
++++ b/test/js/bun/dns/resolve-dns.test.ts
+@@ -1,9 +1,11 @@
+ import { SystemError, dns } from "bun";
+-import { describe, expect, test } from "bun:test";
+-import { bunEnv, bunExe, isASAN, isWindows, withoutAggressiveGC } from "harness";
++import { afterAll, beforeAll, describe, expect, test } from "bun:test";
++import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+ import { isIP, isIPv4, isIPv6 } from "node:net";
+ import { join } from "node:path";
++import type { Answer, Answers } from "./mdnsresponder-fixture";
+ 
++const cc = Bun.which("cc") || Bun.which("clang");
+ const backends = ["system", "libc", "c-ares"];
+ const validHostnames = ["localhost", "example.com"];
+ const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
+@@ -298,4 +300,240 @@ describe("dns", () => {
+       );
+     });
+   });
++
++  // On macOS the system backend talks to mDNSResponder over a unix socket. These put a scripted responder
++  // behind that socket, so each test sees the requests Bun makes and chooses the replies Bun gets.
++  describe.skipIf(!isMacOS || !cc)("system backend over the mDNSResponder socket", () => {
++    // libsystem_dnssd has a DNSSD_UDS_PATH override of its own, but on macOS 26 only a setuid process reads it.
++    const redirectConnect = /* c */ `
++      #include <stdlib.h>
++      #include <string.h>
++      #include <sys/socket.h>
++      #include <sys/un.h>
++
++      int connect_nocancel(int, const struct sockaddr *, socklen_t) __asm("_connect$NOCANCEL");
++
++      static const struct sockaddr *redirect(const struct sockaddr *addr, struct sockaddr_un *to) {
++        const char *path = getenv("DNSSD_UDS_PATH");
++        if (!path || addr->sa_family != AF_UNIX ||
++            strcmp(((const struct sockaddr_un *)addr)->sun_path, "/var/run/mDNSResponder"))
++          return addr;
++        to->sun_len = sizeof(*to);
++        to->sun_family = AF_UNIX;
++        strlcpy(to->sun_path, path, sizeof(to->sun_path));
++        return (const struct sockaddr *)to;
++      }
++
++      static int redirected_connect(int fd, const struct sockaddr *addr, socklen_t len) {
++        struct sockaddr_un to;
++        return connect(fd, redirect(addr, &to), len);
++      }
++
++      static int redirected_connect_nocancel(int fd, const struct sockaddr *addr, socklen_t len) {
++        struct sockaddr_un to;
++        return connect_nocancel(fd, redirect(addr, &to), len);
++      }
++
++      __attribute__((used, section("__DATA,__interpose"))) static const struct {
++        const void *replacement, *original;
++      } interpose[] = {
++        {(const void *)redirected_connect, (const void *)connect},
++        {(const void *)redirected_connect_nocancel, (const void *)connect_nocancel},
++      };
++    `;
++
++    let dir: ReturnType<typeof tempDir>;
++    let sockets = 0;
++
++    beforeAll(async () => {
++      dir = tempDir("dns-sd", { "redirect.c": redirectConnect });
++      await using proc = Bun.spawn({
++        cmd: [cc!, "-dynamiclib", "-o", "redirect.dylib", "redirect.c"],
++        cwd: String(dir),
++        env: bunEnv,
++        stdout: "inherit",
++        stderr: "pipe",
++      });
++      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
++      if (exitCode !== 0) throw new Error(`could not compile redirect.c: ${stderr}`);
++    });
++
++    afterAll(() => dir?.[Symbol.dispose]());
++
++    const A = 1;
++    const CNAME = 5;
++    const AAAA = 28;
++    // kDNSServiceFlagsShareConnection | kDNSServiceFlagsTimeout | kDNSServiceFlagsReturnIntermediates
++    const baseFlags = 0x4000 | 0x10000 | 0x1000;
++    const suppressUnusable = 0x8000;
++    const alias: Answer = { rrtype: CNAME, rdata: [5, ...Buffer.from("alias"), 4, ...Buffer.from("test"), 0] };
++    const a = (...rdata: number[]): Answer => ({ rrtype: A, rdata });
++    const aaaa = (first: number, last: number, more: Partial<Answer> = {}): Answer => ({
++      rrtype: AAAA,
++      rdata: [first >> 8, first & 0xff, ...Buffer.alloc(13), last],
++      ...more,
++    });
++
++    /** Runs `script` with `answers` behind the socket: the one line of JSON it prints, and the requests it made. */
++    async function exchange(answers: Answers, script: string) {
++      await using proc = Bun.spawn({
++        cmd: [
++          bunExe(),
++          join(import.meta.dir, "mdnsresponder-fixture.ts"),
++          join(String(dir), `${sockets++}.sock`),
++          JSON.stringify(answers),
++          script,
++        ],
++        env: { ...bunEnv, DYLD_INSERT_LIBRARIES: join(String(dir), "redirect.dylib"), NO_PROXY: "*", no_proxy: "*" },
++        stdout: "pipe",
++        stderr: "inherit",
++      });
++      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
++      const [printed, requests] = stdout
++        .trim()
++        .split("\n")
++        .map(line => JSON.parse(line));
++      return {
++        printed,
++        // TLV 4 is IPC_TLV_TYPE_SERVICE_ATTR_FAILOVER_POLICY; 1 is kDNSServiceFailoverPolicyAllow.
++        requests: requests.map(({ tlvs, ...request }) => ({ ...request, failoverPolicy: tlvs?.[4]?.at(-1) })),
++        exitCode,
++      };
++    }
++
++    const lookup = (name: string, options: object = {}) =>
++      `console.log(JSON.stringify(await Bun.dns.lookup(${JSON.stringify(name)}, ${JSON.stringify(options)}).catch(e => e.code)))`;
++
++    const queries = (name: string, flags: number, rrtypes = [A, AAAA]) =>
++      rrtypes.map(rrtype => ({ op: "query", name, rrtype, flags, ifindex: 0, failoverPolicy: 1 }));
++
++    const both = {
++      "host.corp.example 1": [alias, a(10, 0, 0, 10)],
++      "host.corp.example 28": [alias, aaaa(0xfd00, 0x10)],
++    };
++
++    // https://github.com/oven-sh/bun/issues/44075
++    test.concurrent("lookup() queries each family and allows failover to another resolver", async () => {
++      expect(await exchange(both, lookup("host.corp.example"))).toEqual({
++        printed: [
++          { address: "fd00::10", family: 6, ttl: 60 },
++          { address: "10.0.0.10", family: 4, ttl: 60 },
++        ],
++        requests: queries("host.corp.example", baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() makes the same requests as getaddrinfo()", async () => {
++      const [system, libc] = await Promise.all(
++        ["system", "libc"].map(backend => exchange(both, lookup("host.corp.example", { backend }))),
++      );
++      expect(libc.requests).toHaveLength(2);
++      expect(system.requests).toEqual(libc.requests);
++    });
++
++    test.concurrent("fetch() queries each family and allows failover to another resolver", async () => {
++      const script = `
++        using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("reached") });
++        const response = await fetch("http://host.corp.example:" + server.port + "/");
++        console.log(JSON.stringify(await response.text()));
++      `;
++      expect(await exchange({ "host.corp.example 1": [alias, a(127, 0, 0, 1)] }, script)).toEqual({
++        printed: "reached",
++        requests: queries("host.corp.example", baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent.each([
++      { family: 4, rrtype: A, address: "10.0.0.10" },
++      { family: 6, rrtype: AAAA, address: "fd00::10" },
++    ])("lookup() with family: $family queries that family alone", async ({ family, rrtype, address }) => {
++      expect(await exchange(both, lookup("host.corp.example", { family }))).toEqual({
++        printed: [{ address, family, ttl: 60 }],
++        requests: queries("host.corp.example", baseFlags, [rrtype]),
++        exitCode: 0,
++      });
++    });
++
++    // mDNSResponder tries the search domains for a single label only when the name has no trailing dot.
++    test.concurrent.each(["intranet", "host.corp.example."])("lookup(%j) sends the name as written", async name => {
++      expect(await exchange({ [`${name} 1`]: [a(10, 0, 0, 10)] }, lookup(name))).toEqual({
++        printed: [{ address: "10.0.0.10", family: 4, ttl: 60 }],
++        requests: queries(name, baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() scopes a link-local address to the interface it was seen on", async () => {
++      const answers = { "printer.local 28": [aaaa(0xfe80, 1, { ifindex: 7 }), aaaa(0xfd00, 1, { ifindex: 7 })] };
++      expect(await exchange(answers, lookup("printer.local"))).toEqual({
++        printed: [
++          { address: "fe80::1%7", family: 6, ttl: 60 },
++          { address: "fd00::1", family: 6, ttl: 60 },
++        ],
++        requests: queries("printer.local", baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() keeps only well-formed records that were added", async () => {
++      const removed = { ...a(10, 0, 0, 9), flags: 0 };
++      const answers = { "host.corp.example 1": [a(10, 0, 0, 10), removed, a(10, 0, 0)] };
++      expect(await exchange(answers, lookup("host.corp.example"))).toEqual({
++        printed: [{ address: "10.0.0.10", family: 4, ttl: 60 }],
++        requests: queries("host.corp.example", baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    // kDNSServiceErr_NoAuth. The daemon reports a question it refuses to start with no record type.
++    const refused: Answer = { rrtype: 0, error: -65555 };
++
++    test.concurrent("lookup() waits for the other family when the daemon refuses one question", async () => {
++      const answers = {
++        "host.corp.example 1": [refused],
++        "host.corp.example 28": [aaaa(0xfd00, 0x10, { after: "second.test" })],
++        "first.test 1": [a(10, 0, 0, 1)],
++        "second.test 1": [a(10, 0, 0, 2)],
++      };
++      // The answer for first.test is behind the refusal on the socket, so the refusal has been read once it resolves.
++      const script = `
++        const host = Bun.dns.lookup("host.corp.example").catch(e => e.code);
++        await Bun.dns.lookup("first.test");
++        await Bun.dns.lookup("second.test");
++        console.log(JSON.stringify(await host));
++      `;
++      expect(await exchange(answers, script)).toEqual({
++        printed: [{ address: "fd00::10", family: 6, ttl: 60 }],
++        requests: ["host.corp.example", "first.test", "second.test"].flatMap(name =>
++          queries(name, baseFlags | suppressUnusable),
++        ),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() reports ENOTFOUND when the daemon refuses both questions", async () => {
++      const answers = { "host.corp.example 1": [refused], "host.corp.example 28": [refused] };
++      expect(await exchange(answers, lookup("host.corp.example"))).toEqual({
++        printed: "DNS_ENOTFOUND",
++        requests: [
++          ...queries("host.corp.example", baseFlags | suppressUnusable),
++          ...queries("host.corp.example", baseFlags),
++        ],
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() asks once more without SuppressUnusable before it reports ENOTFOUND", async () => {
++      expect(await exchange({}, lookup("host.corp.example"))).toEqual({
++        printed: "DNS_ENOTFOUND",
++        requests: [
++          ...queries("host.corp.example", baseFlags | suppressUnusable),
++          ...queries("host.corp.example", baseFlags),
++        ],
++        exitCode: 0,
++      });
++    });
++  });
+ });
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dylan Conway <dylan.conway567@gmail.com>
+Date: Wed, 21 Oct 2026 17:28:46 -0700
+Subject: [PATCH] fetch, RedisClient: a TLS session that breaks after its
+ handshake is a lost connection, not a failed handshake (#46409)
+
+Restores two recoveries that 1.4.3 has and `main` lost: `fetch` sending
+a request again after a reused https connection breaks, and
+`Bun.RedisClient` reconnecting after a `rediss://` connection breaks.
+
+When a TLS session that is already up gets bytes it cannot accept (bytes
+that are not a TLS record, a record that does not authenticate) and the
+peer closes:
+
+| | 1.4.3 | `main` |
+|---|---|---|
+| `fetch`, GET on a reused https connection | sent again on a new
+connection, resolves | rejects with `EPROTO: The TLS handshake failed` |
+| `fetch`, GET through a reused CONNECT tunnel, the session with the
+**https proxy** breaks | sent again, resolves | rejects with `EPROTO` |
+| `RedisClient` over `rediss://`, a command in flight or the connection
+idle | reconnects | never reconnects, every later command rejects with
+`Connection has failed` |
+
+A FIN, an RST and a close_notify at the same moment are recovered from
+on both builds.
+
+Since #44618, `ssl_fail_established_session`
+(`packages/bun-usockets/src/crypto/openssl.c`) reports a fatal error on
+an established session to the socket's owner through
+`on_handshake(success = 0)`, and then closes the socket itself. An owner
+that takes every such report for a refused handshake fails for good,
+before the close event that carries its recovery policy arrives:
+
+- `HTTPContext::Handler::on_handshake` called `close_and_fail`, so
+`HTTPClient::on_close`, which holds the resend rule, found a client that
+had already failed.
+- `JSValkeyClient`'s `on_handshake` called `fail_with_js_value`, which
+sets `flags.failed`, and `ValkeyClient::on_close` skips the retry policy
+for a failed client.
+
+The WebSocket client got its guard for this in #45720.
+
+**fetch** (`src/http/HTTPContext.rs`, the fixing lines): a failed report
+for a request that `on_close` would send again returns without failing
+the client. uSockets closes the socket right after the report, and
+`on_close` does what it does for a FIN. `allow_retry` is only ever set
+on a reused connection, which is past its handshake, so a real handshake
+failure never takes this path. To ask the same question in both places,
+the condition moves out of `on_close` into
+`HTTPClient::retries_on_close()` unchanged (`src/http/lib.rs`).
+
+Everything that is not sent again keeps `main`'s behavior and its
+`EPROTO`: a POST, a stream body, a response whose body has started,
+`keepalive: false`.
+
+**RedisClient** (`src/runtime/valkey_jsc/`): a failed report on a
+connection that is `Connected` (its `HELLO` was answered), with
+`autoReconnect` on, is a lost connection. The commands in flight are
+rejected with the TLS reason, as on `main`, `failed` stays unset, and
+the close that follows runs the usual retry policy. The rejections are
+made without entering an event loop scope, so they are observed after
+`on_close` has run: a command issued from a `catch` waits for the new
+connection, as it does after a FIN, instead of going out on the dead
+socket.
+
+Two cases keep `main`'s behavior, the client fails and every pending
+command is rejected with the TLS reason:
+
+- **Before the reply to `HELLO`.** That is where a TLS 1.3 server
+refuses the client's certificate, after the client's side of the
+handshake is over, so a failure there is a refusal and not a lost
+connection. A client with no certificate gets `EPROTO:
+...TLSV1_ALERT_CERTIFICATE_REQUIRED` from its first dial. (1.4.3 keeps
+dialing here: 9 connections in 8 s, with the command still pending.)
+- **`autoReconnect: false`.** There is no policy to hand the close to,
+and failing the client tells the commands that are still queued why, not
+only the ones in flight.
+
+- **The session inside a CONNECT tunnel** (origin side, `ProxyTunnel`).
+A request on a reused tunnel whose inner session ends is not sent again
+on `main`, but it is not on 1.4.3 either, and not for a FIN or a
+close_notify either. It is a different cause (`ProxyTunnel::on_close`
+never consults the resend rule) and older than #44618, so it is not part
+of this PR.
+- **HTTP/2 sessions**: `fail_streams` sends nothing again for any kind
+of close, so only the error code depends on the report.
+- **`Bun.SQL`**: the pool does not retry the close of an established
+connection whatever the error is, and dials again for the next query.
+- A finished TLS 1.2 renegotiation makes `RedisClient` send `HELLO`
+again. That is #45413.
+
+Reproduced first on a debug build of `main` and on the 1.4.3 release
+binary with the same scripts (the table above), then on this branch.
+
+New tests, in the existing files for each area:
+
+`test/js/web/fetch/fetch-keepalive.test.ts`
+- a GET that a reused https connection answers with: bytes that are not
+a TLS record, a record that does not authenticate, half a response head
+and then such bytes, close_notify, FIN, RST. Each is sent again, and the
+origin sees exactly `connection 1 request 1`, `connection 1 request 2`,
+`connection 2 request 1`.
+- a POST, and a GET whose response body has started, are **not** sent
+again and reject with `EPROTO`.
+- a GET through a reused tunnel when the session with the https proxy
+breaks is sent again over a second tunnel.
+
+`test/js/valkey/reliability/connection-failures.test.ts`
+- the client reconnects when the session breaks in place of a reply
+(with the next command issued straight from the rejection) and while
+idle. `onclose` never fires, and the command in flight still rejects
+with `EPROTO: ...WRONG_VERSION_NUMBER`.
+- with `autoReconnect: false`, a `GET` in flight and an `INFO` queued
+behind it both reject with the TLS reason, and `onclose` fires once.
+- a TLS 1.3 server that requires a client certificate fails a client
+that has none at its first dial, with
+`TLSV1_ALERT_CERTIFICATE_REQUIRED`.
+
+| | without the `src/` change | with it |
+|---|---|---|
+| `fetch-keepalive.test.ts` | 4 fail (the three TLS breaks, the https
+proxy) | 58 pass |
+| `connection-failures.test.ts`, the 4 new tests | 2 fail (the two
+reconnects) | 4 pass |
+
+The existing tests that pin the errors of a broken session pass with the
+change: `test/js/bun/net/tls-fatal-error-closes.test.ts` (every owner
+still closes, same errors) 38 pass,
+`test/js/node/tls/renegotiation.test.ts` (a refused renegotiation,
+`fetch` and `RedisClient`) 57 pass.
+
+The close_notify / FIN / RST rows, the two "not sent again" rows and the
+last two Redis tests pass on both builds on purpose: they pin what must
+not change.
+
+The bug is newer than the latest release, so `USE_SYSTEM_BUN=1` passes
+these tests. "Fails without the fix" was shown by building `main`'s
+`src/` with the new tests.
+
+Each condition on the Redis side was removed in turn to see a test fail:
+without `status == Connected` the server that refuses the certificate is
+dialed again, without the `autoReconnect` condition the queued `INFO`
+gets `Connection closed`, and with an event loop scope around the
+rejections the command issued from the rejection goes out on the dead
+socket. The new Redis tests also pass under
+`BUN_JSC_validateExceptionChecks=1`.
+
+The files next to these that go through the same two `on_handshake`
+handlers, for real handshake failures (wrong name, untrusted chain,
+`checkServerIdentity`), also pass:
+`test/js/valkey/valkey-tls-verify.test.ts` 14 pass,
+`test/js/web/fetch/fetch.tls.test.ts` 64 pass. My machine has no IPv6,
+so for that run their servers listened on `127.0.0.1`. The one failure
+there, `trusts a self-issued certificate without keyCertSign only when
+ca holds that very certificate` (`CERT_SIGNATURE_FAILURE` where
+`UNABLE_TO_VERIFY_LEAF_SIGNATURE` is expected), is the same on `main`
+without this change.
+
+`connection-failures.test.ts` has one failure on my machine that is not
+from this PR: `close() over rediss:// while the peer has stopped reading
+closes the socket at once` fails the same way on `main` without this
+change. The tests there that need a Redis server were skipped (no
+Docker).
+
+---
+_Generated by [Claude Code](https://claude.ai/code)_
+
+---------
+
+Co-authored-by: Claude <noreply@anthropic.com>
+(cherry picked from commit 4a9c3418a271fcf7beb5e545228c797c4ba1484a)
+---
+ src/http/HTTPContext.rs                       |   5 +
+ src/http/lib.rs                               |  43 ++++---
+ src/runtime/valkey_jsc/js_valkey.rs           |   7 +
+ src/runtime/valkey_jsc/valkey.rs              |  16 +++
+ .../reliability/connection-failures.test.ts   | 120 ++++++++++++++++++
+ 5 files changed, 174 insertions(+), 17 deletions(-)
+
+diff --git a/src/http/HTTPContext.rs b/src/http/HTTPContext.rs
+index 30b1f27a81..2a74e6e877 100644
+--- a/src/http/HTTPContext.rs
++++ b/src/http/HTTPContext.rs
+@@ -1420,6 +1420,11 @@ impl<const SSL: bool> Handler<SSL> {
+ 
+         let active = HTTPContext::<SSL>::get_tagged(ptr);
+         if let Some(client) = active.client_mut() {
++            // A reused connection is past its handshake: uSockets reports a fatal error on an
++            // established session as a failed one, then closes the socket, and `on_close` resends.
++            if !handshake_success && client.retries_on_close() {
++                return;
++            }
+             // handshake completed but we may have ssl errors
+             client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
+             if handshake_success {
+diff --git a/src/http/lib.rs b/src/http/lib.rs
+index f1df19c401..658ca8fd4c 100644
+--- a/src/http/lib.rs
++++ b/src/http/lib.rs
+@@ -2163,6 +2163,30 @@ impl<'a> HTTPClient<'a> {
+         }
+     }
+ 
++    fn is_in_progress(&self) -> bool {
++        self.state.stage != Stage::Done
++            && self.state.stage != Stage::Fail
++            && !self.state.flags.is_redirect_pending
++    }
++
++    /// Whether `on_close` sends the request again: it went out on a reused
++    /// keep-alive connection, and that one ended before the response body.
++    pub(crate) fn retries_on_close(&self) -> bool {
++        // `is_in_progress` also keeps a client whose final result was already
++        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
++        // that embeds it is freed once that result is dispatched, so a late
++        // close event must not re-enter `start()`.
++        self.is_in_progress()
++            && self.allow_retry
++            && self.method.is_idempotent()
++            // Only a Bytes body can be rebuilt from `original_request_body`.
++            // Stream/Sendfile bodies are consumed as they are written, so a
++            // retry would silently replay a truncated request.
++            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
++            && self.state.response_stage != ResponseStage::Body
++            && self.state.response_stage != ResponseStage::BodyChunk
++    }
++
+     pub(crate) fn on_close<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
+         // the socket is closed, we need to unregister the abort tracker
+@@ -2173,9 +2197,7 @@ impl<'a> HTTPClient<'a> {
+             return;
+         }
+         self.close_proxy_tunnel(true);
+-        let in_progress = self.state.stage != Stage::Done
+-            && self.state.stage != Stage::Fail
+-            && !self.state.flags.is_redirect_pending;
++        let in_progress = self.is_in_progress();
+         if self.state.flags.is_redirect_pending {
+             // if the connection is closed and we are pending redirect just do the redirect
+             // in this case we will re-connect or go to a different socket if needed
+@@ -2193,20 +2215,7 @@ impl<'a> HTTPClient<'a> {
+             return;
+         }
+ 
+-        // `in_progress` also keeps a client whose final result was already
+-        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
+-        // that embeds it is freed once that result is dispatched, so a late
+-        // close event must not re-enter `start()`.
+-        if in_progress
+-            && self.allow_retry
+-            && self.method.is_idempotent()
+-            // Only a Bytes body can be rebuilt from `original_request_body`.
+-            // Stream/Sendfile bodies are consumed as they are written, so a
+-            // retry would silently replay a truncated request.
+-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+-            && self.state.response_stage != ResponseStage::Body
+-            && self.state.response_stage != ResponseStage::BodyChunk
+-        {
++        if self.retries_on_close() {
+             self.allow_retry = false;
+             // we need to retry the request, clean up the response message buffer and start again
+             self.state.response_message_buffer = MutableString::default();
+diff --git a/src/runtime/valkey_jsc/js_valkey.rs b/src/runtime/valkey_jsc/js_valkey.rs
+index 3f863f0a88..522cf955d0 100644
+--- a/src/runtime/valkey_jsc/js_valkey.rs
++++ b/src/runtime/valkey_jsc/js_valkey.rs
+@@ -1862,6 +1862,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
+                 }
+             }
+             this.client_mut().start()?;
++        } else if this.client.get().status == valkey::Status::Connected
++            && this.client.get().flags.enable_auto_reconnect
++        {
++            // uSockets reports a fatal error on an established session as a failed handshake. Before
++            // the reply to HELLO it is one: a TLS 1.3 server refuses a client certificate after our
++            // Finished. With no reconnect to follow, failing tells the queued commands why too.
++            return this.client_mut().on_tls_session_error(&ssl_error);
+         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
+             // The same check, made inside the handshake (`server_identity`).
+             let hostname = Self::identity_hostname(this, ssl_ptr);
+diff --git a/src/runtime/valkey_jsc/valkey.rs b/src/runtime/valkey_jsc/valkey.rs
+index 0562b03f1a..da4983a27e 100644
+--- a/src/runtime/valkey_jsc/valkey.rs
++++ b/src/runtime/valkey_jsc/valkey.rs
+@@ -533,6 +533,22 @@ impl ValkeyClient {
+         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+     }
+ 
++    /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
++    /// hears why, and the rest is `on_close`'s, like any lost connection. The caller enters no
++    /// event loop scope, so the rejections are only observed once `on_close` has run.
++    pub(crate) fn on_tls_session_error(
++        &mut self,
++        ssl_error: &uws::us_bun_verify_error_t,
++    ) -> JsResult<()> {
++        if self.in_flight.is_empty() {
++            return Ok(());
++        }
++        let global_this = self.global_object();
++        let jsvalue = crate::socket::uws_jsc::verify_error_to_js(ssl_error, &global_this);
++        let mut entries = command::entry::Queue::new();
++        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
++    }
++
+     /// Flush pending data to the socket
+     pub(crate) fn flush_data(&mut self) -> bool {
+         let chunk = self.write_buffer.remaining();
+diff --git a/test/js/valkey/reliability/connection-failures.test.ts b/test/js/valkey/reliability/connection-failures.test.ts
+index c9f70240d8..6334509772 100644
+--- a/test/js/valkey/reliability/connection-failures.test.ts
++++ b/test/js/valkey/reliability/connection-failures.test.ts
+@@ -448,6 +448,126 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
+       }
+     }
+   });
++
++  const WRONG_VERSION_NUMBER = "EPROTO: error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER";
++  const codeAndMessage = (e: any) => `${e.code}: ${e.message}`;
++
++  // A rediss:// server whose connections answer a command with their own number. `breakSession` sends bytes that are
++  // not a TLS record and closes, which is also the answer to `GET lost`.
++  async function serverThatBreaksTls() {
++    const secureContext = tls.createSecureContext({ key: tlsCert.key, cert: tlsCert.cert });
++    const raws: net.Socket[] = [];
++    const breakSession = (raw: net.Socket) => raw.end("not a tls record at all\r\n");
++    const server = net.createServer(raw => {
++      const connection = raws.push(raw);
++      const socket = new tls.TLSSocket(raw, { isServer: true, secureContext });
++      for (const each of [raw, socket]) each.on("error", () => {});
++      const state = { buffer: Buffer.alloc(0) };
++      socket.on("data", chunk => {
++        state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
++        for (const [name, key] of readCommands(state)) {
++          if (key === "lost") breakSession(raw);
++          else socket.write(name.toUpperCase() === "HELLO" ? "+OK\r\n" : `$1\r\n${connection}\r\n`);
++        }
++      });
++    });
++    server.listen(0, "127.0.0.1");
++    await once(server, "listening");
++    return {
++      url: `rediss://localhost:${(server.address() as net.AddressInfo).port}`,
++      raws,
++      breakSession,
++      async [Symbol.asyncDispose]() {
++        for (const raw of raws) raw.destroy();
++        await new Promise(closed => server.close(closed));
++      },
++    };
++  }
++
++  test.each(["in place of a reply", "while the connection is idle"] as const)(
++    "reconnects when the TLS session of a rediss:// connection breaks %s",
++    async when => {
++      await using server = await serverThatBreaksTls();
++      const client = new RedisClient(server.url, { tls: { ca: tlsCert.cert } });
++      try {
++        const events: string[] = [];
++        const reconnected = Promise.withResolvers<void>();
++        // Only the idle row awaits it.
++        reconnected.promise.catch(() => {});
++        client.onconnect = () => void (events.push("connect") === 2 && reconnected.resolve());
++        client.onclose = error => void (events.push("close"), reconnected.reject(error));
++        const get = (key: string) => client.get(key).catch(codeAndMessage);
++        const replies = [await get("key")];
++        if (when === "in place of a reply") {
++          // The next GET follows at once: it waits for the new connection, as it does after a FIN.
++          replies.push(await get("lost"));
++        } else {
++          server.breakSession(server.raws[0]);
++          await reconnected.promise;
++        }
++        replies.push(await get("key"));
++        expect({ replies, events, connections: server.raws.length }).toEqual({
++          replies: ["1", ...(when === "in place of a reply" ? [WRONG_VERSION_NUMBER] : []), "2"],
++          events: ["connect", "connect"],
++          connections: 2,
++        });
++      } finally {
++        client.close();
++      }
++    },
++  );
++
++  test("with autoReconnect off, a TLS session that breaks fails the queued commands with the TLS reason too", async () => {
++    await using server = await serverThatBreaksTls();
++    const client = new RedisClient(server.url, { tls: { ca: tlsCert.cert }, autoReconnect: false });
++    try {
++      const onclose = mock();
++      client.onclose = onclose;
++      await client.connect();
++      // INFO is never pipelined: it waits in the queue for the reply to GET.
++      const pending = [client.get("lost"), client.send("INFO", [])];
++      expect({
++        outcomes: await Promise.all(pending.map(command => command.catch(codeAndMessage))),
++        closes: onclose.mock.calls.length,
++        connections: server.raws.length,
++      }).toEqual({ outcomes: [WRONG_VERSION_NUMBER, WRONG_VERSION_NUMBER], closes: 1, connections: 1 });
++    } finally {
++      client.close();
++    }
++  });
++
++  // A TLS 1.3 server answers the client's certificate after the client's side of the handshake is over.
++  test("a TLS 1.3 server that refuses the client's certificate fails the client instead of being dialed again", async () => {
++    let connections = 0;
++    const dialedAgain = Promise.withResolvers<string>();
++    const server = tls.createServer(
++      {
++        key: tlsCert.key,
++        cert: tlsCert.cert,
++        ca: tlsCert.cert,
++        requestCert: true,
++        rejectUnauthorized: true,
++        minVersion: "TLSv1.3",
++      },
++      socket => void socket.on("error", () => {}),
++    );
++    server.on("connection", () => void (++connections === 2 && dialedAgain.resolve("dialed again")));
++    server.on("tlsClientError", () => {});
++    server.listen(0, "127.0.0.1");
++    await once(server, "listening");
++    const { port } = server.address() as net.AddressInfo;
++    const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca: tlsCert.cert } });
++    try {
++      const outcome = await Promise.race([client.get("key").catch(codeAndMessage), dialedAgain.promise]);
++      expect({ outcome, connections }).toEqual({
++        outcome: "EPROTO: error:1000045c:SSL routines:OPENSSL_internal:TLSV1_ALERT_CERTIFICATE_REQUIRED",
++        connections: 1,
++      });
++    } finally {
++      client.close();
++      await new Promise(closed => server.close(closed));
++    }
++  });
+ });
+ 
+ describe("Valkey: Recovering After fail()", () => {
+-- 
+2.54.0 (Apple Git-157)
+
