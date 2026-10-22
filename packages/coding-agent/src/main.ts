@@ -666,18 +666,16 @@ export async function main(args: string[], options?: MainOptions) {
 	if (parsed.version) {
 		// `-e` is accepted in every mode, and `--version` returns before anything loads, so a path that does not exist
 		// would otherwise print a version and exit 0. Only local paths are checked here; a `builtin:` name or a package
-		// source is the loader's to reject.
-		if (!parsed.noExtensions) {
-			const missing = missingExtensionPaths(parsed.extensions);
-			if (missing.length > 0) {
-				for (const path of missing) {
-					console.error(
-						chalk.red(`Error: Failed to load extension "${path}": Extension path does not exist: ${path}`),
-					);
-				}
-				console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
-				process.exit(1);
+		// source is the loader's to reject. (Also with -ne: it turns off discovery, and explicit -e paths still load.)
+		const missing = missingExtensionPaths(parsed.extensions);
+		if (missing.length > 0) {
+			for (const path of missing) {
+				console.error(
+					chalk.red(`Error: Failed to load extension "${path}": Extension path does not exist: ${path}`),
+				);
 			}
+			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
+			process.exit(1);
 		}
 		console.log(
 			PIBOLT
