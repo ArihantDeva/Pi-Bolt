@@ -1,15 +1,21 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { ZAI_MODELS } from "./zai.models.ts";
+import { withCatalogListing } from "./model-listing.ts";
+import { ZAI_MODEL_CATALOG } from "./zai.catalog.ts";
 
 export function zaiProvider(): Provider<"openai-completions"> {
-	return createProvider({
-		id: "zai",
-		name: "Z.AI",
-		baseUrl: "https://api.z.ai/api/coding/paas/v4",
-		auth: { apiKey: envApiKeyAuth("Z.AI API key", ["ZAI_API_KEY"]) },
-		models: Object.values(ZAI_MODELS),
-		api: openAICompletionsApi(),
-	});
+	return withCatalogListing(
+		createProvider({
+			id: "zai",
+			name: "Z.AI",
+			baseUrl: "https://api.z.ai/api/coding/paas/v4",
+			auth: { apiKey: envApiKeyAuth("Z.AI API key", ["ZAI_API_KEY"]) },
+			get models() {
+				return Object.values(ZAI_MODEL_CATALOG.chat());
+			},
+			api: openAICompletionsApi(),
+		}),
+		ZAI_MODEL_CATALOG,
+	);
 }

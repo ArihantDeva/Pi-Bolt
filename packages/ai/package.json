@@ -59,6 +59,7 @@
 		"clean": "shx rm -rf dist",
 		"generate-models": "node scripts/generate-models.ts --strict",
 		"hydrate-model-data": "node scripts/generate-models.ts --strict --data-only",
+		"generate-catalog-modules": "node scripts/generate-catalog-modules.ts",
 		"generate-model-catalog": "node scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"check:model-data": "node scripts/check-model-data.ts",
 		"build": "npm run generate-models && npm run build:offline",

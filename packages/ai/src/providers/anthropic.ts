@@ -14,7 +14,8 @@ import {
 } from "../env-api-keys.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { ProviderEnv } from "../types.ts";
-import { ANTHROPIC_MODELS } from "./anthropic.models.ts";
+import { ANTHROPIC_MODEL_CATALOG } from "./anthropic.catalog.ts";
+import { withCatalogListing } from "./model-listing.ts";
 
 function anthropicApiKeyAuth(): ApiKeyAuth {
 	return {
@@ -72,19 +73,24 @@ function anthropicApiKeyAuth(): ApiKeyAuth {
 }
 
 export function anthropicProvider(): Provider<"anthropic-messages"> {
-	return createProvider({
-		id: "anthropic",
-		name: "Anthropic",
-		baseUrl: "https://api.anthropic.com",
-		auth: {
-			apiKey: anthropicApiKeyAuth(),
-			oauth: lazyOAuth({
-				name: "Anthropic (Claude Pro/Max)",
-				isSubscription: true,
-				load: loadAnthropicOAuth,
-			}),
-		},
-		models: Object.values(ANTHROPIC_MODELS),
-		api: anthropicMessagesApi(),
-	});
+	return withCatalogListing(
+		createProvider({
+			id: "anthropic",
+			name: "Anthropic",
+			baseUrl: "https://api.anthropic.com",
+			auth: {
+				apiKey: anthropicApiKeyAuth(),
+				oauth: lazyOAuth({
+					name: "Anthropic (Claude Pro/Max)",
+					isSubscription: true,
+					load: loadAnthropicOAuth,
+				}),
+			},
+			get models() {
+				return Object.values(ANTHROPIC_MODEL_CATALOG.chat());
+			},
+			api: anthropicMessagesApi(),
+		}),
+		ANTHROPIC_MODEL_CATALOG,
+	);
 }

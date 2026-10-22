@@ -115,12 +115,15 @@ try {
 				.map(([input]) => input),
 		),
 	);
-	const catalogInputs = Array.from(contributingInputs).filter((input) =>
-		normalizePath(input).includes("packages/ai/src/providers/data/"),
+	// A provider's models are in its catalog module (providers/<provider>.catalog.ts), which holds its data file's text.
+	const catalogInputs = Array.from(contributingInputs).filter(
+		(input) =>
+			normalizePath(input).includes("packages/ai/src/providers/data/") ||
+			normalizePath(input).endsWith(".catalog.ts"),
 	);
-	if (catalogInputs.length !== 1 || !normalizePath(catalogInputs[0]).endsWith("/anthropic.json")) {
+	if (catalogInputs.length !== 1 || !normalizePath(catalogInputs[0]).endsWith("/anthropic.catalog.ts")) {
 		throw new Error(
-			`Agent selective-provider bundle catalogs: expected only anthropic.json, found ${catalogInputs.join(", ") || "none"}`,
+			`Agent selective-provider bundle catalogs: expected only anthropic.catalog.ts, found ${catalogInputs.join(", ") || "none"}`,
 		);
 	}
 

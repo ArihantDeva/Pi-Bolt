@@ -7,7 +7,8 @@ import { loadOpenRouterOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider, type RefreshModelsContext } from "../models.ts";
 import type { AnyModel } from "../types.ts";
 import { isModelType } from "../utils/model-operations.ts";
-import { OPENROUTER_CLASSIFIER_MODELS, OPENROUTER_IMAGE_MODELS, OPENROUTER_MODELS } from "./openrouter.models.ts";
+import { withCatalogListing } from "./model-listing.ts";
+import { OPENROUTER_MODEL_CATALOG } from "./openrouter.catalog.ts";
 import { type OpenRouterModel, openRouterCost } from "./openrouter-api.ts";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -60,29 +61,34 @@ export async function personalizeOpenRouterCatalog(
 }
 
 export function openrouterProvider(): Provider<"anthropic-messages" | "openai-completions"> {
-	return createProvider<"anthropic-messages" | "openai-completions">({
-		id: "openrouter",
-		name: "OpenRouter",
-		baseUrl: OPENROUTER_BASE_URL,
-		auth: {
-			apiKey: envApiKeyAuth("OpenRouter API key", ["OPENROUTER_API_KEY"]),
-			oauth: lazyOAuth({
-				name: "OpenRouter OAuth",
-				loginLabel: "Sign in with OpenRouter",
-				load: loadOpenRouterOAuth,
-			}),
-		},
-		models: [
-			...Object.values(OPENROUTER_MODELS),
-			...Object.values(OPENROUTER_IMAGE_MODELS),
-			...Object.values(OPENROUTER_CLASSIFIER_MODELS),
-		],
-		api: {
-			"anthropic-messages": anthropicMessagesApi(),
-			"openai-completions": openAICompletionsApi(),
-		},
-		images: { "openrouter-images": openrouterImagesApi() },
-		// OpenRouter serves TypeSafe's System One protocol at /api/v1/systemone.
-		classifiers: { "typesafe-system-one": typesafeSystemOneApi() },
-	});
+	return withCatalogListing(
+		createProvider<"anthropic-messages" | "openai-completions">({
+			id: "openrouter",
+			name: "OpenRouter",
+			baseUrl: OPENROUTER_BASE_URL,
+			auth: {
+				apiKey: envApiKeyAuth("OpenRouter API key", ["OPENROUTER_API_KEY"]),
+				oauth: lazyOAuth({
+					name: "OpenRouter OAuth",
+					loginLabel: "Sign in with OpenRouter",
+					load: loadOpenRouterOAuth,
+				}),
+			},
+			get models() {
+				return [
+					...Object.values(OPENROUTER_MODEL_CATALOG.chat()),
+					...Object.values(OPENROUTER_MODEL_CATALOG.image()),
+					...Object.values(OPENROUTER_MODEL_CATALOG.classifier()),
+				];
+			},
+			api: {
+				"anthropic-messages": anthropicMessagesApi(),
+				"openai-completions": openAICompletionsApi(),
+			},
+			images: { "openrouter-images": openrouterImagesApi() },
+			// OpenRouter serves TypeSafe's System One protocol at /api/v1/systemone.
+			classifiers: { "typesafe-system-one": typesafeSystemOneApi() },
+		}),
+		OPENROUTER_MODEL_CATALOG,
+	);
 }

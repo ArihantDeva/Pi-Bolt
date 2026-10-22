@@ -2,7 +2,7 @@
  * GitHub Copilot OAuth flow
  */
 
-import { GITHUB_COPILOT_MODELS } from "../../providers/github-copilot.models.ts";
+import { GITHUB_COPILOT_MODEL_CATALOG } from "../../providers/github-copilot.catalog.ts";
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
@@ -125,7 +125,7 @@ function parseGitHubCopilotModelCatalog(raw: unknown, allowPolicyFallback: boole
 		.filter(
 			(model) =>
 				model.policyState === "unconfigured" &&
-				Object.hasOwn(GITHUB_COPILOT_MODELS, model.id) &&
+				Object.hasOwn(GITHUB_COPILOT_MODEL_CATALOG.chat(), model.id) &&
 				(model.pickerEnabled || usePolicyFallback),
 		)
 		.map((model) => model.id);

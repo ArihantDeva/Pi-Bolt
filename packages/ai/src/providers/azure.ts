@@ -5,7 +5,8 @@ import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { Api, Model, ProviderStreams, StreamOptions } from "../types.ts";
-import { AZURE_MODELS } from "./azure.models.ts";
+import { AZURE_MODEL_CATALOG } from "./azure.catalog.ts";
+import { withCatalogListing } from "./model-listing.ts";
 
 function resolveAzureModel(model: Model<Api>, options: StreamOptions | undefined): Model<Api> {
 	return { ...model, baseUrl: resolveAzureBaseUrl(model, options) };
@@ -42,14 +43,19 @@ function azureStreams(streams: ProviderStreams): ProviderStreams {
 }
 
 export function azureProvider(): Provider<"azure-openai-responses" | "openai-completions"> {
-	return createProvider({
-		id: "azure",
-		name: "Azure",
-		auth: { apiKey: envApiKeyAuth("Azure OpenAI API key", ["AZURE_OPENAI_API_KEY"]) },
-		models: Object.values(AZURE_MODELS),
-		api: {
-			"azure-openai-responses": azureOpenAIResponsesApi(),
-			"openai-completions": azureStreams(openAICompletionsApi()),
-		},
-	});
+	return withCatalogListing(
+		createProvider({
+			id: "azure",
+			name: "Azure",
+			auth: { apiKey: envApiKeyAuth("Azure OpenAI API key", ["AZURE_OPENAI_API_KEY"]) },
+			get models() {
+				return Object.values(AZURE_MODEL_CATALOG.chat());
+			},
+			api: {
+				"azure-openai-responses": azureOpenAIResponsesApi(),
+				"openai-completions": azureStreams(openAICompletionsApi()),
+			},
+		}),
+		AZURE_MODEL_CATALOG,
+	);
 }
