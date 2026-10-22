@@ -57,6 +57,7 @@ import { isInProfile, updatePiBoltWindows } from "./pi-bolt-update-windows.ts";
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
 import { canonicalizePath, getCwdRelativePath } from "./utils/paths.ts";
 import { getPiUserAgent } from "./utils/pi-user-agent.ts";
+import { stripBom } from "./utils/text.ts";
 import { formatVersionCheckError, getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
 import {
 	cleanupWindowsSelfUpdateQuarantine,
@@ -88,7 +89,7 @@ function getActiveManagedInstallRoot(): string | undefined {
 
 	const markerPath = join(managedRoot, MANAGED_INSTALL_MARKER);
 	try {
-		const marker = JSON.parse(readFileSync(markerPath, "utf8")) as {
+		const marker = JSON.parse(stripBom(readFileSync(markerPath, "utf8"))) as {
 			kind?: unknown;
 			layout?: unknown;
 			schemaVersion?: unknown;

@@ -1,10 +1,10 @@
 import { lstatSync, statSync } from "node:fs";
-import { delimiter } from "node:path";
+import { win32 } from "node:path";
 
 /** PATH's directories as Windows reads them: an entry may be in quotes ("C:\Program Files\x"), which are not part of it. */
 export function windowsPathDirectories(path: string): string[] {
 	return path
-		.split(delimiter)
+		.split(win32.delimiter)
 		.map((dir) => dir.trim().replace(/^"(.*)"$/, "$1"))
 		.filter(Boolean);
 }
