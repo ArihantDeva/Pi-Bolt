@@ -5,6 +5,7 @@
 ### Changed
 
 - `generateSummary()` and `generateSummaryWithUsage()` now ignore their `reserveTokens` parameter. Summary requests use the model's output limit instead.
+- The interactive TUI and the HTML export are imported by the mode that uses them: `--version`, `-p`, RPC and MCP no longer load either at startup (`--version` 8% faster on the source runtime).
 
 ### Fixed
 
