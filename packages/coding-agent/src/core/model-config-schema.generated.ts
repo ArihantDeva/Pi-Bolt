@@ -20,22 +20,28 @@ export function modelsConfigSchema(): object {
 							name: {
 								type: "string",
 								minLength: 1,
+								description: "Display name.",
 							},
 							baseUrl: {
 								type: "string",
 								minLength: 1,
+								description: "API base URL. Also applies to the provider's built-in models.",
 							},
 							apiKey: {
 								type: "string",
 								minLength: 1,
+								description: 'Literal key, "$NAME" environment interpolation, or "!command" output.',
 							},
 							api: {
 								type: "string",
 								minLength: 1,
+								description:
+									'API for the provider\'s models, such as "openai-completions", "openai-responses", "anthropic-messages", or "google-generative-ai".',
 							},
 							oauth: {
 								type: "string",
 								const: "radius",
+								description: "OAuth login flow. Requires baseUrl.",
 							},
 							headers: {
 								type: "object",
@@ -44,6 +50,7 @@ export function modelsConfigSchema(): object {
 										type: "string",
 									},
 								},
+								description: "Request headers. Values resolve like apiKey.",
 							},
 							compat: {
 								type: "object",
@@ -747,12 +754,37 @@ export function modelsConfigSchema(): object {
 										description:
 											"Models Anthropic accepts for server-side refusal fallback, with local pricing metadata for returned fallback responses. When absent or empty, callers must omit fallbacks; Anthropic rejects the field for models with no permitted fallback targets.",
 									},
+									imageInput: {
+										anyOf: [
+											{
+												type: "string",
+												const: "assets",
+											},
+											{
+												type: "string",
+												const: "images",
+											},
+											{
+												type: "string",
+												const: "state-image-urls",
+											},
+										],
+										description:
+											'How the service takes classifier images. "assets" sends TypeSafe\'s assets map (PNG and JPEG) and references the images from the state, as TypeSafe and Jev on Workers AI expect. "images" sends Clef\'s images list of data URLs (PNG, JPEG, and WebP, at most four), as Clef on Workers AI expects. "state-image-urls" places image_url parts before the state, as OpenRouter expects; OpenRouter drops assets without an error. Auto-detected from the provider, baseUrl, and model ID. Classifier models read it from the provider-level compat; models and modelOverrides entries apply to chat models only.',
+									},
+									sendImageOptInHeader: {
+										type: "boolean",
+										description:
+											"Whether requests with images send the TypeSafe-Danger-Zone-Images: true header, which TypeSafe's own API requires for its experimental image input. Defaults to true for the typesafe-system-one API unless the model is detected as OpenRouter.",
+									},
 								},
 								description: "Provider and model compatibility overrides.",
 								additionalProperties: true,
 							},
 							authHeader: {
 								type: "boolean",
+								default: false,
+								description: "Whether to send the resolved API key as Authorization: Bearer.",
 							},
 							models: {
 								type: "array",
@@ -763,21 +795,27 @@ export function modelsConfigSchema(): object {
 										id: {
 											type: "string",
 											minLength: 1,
+											description: "Model ID sent to the API.",
 										},
 										name: {
 											type: "string",
 											minLength: 1,
+											description: "Display name, also matched by --model patterns.",
 										},
 										api: {
 											type: "string",
 											minLength: 1,
+											description: "Overrides the provider api.",
 										},
 										baseUrl: {
 											type: "string",
 											minLength: 1,
+											description: "Overrides the provider baseUrl.",
 										},
 										reasoning: {
 											type: "boolean",
+											default: false,
+											description: "Whether the model supports thinking.",
 										},
 										thinkingLevelMap: {
 											type: "object",
@@ -853,12 +891,15 @@ export function modelsConfigSchema(): object {
 													],
 												},
 											},
+											description:
+												"Provider value sent for each thinking level. null marks a level unsupported. Levels the model does not map use the provider's default value through high; xhigh and max are unsupported.",
 										},
 										input: {
 											type: "array",
 											items: {
 												enum: ["text", "image"],
 											},
+											default: ["text"],
 										},
 										inputLimits: {
 											type: "object",
@@ -977,21 +1018,27 @@ export function modelsConfigSchema(): object {
 												},
 											},
 											description:
-												"Best-effort prompt cache lifetime in seconds for each retention tier. A missing tier means the lifetime is unknown, so Pi does not warm it.",
+												"Best-effort prompt cache lifetime in seconds for the short and long retention tiers. Pi warms only tiers with a known lifetime.",
 										},
 										contextWindow: {
 											type: "number",
 											exclusiveMinimum: 0,
+											default: 128000,
+											description: "Context window in tokens.",
 										},
 										maxTokens: {
 											type: "number",
 											exclusiveMinimum: 0,
+											default: 16384,
+											description: "Maximum output tokens.",
 										},
 										samplingParams: {
 											type: "object",
 											patternProperties: {
 												"^.*$": {},
 											},
+											description:
+												"Fields merged into every request body. Applies only to OpenAI-compatible APIs.",
 										},
 										samplingParamsByThinkingLevel: {
 											type: "object",
@@ -1039,6 +1086,7 @@ export function modelsConfigSchema(): object {
 													},
 												},
 											},
+											description: "samplingParams per thinking level, merged over samplingParams.",
 										},
 										headers: {
 											type: "object",
@@ -1047,6 +1095,7 @@ export function modelsConfigSchema(): object {
 													type: "string",
 												},
 											},
+											description: "Request headers. Values resolve like apiKey.",
 										},
 										compat: {
 											type: "object",
@@ -1763,6 +1812,29 @@ export function modelsConfigSchema(): object {
 													description:
 														"Models Anthropic accepts for server-side refusal fallback, with local pricing metadata for returned fallback responses. When absent or empty, callers must omit fallbacks; Anthropic rejects the field for models with no permitted fallback targets.",
 												},
+												imageInput: {
+													anyOf: [
+														{
+															type: "string",
+															const: "assets",
+														},
+														{
+															type: "string",
+															const: "images",
+														},
+														{
+															type: "string",
+															const: "state-image-urls",
+														},
+													],
+													description:
+														'How the service takes classifier images. "assets" sends TypeSafe\'s assets map (PNG and JPEG) and references the images from the state, as TypeSafe and Jev on Workers AI expect. "images" sends Clef\'s images list of data URLs (PNG, JPEG, and WebP, at most four), as Clef on Workers AI expects. "state-image-urls" places image_url parts before the state, as OpenRouter expects; OpenRouter drops assets without an error. Auto-detected from the provider, baseUrl, and model ID. Classifier models read it from the provider-level compat; models and modelOverrides entries apply to chat models only.',
+												},
+												sendImageOptInHeader: {
+													type: "boolean",
+													description:
+														"Whether requests with images send the TypeSafe-Danger-Zone-Images: true header, which TypeSafe's own API requires for its experimental image input. Defaults to true for the typesafe-system-one API unless the model is detected as OpenRouter.",
+												},
 											},
 											description: "Provider and model compatibility overrides.",
 											additionalProperties: true,
@@ -1779,9 +1851,11 @@ export function modelsConfigSchema(): object {
 											name: {
 												type: "string",
 												minLength: 1,
+												description: "Display name, also matched by --model patterns.",
 											},
 											reasoning: {
 												type: "boolean",
+												description: "Whether the model supports thinking.",
 											},
 											thinkingLevelMap: {
 												type: "object",
@@ -1857,6 +1931,8 @@ export function modelsConfigSchema(): object {
 														],
 													},
 												},
+												description:
+													"Provider value sent for each thinking level. null marks a level unsupported. Levels the model does not map use the provider's default value through high; xhigh and max are unsupported.",
 											},
 											input: {
 												type: "array",
@@ -1986,21 +2062,25 @@ export function modelsConfigSchema(): object {
 													},
 												},
 												description:
-													"Best-effort prompt cache lifetime in seconds for each retention tier. A missing tier means the lifetime is unknown, so Pi does not warm it.",
+													"Best-effort prompt cache lifetime in seconds for the short and long retention tiers. Pi warms only tiers with a known lifetime.",
 											},
 											contextWindow: {
 												type: "number",
 												exclusiveMinimum: 0,
+												description: "Context window in tokens.",
 											},
 											maxTokens: {
 												type: "number",
 												exclusiveMinimum: 0,
+												description: "Maximum output tokens.",
 											},
 											samplingParams: {
 												type: "object",
 												patternProperties: {
 													"^.*$": {},
 												},
+												description:
+													"Fields merged into every request body. Applies only to OpenAI-compatible APIs.",
 											},
 											samplingParamsByThinkingLevel: {
 												type: "object",
@@ -2048,6 +2128,7 @@ export function modelsConfigSchema(): object {
 														},
 													},
 												},
+												description: "samplingParams per thinking level, merged over samplingParams.",
 											},
 											headers: {
 												type: "object",
@@ -2056,6 +2137,7 @@ export function modelsConfigSchema(): object {
 														type: "string",
 													},
 												},
+												description: "Request headers. Values resolve like apiKey.",
 											},
 											compat: {
 												type: "object",
@@ -2772,6 +2854,29 @@ export function modelsConfigSchema(): object {
 														maxItems: 3,
 														description:
 															"Models Anthropic accepts for server-side refusal fallback, with local pricing metadata for returned fallback responses. When absent or empty, callers must omit fallbacks; Anthropic rejects the field for models with no permitted fallback targets.",
+													},
+													imageInput: {
+														anyOf: [
+															{
+																type: "string",
+																const: "assets",
+															},
+															{
+																type: "string",
+																const: "images",
+															},
+															{
+																type: "string",
+																const: "state-image-urls",
+															},
+														],
+														description:
+															'How the service takes classifier images. "assets" sends TypeSafe\'s assets map (PNG and JPEG) and references the images from the state, as TypeSafe and Jev on Workers AI expect. "images" sends Clef\'s images list of data URLs (PNG, JPEG, and WebP, at most four), as Clef on Workers AI expects. "state-image-urls" places image_url parts before the state, as OpenRouter expects; OpenRouter drops assets without an error. Auto-detected from the provider, baseUrl, and model ID. Classifier models read it from the provider-level compat; models and modelOverrides entries apply to chat models only.',
+													},
+													sendImageOptInHeader: {
+														type: "boolean",
+														description:
+															"Whether requests with images send the TypeSafe-Danger-Zone-Images: true header, which TypeSafe's own API requires for its experimental image input. Defaults to true for the typesafe-system-one API unless the model is detected as OpenRouter.",
 													},
 												},
 												description: "Provider and model compatibility overrides.",
