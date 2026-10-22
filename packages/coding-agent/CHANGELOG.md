@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- A failed extension is reported once instead of twice, and `--version` no longer prints a version when an `-e` path passed with it does not exist.
 - Fixed compaction and branch summaries failing with "generation hit the token cap" when reasoning used most of the fixed summary output limit. Summaries now use the model's output limit, and `compaction.reserveTokens` only controls when compaction starts ([#9512](https://github.com/earendil-works/pi/issues/9512), [#9075](https://github.com/earendil-works/pi/issues/9075)).
 
 ## [1.3.0] - 2026-10-15

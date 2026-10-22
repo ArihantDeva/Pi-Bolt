@@ -2,12 +2,21 @@
  * CLI argument parsing and help display
  */
 
+import { existsSync } from "node:fs";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
-import { COMMAND_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR, PRODUCT_NAME } from "../config.ts";
+import {
+	COMMAND_NAME,
+	CONFIG_DIR_NAME,
+	ENV_AGENT_DIR,
+	ENV_SESSION_DIR,
+	expandTildePath,
+	PRODUCT_NAME,
+} from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
 import { PIBOLT } from "../pi-bolt.ts";
+import { isLocalPath } from "../utils/paths.ts";
 
 export type Mode = "text" | "json" | "rpc" | "acp" | "mcp";
 
@@ -68,6 +77,14 @@ export function isValidThinkingLevel(level: string): level is ThinkingLevel {
 export function normalizeSessionName(value: string): string | undefined {
 	const name = value.trim();
 	return name.length > 0 ? name : undefined;
+}
+
+/**
+ * The local `-e` paths that do not exist. `--version` prints and exits before any extension loads, so without this a
+ * mistyped path reads as a valid one; `builtin:` names and package sources are left to the loader, which owns them.
+ */
+export function missingExtensionPaths(paths: string[] | undefined): string[] {
+	return (paths ?? []).filter((value) => isLocalPath(value) && !existsSync(expandTildePath(value)));
 }
 
 export function parseArgs(args: string[]): Args {

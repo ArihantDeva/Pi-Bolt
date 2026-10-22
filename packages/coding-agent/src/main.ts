@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides, ttiTrace } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
+import { type Args, type Mode, missingExtensionPaths, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {
 	type AuthCheckResult,
 	checkProviderAuth,
@@ -664,6 +664,21 @@ export async function main(args: string[], options?: MainOptions) {
 	ttiTrace("args.parsed");
 
 	if (parsed.version) {
+		// `-e` is accepted in every mode, and `--version` returns before anything loads, so a path that does not exist
+		// would otherwise print a version and exit 0. Only local paths are checked here; a `builtin:` name or a package
+		// source is the loader's to reject.
+		if (!parsed.noExtensions) {
+			const missing = missingExtensionPaths(parsed.extensions);
+			if (missing.length > 0) {
+				for (const path of missing) {
+					console.error(
+						chalk.red(`Error: Failed to load extension "${path}": Extension path does not exist: ${path}`),
+					);
+				}
+				console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
+				process.exit(1);
+			}
+		}
 		console.log(
 			PIBOLT
 				? `${VERSION} (Pi-Bolt ${PIBOLT.version}, ${process.platform}-${PIBOLT.variant}, JIT ${PIBOLT.jit ? "on" : "off"})`
@@ -874,7 +889,8 @@ export async function main(args: string[], options?: MainOptions) {
 			...collectSettingsDiagnostics(settingsManager),
 			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
 				type: "error" as const,
-				message: `Failed to load extension "${path}": ${error}`,
+				// The loader already prefixes its own failures; repeating it reads as two separate problems.
+				message: `Failed to load extension "${path}": ${error.replace(/^Failed to load extension:\s*/, "")}`,
 			})),
 			...(resourceLoader.getExtensions().warnings ?? []).map(({ path, warning }) => ({
 				type: "warning" as const,
