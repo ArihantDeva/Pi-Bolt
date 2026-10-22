@@ -1,6 +1,7 @@
 /**
  * The `/usage` command as an extension: session tokens, cost and context, plus account balance or
- * quota where the provider exposes it (DeepSeek, OpenRouter, and Claude Code's cached Anthropic limits).
+ * quota where the provider exposes it (DeepSeek, OpenRouter, Codex, and, for a Claude subscription, Claude
+ * Code's cached limits).
  */
 
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
@@ -8,6 +9,7 @@ import { addUsageToTotals, createUsageTotals } from "../../core/usage-totals.ts"
 import {
 	buildUsageOverview,
 	type DeepSeekBalance,
+	formatAge,
 	type OpenRouterCredits,
 	parseCodexUsage,
 	readClaudeCachedUsage,
@@ -132,12 +134,22 @@ export function createUsageExtension(): ExtensionFactory {
 					ctx.modelRegistry.isUsingOAuth(model) &&
 					ctx.modelRegistry.getProvider(providerId)?.auth.oauth?.isSubscription === true;
 
-				// Claude Code caches its subscription usage (5h / weekly) in ~/.claude.json.
+				// Claude Code caches the Claude subscription's 5h / weekly usage in ~/.claude.json. Those limits
+				// are Pi's only when Pi uses the same subscription; with an API key they do not apply.
 				let accountBars: UsageBar[] | undefined;
 				const extraLines: UsageLine[] = [];
-				if (providerId === "anthropic") {
+				if (providerId === "anthropic" && subscriptionBacked) {
 					const claude = await readClaudeCachedUsage();
-					if (Array.isArray(claude)) accountBars = claude;
+					if ("error" in claude) {
+						extraLines.push({ label: "limits", value: claude.error, tone: "warning" });
+					} else {
+						accountBars = claude.bars;
+						const age =
+							claude.fetchedAtMs === undefined
+								? "age unknown"
+								: `from ${formatAge(Date.now() - claude.fetchedAtMs)} ago`;
+						extraLines.push({ label: "limits", value: `Claude Code's cached numbers, ${age}` });
+					}
 				} else if (providerId === "openai-codex" && subscriptionBacked) {
 					const codex = await fetchCodexUsage(ctx, model);
 					if (Array.isArray(codex)) accountBars = codex;

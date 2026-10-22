@@ -275,18 +275,31 @@ export function parseCodexUsage(raw: unknown): UsageBar[] {
 	return bars;
 }
 
+/** Age of cached numbers, e.g. 40s -> "under a minute", 12m -> "12 min", 3h -> "3 h", 2d -> "2 d". */
+export function formatAge(ms: number): string {
+	const minutes = Math.floor(Math.max(0, ms) / 60_000);
+	if (minutes < 1) return "under a minute";
+	if (minutes < 60) return `${minutes} min`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 48) return `${hours} h`;
+	return `${Math.floor(hours / 24)} d`;
+}
+
 /**
- * Read Claude Code's cached subscription usage. Claude Code itself fetches this
- * with the user's OAuth token and stores it in ~/.claude.json, so reading it is
- * a zero-network way to surface the real 5h / weekly numbers.
+ * Read Claude Code's cached subscription usage. Claude Code fetches this with its own OAuth token and
+ * stores it in ~/.claude.json with the fetch time. The 5h / weekly limits belong to the Claude
+ * subscription, which Claude Code and Pi share, so the numbers only apply when Pi is signed in to
+ * Anthropic with a subscription; they are as old as Claude Code's last fetch.
  */
-export async function readClaudeCachedUsage(): Promise<UsageBar[] | { error: string }> {
+export async function readClaudeCachedUsage(): Promise<{ bars: UsageBar[]; fetchedAtMs?: number } | { error: string }> {
 	try {
 		const data = JSON.parse(await readFile(join(homedir(), ".claude.json"), "utf8")) as {
-			cachedUsageUtilization?: unknown;
+			cachedUsageUtilization?: { fetchedAtMs?: unknown };
 		};
-		if (!data.cachedUsageUtilization) return { error: "No cached Claude usage found." };
-		return parseClaudeUtilization(data.cachedUsageUtilization);
+		const cached = data.cachedUsageUtilization;
+		if (!cached) return { error: "No cached Claude Code usage in ~/.claude.json." };
+		const fetchedAtMs = typeof cached.fetchedAtMs === "number" ? cached.fetchedAtMs : undefined;
+		return { bars: parseClaudeUtilization(cached), fetchedAtMs };
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { error: "~/.claude.json not found." };
 		return { error: err instanceof Error ? err.message : String(err) };

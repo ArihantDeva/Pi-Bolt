@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { RegisteredCommand } from "../src/core/extensions/types.ts";
 import usageExtension from "../src/extensions/usage/index.ts";
@@ -41,10 +44,71 @@ async function runUsage(options: FakeOptions) {
 	return { overview, notify, ctx };
 }
 
+/** Point the home directory at a temp dir holding `claudeJson` as ~/.claude.json (none when undefined). */
+function stubHome(claudeJson?: unknown): string {
+	const home = mkdtempSync(join(tmpdir(), "pi-usage-home-"));
+	if (claudeJson !== undefined) writeFileSync(join(home, ".claude.json"), JSON.stringify(claudeJson));
+	vi.stubEnv("HOME", home);
+	vi.stubEnv("USERPROFILE", home);
+	return home;
+}
+
 describe("/usage extension command", () => {
+	let home: string | undefined;
+
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		vi.unstubAllEnvs();
 		vi.restoreAllMocks();
+		if (home) rmSync(home, { recursive: true, force: true });
+		home = undefined;
+	});
+
+	const anthropic = { provider: "anthropic", id: "claude-sonnet-4-5", baseUrl: "https://api.anthropic.com" };
+	const claudeCache = (fetchedAtMs?: number) => ({
+		cachedUsageUtilization: {
+			fetchedAtMs,
+			utilization: { five_hour: { utilization: 16 }, seven_day: { utilization: 52 } },
+		},
+	});
+
+	test("shows Claude Code's cached limits with their age for a Claude subscription", async () => {
+		home = stubHome(claudeCache(Date.now() - 12 * 60_000 - 5_000));
+
+		const { overview } = await runUsage({ model: anthropic, subscription: true });
+
+		expect(overview?.bars).toContainEqual(expect.objectContaining({ id: "claude-five_hour", used: 16 }));
+		expect(overview?.bars).toContainEqual(expect.objectContaining({ id: "claude-seven_day", used: 52 }));
+		expect(overview?.lines).toContainEqual({
+			label: "limits",
+			value: "Claude Code's cached numbers, from 12 min ago",
+		});
+		expect(overview?.notes).toHaveLength(0);
+	});
+
+	test("says the age is unknown when the cache has no fetch time", async () => {
+		home = stubHome(claudeCache());
+
+		const { overview } = await runUsage({ model: anthropic, subscription: true });
+
+		expect(overview?.lines).toContainEqual({ label: "limits", value: "Claude Code's cached numbers, age unknown" });
+	});
+
+	test("ignores Claude Code's cache with an Anthropic API key", async () => {
+		home = stubHome(claudeCache(Date.now()));
+
+		const { overview } = await runUsage({ model: anthropic, subscription: false });
+
+		expect(overview?.bars).not.toContainEqual(expect.objectContaining({ id: "claude-five_hour" }));
+		expect(overview?.lines).not.toContainEqual(expect.objectContaining({ label: "limits" }));
+	});
+
+	test("reports a missing ~/.claude.json for a Claude subscription", async () => {
+		home = stubHome();
+
+		const { overview } = await runUsage({ model: anthropic, subscription: true });
+
+		expect(overview?.lines).toContainEqual({ label: "limits", value: "~/.claude.json not found.", tone: "warning" });
 	});
 
 	test("fetches the DeepSeek balance from the configured base URL", async () => {

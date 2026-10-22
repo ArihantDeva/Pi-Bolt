@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildUsageOverview,
+	formatAge,
 	formatDuration,
 	formatMoney,
 	formatTokens,
@@ -15,6 +16,16 @@ describe("formatTokens", () => {
 		expect(formatTokens(5000)).toBe("5.0k");
 		expect(formatTokens(200000)).toBe("200k");
 		expect(formatTokens(1280000)).toBe("1.3M");
+	});
+});
+
+describe("formatAge", () => {
+	it("formats the age of cached numbers", () => {
+		expect(formatAge(40_000)).toBe("under a minute");
+		expect(formatAge(-5_000)).toBe("under a minute");
+		expect(formatAge(12 * 60_000)).toBe("12 min");
+		expect(formatAge(3 * 3_600_000 + 59 * 60_000)).toBe("3 h");
+		expect(formatAge(3 * 86_400_000)).toBe("3 d");
 	});
 });
 
