@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, win32 } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 import { isProgramFile, windowsPathDirectories } from "./windows-path.ts";
@@ -11,17 +11,21 @@ export interface ShellConfig {
 	commandTransport?: "argv" | "stdin";
 }
 
-/**
- * Find bash executable on PATH (cross-platform)
- */
+// Keep in sync with packages/durable/src/env/node.ts.
 function isLegacyWslBashPath(path: string): boolean {
-	const normalized = path.replace(/\//g, "\\").toLowerCase();
-	// System32's bash.exe, and the WSL Store app's alias in %LOCALAPPDATA%\Microsoft\WindowsApps (on the user's PATH whenever
-	// WSL is installed from the Store): both start WSL's bash, which reads the command from stdin.
-	return (
-		/^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized) ||
-		/\\microsoft\\windowsapps\\bash\.exe$/.test(normalized)
-	);
+	const normalized = win32.normalize(path).toLowerCase();
+	// The WSL Store app's alias in %LOCALAPPDATA%\Microsoft\WindowsApps (on the user's PATH whenever WSL is installed from
+	// the Store) starts WSL's bash too, which reads the command from stdin.
+	if (/\\microsoft\\windowsapps\\bash\.exe$/.test(normalized)) return true;
+	const systemRoot = process.env.SystemRoot;
+	if (systemRoot) {
+		if (!/^[a-z]:[\\/]/i.test(systemRoot)) return false;
+		return ["System32", "Sysnative"].some(
+			(directory) => normalized === win32.join(systemRoot, directory, "bash.exe").toLowerCase(),
+		);
+	}
+	// Fall back to conventional launcher paths only when the Windows directory is unknown.
+	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
 /**
@@ -48,6 +52,19 @@ function getBashShellConfig(shell: string): ShellConfig {
 	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
 }
 
+// Matches harness-v2's pathExists (packages/durable/src/env/node.ts).
+// On Unix this is identical to existsSync() (both are access(F_OK)), just
+// spelled with try/catch. On Windows we explicitly avoid existsSync(): its
+// extra stat check rejects runnable Store aliases (nodejs/node#36790).
+function shellPathExists(path: string): boolean {
+	try {
+		accessSync(path, constants.F_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 // Windows: what a PATH lookup found, by PATH and name. The shell tools look their shell up on every call, and starting
 // `where` for it took a process start each time.
 const foundOnWindowsPath = new Map<string, string>();
@@ -59,7 +76,7 @@ function findExecutableOnPath(executable: string, accept?: (file: string) => boo
 		const path = process.env.PATH ?? "";
 		const key = `${path}\0${executable}\0${accept ? "filtered" : ""}`;
 		const cached = foundOnWindowsPath.get(key);
-		if (cached && existsSync(cached)) return cached;
+		if (cached && shellPathExists(cached)) return cached;
 		for (const dir of windowsPathDirectories(path)) {
 			if (!isAbsolute(dir)) continue;
 			const file = join(dir, executable);
@@ -104,7 +121,7 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 					"PowerShell commands go through the powershell tool. Remove shellPath, or set it to a bash.exe.",
 			);
 		}
-		if (existsSync(customShellPath)) {
+		if (shellPathExists(customShellPath)) {
 			return getBashShellConfig(customShellPath);
 		}
 		throw new Error(`Custom shell path not found: ${customShellPath}`);
@@ -125,7 +142,7 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 		paths.push(...gitBashCandidates());
 
 		for (const path of paths) {
-			if (existsSync(path)) {
+			if (shellPathExists(path)) {
 				return getBashShellConfig(path);
 			}
 		}
@@ -150,7 +167,7 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 	}
 
 	// Unix: try /bin/bash, then bash on PATH, then fallback to sh
-	if (existsSync("/bin/bash")) {
+	if (shellPathExists("/bin/bash")) {
 		return getBashShellConfig("/bin/bash");
 	}
 
@@ -170,7 +187,21 @@ export function getPowerShellConfig(): ShellConfig {
 		throw new Error("The powershell tool is only available on Windows.");
 	}
 
-	const shell = findExecutableOnPath("pwsh.exe") ?? findExecutableOnPath("powershell.exe");
+	let shell = findExecutableOnPath("pwsh.exe");
+	// Installation directories may be on any drive and need not be on PATH.
+	const programFiles = process.env.ProgramFiles;
+	if (!shell && programFiles) {
+		const pwsh7 = win32.join(programFiles, "PowerShell", "7", "pwsh.exe");
+		if (shellPathExists(pwsh7)) shell = pwsh7;
+	}
+
+	shell ??= findExecutableOnPath("powershell.exe");
+	const systemRoot = process.env.SystemRoot;
+	if (!shell && systemRoot) {
+		const windowsPowerShell = win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+		if (shellPathExists(windowsPowerShell)) shell = windowsPowerShell;
+	}
+
 	if (!shell) {
 		throw new Error("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.");
 	}

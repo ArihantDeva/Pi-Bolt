@@ -15,8 +15,9 @@ import { arch, platform } from "os";
 import { delimiter, isAbsolute, join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { APP_NAME, getBinDir } from "../config.ts";
+import { getBinDir, VERSION } from "../config.ts";
 import { fetchWithRetry } from "./management-http.ts";
+import { getPiUserAgent } from "./pi-user-agent.ts";
 import { windowsPathDirectories } from "./windows-path.ts";
 
 const TOOLS_DIR = getBinDir();
@@ -148,7 +149,7 @@ export async function getLatestVersion(repo: string): Promise<string> {
 	const response = await fetchWithRetry(
 		`https://github.com/${repo}/releases/latest`,
 		{
-			headers: { "User-Agent": `${APP_NAME}-coding-agent` },
+			headers: { "User-Agent": getPiUserAgent(VERSION) },
 			redirect: "manual",
 		},
 		{ timeoutMs: NETWORK_TIMEOUT_MS },
@@ -243,7 +244,7 @@ function extractTarGzArchive(archivePath: string, extractDir: string, assetName:
 }
 
 function getWindowsTarCommand(): string {
-	const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+	const systemRoot = process.env.SystemRoot;
 	if (systemRoot) {
 		const systemTar = join(systemRoot, "System32", "tar.exe");
 		if (existsSync(systemTar)) {
