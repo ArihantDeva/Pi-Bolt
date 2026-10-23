@@ -284,4 +284,26 @@ describe("InteractiveThemeController", () => {
 		restore();
 		expect(theme.name).toBe("nord");
 	});
+
+	it("gives back the member of a pair the terminal switched to while the selector was open", () => {
+		const { ui, emitTerminalColorScheme } = createUi();
+		setTerminalColorScheme("light");
+		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "nord/dracula" }));
+		controller.applyFromSettings();
+		const restore = controller.previewRestorer();
+		controller.preview("tokyo-night");
+		emitTerminalColorScheme("dark");
+		restore();
+		expect(theme.name).toBe("dracula");
+		expect(controller.getActiveThemeName()).toBe("dracula");
+	});
+
+	it("names the setting's theme for preselection while an extension's theme is in use", () => {
+		const { ui } = createUi();
+		setTerminalColorScheme("light");
+		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "nord/dracula" }));
+		controller.applyFromSettings();
+		controller.setThemeInstance(theme);
+		expect(controller.getActiveThemeName()).toBe("nord");
+	});
 });

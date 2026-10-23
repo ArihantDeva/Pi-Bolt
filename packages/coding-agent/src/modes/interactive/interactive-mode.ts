@@ -5255,7 +5255,7 @@ export class InteractiveMode {
 	private showThemeSelector(): void {
 		const setting = this.themeController.getThemeSelection() || SYSTEM_THEME_NAME;
 		// The theme in use is the one selected: of a light/dark pair, the one the terminal's appearance picked.
-		const current = this.themeController.getActiveThemeName() ?? setting;
+		const current = this.themeController.getActiveThemeName();
 		const restore = this.themeController.previewRestorer();
 		this.showSelector((done) => {
 			const selector = new ThemeSelectorComponent(

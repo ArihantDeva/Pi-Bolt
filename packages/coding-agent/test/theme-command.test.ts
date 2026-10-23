@@ -12,7 +12,7 @@ type ThemeCommandContext = {
 type ThemeSelectorContext = {
 	themeController: {
 		getThemeSelection: () => string | undefined;
-		getActiveThemeName: () => string | undefined;
+		getActiveThemeName: () => string;
 		previewRestorer: () => () => void;
 		preview: (themeName: string) => void;
 	};
@@ -59,7 +59,7 @@ describe("InteractiveMode.handleThemeCommand", () => {
 });
 
 describe("InteractiveMode.showThemeSelector", () => {
-	function open(setting: string, active: string | undefined) {
+	function open(setting: string, active: string) {
 		const restore = vi.fn();
 		const done = vi.fn();
 		let selector: ThemeSelectorComponent | undefined;

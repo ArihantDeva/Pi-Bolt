@@ -168,11 +168,14 @@ export class InteractiveThemeController {
 	}
 
 	/**
-	 * The theme in use: the member of a light/dark pair the terminal's appearance picked, the system theme when the
-	 * setting failed to load, or `undefined` for a theme an extension set (setThemeInstance()).
+	 * The theme in use: the member of a light/dark pair the terminal's appearance picked, or the system theme when the
+	 * setting failed to load. For a theme an extension set (setThemeInstance()), which has no name, the theme the setting
+	 * names (of a pair, the member for the terminal's appearance).
 	 */
-	getActiveThemeName(): string | undefined {
-		return this.activeThemeName === "<in-memory>" ? undefined : this.activeThemeName;
+	getActiveThemeName(): string {
+		return this.activeThemeName === undefined || this.activeThemeName === "<in-memory>"
+			? this.resolveThemeName()
+			: this.activeThemeName;
 	}
 
 	/**
@@ -188,8 +191,9 @@ export class InteractiveThemeController {
 				this.ui.requestRender();
 			};
 		}
-		const themeName = this.activeThemeName ?? this.resolveThemeName();
-		return () => this.preview(themeName);
+		// (The theme in use when the selector closes: the terminal's appearance may have picked the other member of a pair
+		// meanwhile.)
+		return () => this.preview(this.getActiveThemeName());
 	}
 
 	disableAutoSync(): void {
