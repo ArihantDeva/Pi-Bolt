@@ -139,10 +139,11 @@ def run(build, entries, mode, a):
         wall = time.perf_counter() - began
         used = (cpu_ms(tty.pid) - cpu) / 1000
         frames = tty.buf.count(b"\x1b[?2026h", start)
+        written = len(tty.buf) - start
         after = instructions(tty.pid)
         tty.quit()
     row = {"build": build.name, "entries": entries, "mode": mode, "size": a.size, "wall_s": round(wall, 2), "cpu_s": round(used, 3),
-           "frames": frames, "fps": round(frames / wall, 1)}
+           "frames": frames, "fps": round(frames / wall, 1), "kb_written": round(written / 1024)}
     if instr is not None and after is not None:
         row["minstr"] = round((after - instr) / 1e6)
         row["minstr_per_frame"] = round((after - instr) / 1e6 / max(frames, 1), 2)
