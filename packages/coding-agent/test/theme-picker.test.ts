@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	getAvailableThemes,
@@ -52,7 +53,7 @@ describe("theme picker", () => {
 	});
 
 	it("lets a custom theme replace a built-in theme of the same name", () => {
-		const builtinPath = new URL("../src/modes/interactive/theme/nord.json", import.meta.url).pathname;
+		const builtinPath = fileURLToPath(new URL("../src/modes/interactive/theme/nord.json", import.meta.url));
 		const builtin = JSON.parse(readFileSync(builtinPath, "utf-8")) as ThemeFile;
 		const customTheme: ThemeFile = { ...builtin, colors: { ...builtin.colors, accent: "#123456" } };
 		const customPath = join(process.env.PI_CODING_AGENT_DIR!, "themes", "nord.json");
