@@ -15524,3 +15524,46 @@ index 1a26e37bfb..dbc77c1da6 100644
 -- 
 2.54.0 (Apple Git-157)
 
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <contactus@opensec.in>
+Date: Fri, 23 Oct 2026 19:07:03 +0530
+Subject: [PATCH] AOT image: functions with the same place in the order file
+ are laid out in text order
+
+Functions with the same text share a name, and so a place in the order
+file. Their code was laid out in the order the compile jobs were found in,
+which follows addresses: two builds of the same tree laid the code out
+differently, which the Windows release's check (the prebuilt heap the same
+from two builds, the runtime loaded at two addresses) caught. The order
+file's place now goes above the text order (module, start, construct), so
+every function's rank is unique and the layout is the same from build to
+build.
+---
+ Source/JavaScriptCore/runtime/CachedTypes.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/Source/JavaScriptCore/runtime/CachedTypes.cpp b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+index 467d8f6c19..61ebc19424 100644
+--- a/Source/JavaScriptCore/runtime/CachedTypes.cpp
++++ b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+@@ -6395,8 +6395,14 @@ struct BytecodeLinkEncoder::Impl {
+                 // kernel maps the pages around it too (fault-around), so code used and code not used side by side costs the
+                 // process both.
+                 uint64_t rank = static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2;
+-                if (auto hotRank = encoder.hotRankOf(*function.executable))
+-                    rank = classOfHotCode | *hotRank << 2 | static_cast<uint64_t>(isConstruct) | 2;
++                // Functions with the same text share a name, and so a place in the order file: their order among themselves is
++                // their order in the text, so that the layout does not depend on the order the jobs were found in (which follows
++                // addresses, and differs from one build to the next). The order file's place goes above the text order, which
++                // takes the low 46 bits (a module below 4096).
++                constexpr unsigned hotRankShift = 46;
++                constexpr uint64_t maxHotRank = (1ull << (60 - hotRankShift)) - 1;
++                if (auto hotRank = encoder.hotRankOf(*function.executable); hotRank && function.module < (1u << (hotRankShift - 34)))
++                    rank = classOfHotCode | std::min<uint64_t>(*hotRank, maxHotRank) << hotRankShift | rank;
+                 else
+                     rank |= classOfColdCode;
+                 jobs.append({ key, rank, codeBlock, function.module, function.executable });
+-- 
+2.54.0 (Apple Git-157)
+
