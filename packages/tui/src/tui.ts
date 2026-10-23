@@ -161,6 +161,21 @@ type PendingTerminalColorQuery = {
 	timedOut: boolean;
 };
 
+/** The clock frames are spaced by (setRenderClockForTest()). */
+let renderClock: () => number = () => performance.now();
+
+/** For tests: the clock frames are spaced by, in milliseconds; undefined for the real one. */
+export function setRenderClockForTest(clock: (() => number) | undefined): void {
+	renderClock = clock ?? (() => performance.now());
+}
+
+/**
+ * When frames are slow, the next frame starts no sooner than this many times the last frame's duration after the last one
+ * started (and frames other than input's never sooner than MIN_RENDER_INTERVAL_MS, as always): drawing takes at most about
+ * a third of the thread however slow a frame is, and what waits for the thread (input, the model's stream) is not starved.
+ */
+const FRAME_SPACING_FACTOR = 3;
+
 /** Frames traced after `start()` when PI_TTI_TRACE is set: enough to cover startup. */
 const TTI_TRACED_FRAMES = 8;
 
@@ -1196,6 +1211,13 @@ export abstract class TuiBase extends Container implements TUI {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
+	/** How long the last frame took to draw (FRAME_SPACING_FACTOR). */
+	private lastFrameDuration = 0;
+	/**
+	 * The next frame is not spaced by the last one's duration, and its own does not space the one after it: the first frame,
+	 * a resize's and a forced redraw's, which draw everything again, are drawn as soon as before.
+	 */
+	private nextFrameUnspaced = true;
 	/** Frames still to trace (PI_TTI_TRACE); 0 when tracing is off. */
 	private framesToTrace = 0;
 	private framesTraced = 0;
@@ -1236,7 +1258,10 @@ export abstract class TuiBase extends Container implements TUI {
 
 	/** Render a frame; with PI_TTI_TRACE set, record when the first frames were handed to the terminal. */
 	private renderFrame(): void {
+		const start = renderClock();
 		this.doRender();
+		this.lastFrameDuration = this.nextFrameUnspaced ? 0 : renderClock() - start;
+		this.nextFrameUnspaced = false;
 		if (this.framesToTrace > 0 && !this.stopped) {
 			this.framesToTrace--;
 			ttiTrace("frame.written", String(++this.framesTraced));
@@ -1643,6 +1668,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	start(): void {
 		this.stopped = false;
+		this.nextFrameUnspaced = true;
 		process.off("exit", this.exitRestoreHandler);
 		process.on("exit", this.exitRestoreHandler);
 		if (isTtiTraceEnabled()) {
@@ -1652,7 +1678,11 @@ export abstract class TuiBase extends Container implements TUI {
 		this.beforeTerminalStart();
 		this.terminal.start(
 			(data) => this.handleTerminalInput(data),
-			() => this.requestRender(),
+			() => {
+				// (A resize is drawn as soon as before, however slow frames are.)
+				this.nextFrameUnspaced = true;
+				this.requestRender();
+			},
 		);
 		this.afterTerminalStart();
 		this.terminal.hideCursor();
@@ -1718,13 +1748,14 @@ export abstract class TuiBase extends Container implements TUI {
 		if (force) this.resetRenderState();
 		this.renderRequested = false;
 		this.cancelRenderTimer();
-		this.lastRenderAt = performance.now();
+		this.lastRenderAt = renderClock();
 		this.renderFrame();
 	}
 
 	requestRender(force = false): void {
 		if (force) {
 			this.resetRenderState();
+			this.nextFrameUnspaced = true;
 			this.requestImmediateRender();
 			return;
 		}
@@ -1744,8 +1775,16 @@ export abstract class TuiBase extends Container implements TUI {
 			// A previously queued scheduleRender() can create a timer before this
 			// callback runs. User input must preempt that throttled frame.
 			this.cancelRenderTimer();
+			// Unless frames are slow: then the frame waits until the last one is far enough behind (FRAME_SPACING_FACTOR).
+			// The input itself was handled already; only its frame waits.
+			const spacing = this.nextFrameUnspaced ? 0 : FRAME_SPACING_FACTOR * this.lastFrameDuration;
+			const wait = spacing > TuiBase.MIN_RENDER_INTERVAL_MS ? spacing - (renderClock() - this.lastRenderAt) : 0;
+			if (wait > 0) {
+				this.renderTimer = setTimeout(() => this.renderTimedFrame(), wait);
+				return;
+			}
 			this.renderRequested = false;
-			this.lastRenderAt = performance.now();
+			this.lastRenderAt = renderClock();
 			this.renderFrame();
 		});
 	}
@@ -1760,20 +1799,24 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.stopped || this.renderTimer || !this.renderRequested) {
 			return;
 		}
-		const elapsed = performance.now() - this.lastRenderAt;
-		const delay = Math.max(0, TuiBase.MIN_RENDER_INTERVAL_MS - elapsed);
-		this.renderTimer = setTimeout(() => {
-			this.renderTimer = undefined;
-			if (this.stopped || !this.renderRequested) {
-				return;
-			}
-			this.renderRequested = false;
-			this.lastRenderAt = performance.now();
-			this.renderFrame();
-			if (this.renderRequested) {
-				this.scheduleRender();
-			}
-		}, delay);
+		const elapsed = renderClock() - this.lastRenderAt;
+		const spacing = this.nextFrameUnspaced ? 0 : FRAME_SPACING_FACTOR * this.lastFrameDuration;
+		const delay = Math.max(0, Math.max(TuiBase.MIN_RENDER_INTERVAL_MS, spacing) - elapsed);
+		this.renderTimer = setTimeout(() => this.renderTimedFrame(), delay);
+	}
+
+	/** A frame from the timer of scheduleRender(), and the next one scheduled if more was requested meanwhile. */
+	private renderTimedFrame(): void {
+		this.renderTimer = undefined;
+		if (this.stopped || !this.renderRequested) {
+			return;
+		}
+		this.renderRequested = false;
+		this.lastRenderAt = renderClock();
+		this.renderFrame();
+		if (this.renderRequested) {
+			this.scheduleRender();
+		}
 	}
 
 	private handleTerminalInput(data: string): void {

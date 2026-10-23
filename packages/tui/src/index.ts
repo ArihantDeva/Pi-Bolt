@@ -186,6 +186,7 @@ export {
 	reportsChanges,
 	type SizeValue,
 	setChangeReportsForTest,
+	setRenderClockForTest,
 	setRenderOwner,
 	setSubtreeReportsChanges,
 	type TUI,
