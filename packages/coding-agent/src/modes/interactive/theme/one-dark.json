@@ -59,7 +59,7 @@
 		"toolDiffAdded": "green",
 		"toolDiffRemoved": "red",
 		"toolDiffContext": "muted",
-		"syntaxComment": "comment",
+		"syntaxComment": "#a3a7af",
 		"syntaxKeyword": "violet",
 		"syntaxFunction": "blue",
 		"syntaxVariable": "text",

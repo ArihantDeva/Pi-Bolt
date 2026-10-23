@@ -78,17 +78,17 @@ const READABLE_PAIRS: [string, string][] = [
 	["text", "selectedBg"],
 	["accent", "selectedBg"],
 	["searchMatchText", "searchMatchBg"],
-	["mdCodeBlock", "toolPendingBg"],
-	["syntaxKeyword", "toolPendingBg"],
-	["syntaxFunction", "toolPendingBg"],
-	["syntaxString", "toolPendingBg"],
-	["syntaxNumber", "toolPendingBg"],
-	["syntaxType", "toolPendingBg"],
-	["syntaxVariable", "toolPendingBg"],
-	["syntaxOperator", "toolPendingBg"],
 	["mdHeading", "bg"],
 	["mdLink", "bg"],
 	["mdCode", "bg"],
+	// Code is drawn on the page, in tool output and in user and custom messages (a code block in a summary or a skill).
+	...["mdCodeBlock", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxString", "syntaxNumber", "syntaxType"]
+		.concat(["syntaxVariable", "syntaxOperator", "syntaxPunctuation"])
+		.flatMap((fg) =>
+			["bg", "toolPendingBg", "toolSuccessBg", "toolErrorBg", "userMessageBg", "customMessageBg"].map(
+				(bg): [string, string] => [fg, bg],
+			),
+		),
 ];
 
 describe("built-in palette themes", () => {
