@@ -125,6 +125,9 @@ describe("theme picker", () => {
 		write("my-nord", "#654321");
 		await vi.waitFor(() => expect(theme.fg("accent", "x")).toBe(builtinAccent), { timeout: 3000 });
 		expect(getThemeByName("nord")?.fg("accent", "x")).toBe(builtinAccent);
+		// The file is listed by its new name, and loads by it.
+		expect(getAvailableThemesWithPaths()).toContainEqual({ name: "my-nord", path: customPath });
+		expect(getThemeByName("my-nord")?.fg("accent", "x")).toBe(loadThemeFromPath(customPath).fg("accent", "x"));
 		write("nord", "#abcdef");
 		await vi.waitFor(() => expect(theme.fg("accent", "x")).toBe(loadThemeFromPath(customPath).fg("accent", "x")), {
 			timeout: 3000,

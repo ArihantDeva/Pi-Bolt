@@ -812,6 +812,15 @@ function startThemeWatcher(): void {
 					registeredThemes.set(watchedThemeName, reloadedTheme);
 				} else {
 					registeredThemes.delete(watchedThemeName);
+					// (The file is listed by the name it now declares, so it loads by that name too.)
+					try {
+						const renamedTheme = loadThemeFromPath(themeFile);
+						if (renamedTheme.name && !renamedTheme.name.includes("/")) {
+							registeredThemes.set(renamedTheme.name, renamedTheme);
+						}
+					} catch {
+						// Not a valid theme (yet): it is not listed either.
+					}
 				}
 				setGlobalTheme(reloadedTheme);
 				// Notify callback (to invalidate UI)
