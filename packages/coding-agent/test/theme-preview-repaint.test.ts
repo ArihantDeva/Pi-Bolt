@@ -18,6 +18,7 @@ import { UserMessageComponent } from "../src/modes/interactive/components/user-m
 import { createInteractiveTui } from "../src/modes/interactive/interactive-mode.ts";
 import {
 	getAvailableThemes,
+	getThemeInstance,
 	initTheme,
 	loadThemeFromPath,
 	setRegisteredThemes,
@@ -166,6 +167,7 @@ function openSelector(
 	original: string,
 	onClose: () => void,
 ): ThemeSelectorComponent {
+	const restore = controller.previewRestorer();
 	const done = () => {
 		live.editorContainer.clear();
 		live.editorContainer.addChild(live.editor);
@@ -176,7 +178,7 @@ function openSelector(
 		() => done(),
 		() => {
 			done();
-			controller.preview(original);
+			restore();
 		},
 		(name) => controller.preview(name),
 	);
@@ -260,6 +262,42 @@ describe("/theme preview", () => {
 			}
 		});
 	}
+
+	test("Esc gives back a theme an extension set as an instance", async () => {
+		const original = "dark";
+		initTheme(original);
+		const terminal = new VirtualTerminal(COLUMNS, ROWS);
+		const live = buildScreen("fullscreen", terminal, original, undefined);
+		const controller = new InteractiveThemeController(live.ui, {
+			getSettingsManager: () => ({ getThemeSetting: () => original }) as never,
+			showError: () => {},
+			onChanged: () => {},
+			initialThemeSetting: original,
+		});
+		live.ui.start();
+		try {
+			// As ctx.ui.setTheme(theme) does: a theme that is no setting.
+			const instance = loadThemeFromPath(
+				fileURLToPath(new URL("../src/modes/interactive/theme/gruvbox-light.json", import.meta.url)),
+			);
+			controller.setThemeInstance(instance);
+			await settle(terminal);
+			const before = terminal.getStyledViewport();
+			openSelector(live, controller, original, () => {});
+			await settle(terminal);
+			terminal.sendInput(DOWN);
+			await settle(terminal);
+			expect(getThemeInstance()).not.toBe(instance);
+			terminal.sendInput("\x1b");
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			await settle(terminal);
+			expect(getThemeInstance()).toBe(instance);
+			expect(terminal.getStyledViewport()).toEqual(before);
+		} finally {
+			controller.dispose();
+			live.ui.stop();
+		}
+	});
 
 	test("a user theme named like a built-in wins: listed once, previewed and applied in its colors", async () => {
 		const builtinPath = fileURLToPath(new URL("../src/modes/interactive/theme/nord.json", import.meta.url));

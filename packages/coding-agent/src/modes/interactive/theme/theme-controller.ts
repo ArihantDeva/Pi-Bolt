@@ -2,6 +2,7 @@ import type { RgbColor, TerminalColors, TUI } from "@earendil-works/pi-tui";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import {
 	getTerminalTheme,
+	getThemeInstance,
 	initTheme,
 	markTerminalColorsPending,
 	parseAutoThemeSetting,
@@ -164,6 +165,23 @@ export class InteractiveThemeController {
 			this.ui.invalidate();
 			this.ui.requestRender();
 		}
+	}
+
+	/**
+	 * What gives back the theme in use now after previews (a theme selector closed without a choice): the theme an extension
+	 * set (setThemeInstance()), or else the theme setting.
+	 */
+	previewRestorer(): () => void {
+		const instance = this.activeThemeName === "<in-memory>" ? getThemeInstance() : undefined;
+		if (instance) {
+			return () => {
+				setThemeInstance(instance);
+				this.ui.invalidate();
+				this.ui.requestRender();
+			};
+		}
+		const selection = this.getThemeSelection() || SYSTEM_THEME_NAME;
+		return () => this.preview(selection);
 	}
 
 	disableAutoSync(): void {

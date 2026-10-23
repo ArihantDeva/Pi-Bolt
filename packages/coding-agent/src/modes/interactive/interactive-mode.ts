@@ -5253,6 +5253,7 @@ export class InteractiveMode {
 
 	private showThemeSelector(): void {
 		const original = this.themeController.getThemeSelection() || SYSTEM_THEME_NAME;
+		const restore = this.themeController.previewRestorer();
 		this.showSelector((done) => {
 			const selector = new ThemeSelectorComponent(
 				original,
@@ -5262,7 +5263,7 @@ export class InteractiveMode {
 				},
 				() => {
 					done();
-					this.themeController.preview(original);
+					restore();
 				},
 				(themeName) => this.themeController.preview(themeName),
 			);
