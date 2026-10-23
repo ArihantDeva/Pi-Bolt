@@ -127,7 +127,7 @@ def run(build, entries, mode, a):
                 typed += "x"
                 sent_at, mark = time.perf_counter(), len(tty.buf)
                 tty.send(b"x")
-                shown = (" " + typed).encode()
+                shown = typed.encode()
                 while time.perf_counter() < sent_at + 5:
                     tty.pump(0.002)
                     if shown in ANSI.sub(b"", tty.buf[mark:]):
