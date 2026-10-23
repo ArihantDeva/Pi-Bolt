@@ -4,7 +4,7 @@ Pi-Bolt compared with the same Pi release on stock Bun and on Node.js. Every fig
 [`bench/`](../bench), and the raw results are in [`bench/results/`](../bench/results). The charts are drawn from those files by
 [`bench/report.py`](../bench/report.py).
 
-**Versions.** [0.9.7 against Pi as released](#097-against-pi-as-released) is the latest: Pi-Bolt 0.9.7 against Pi 1.3.0 as released on npm, run by stock Bun 1.4.2, Node 22 and Node 24, on GitHub's runners. [0.9.6 against PiG 0.5.1](#096-against-pig-051) is the one before: Pi-Bolt 0.9.6 against PiG 0.5.1, Pi-Bolt 0.9.5 and Pi 1.3.0 on Node 24, on GitHub's runners and an M5 Mac. [0.9.2 on GitHub's runners](#092-on-githubs-runners) is earlier: Pi-Bolt 0.9.2 (Pi 1.2.0) on GitHub's Linux
+**Versions.** [1.0.0 against PiG 0.5.1 and 0.9.9](#100-against-pig-051-and-099) is the latest: Pi-Bolt 1.0.0 against PiG 0.5.1 and Pi-Bolt 0.9.9, on GitHub's Linux and Windows runners and an M5 Mac. [0.9.7 against Pi as released](#097-against-pi-as-released) is the one before: Pi-Bolt 0.9.7 against Pi 1.3.0 as released on npm, run by stock Bun 1.4.2, Node 22 and Node 24, on GitHub's runners. [0.9.6 against PiG 0.5.1](#096-against-pig-051) is earlier: Pi-Bolt 0.9.6 against PiG 0.5.1, Pi-Bolt 0.9.5 and Pi 1.3.0 on Node 24, on GitHub's runners and an M5 Mac. [0.9.2 on GitHub's runners](#092-on-githubs-runners) is earlier: Pi-Bolt 0.9.2 (Pi 1.2.0) on GitHub's Linux
 x86-64 and ARM64 runners. The sections after it are earlier measurements: Pi-Bolt 0.8.5 (Pi 1.1.0), against Pi 1.1.0 as released on stock Bun 1.4.2 and on Node, every build installed from
 its release archive; [against PiG and oh-my-pi](#against-pig-and-oh-my-pi) in the same runs. [With a real model](#with-a-real-model) is an earlier measurement, of Pi-Bolt 0.6.1.
 
@@ -14,6 +14,7 @@ carries over is the comparison, because every run interleaves the runtimes on th
 sooner than Pi on Bun and uses about a quarter of its CPU over an interactive session. The ratio varies by scenario: see
 each table.
 
+- [1.0.0 against PiG 0.5.1 and 0.9.9](#100-against-pig-051-and-099)
 - [0.9.7 against Pi as released](#097-against-pi-as-released)
 - [0.9.6 against PiG 0.5.1](#096-against-pig-051)
 - [0.9.2 on GitHub's runners](#092-on-githubs-runners)
@@ -34,6 +35,46 @@ each table.
   - [Why is a run-time plugin's loop slow on the default build?](#why-is-a-run-time-plugins-loop-slow-on-the-default-build)
 - [Reproduce](#reproduce)
 - [Correctness](#correctness)
+
+## 1.0.0 against PiG 0.5.1 and 0.9.9
+
+Pi-Bolt 1.0.0 against [PiG](https://github.com/MichaelKinsy/PiG) 0.5.1 (Pi 1.3.0 ported to Go) and Pi-Bolt 0.9.9 (its release
+archive, checked against its SHA256SUMS). 1.0.0 is the release's code built on its runtimes (CI run 39894603087). Every build
+does the same work against the same local model: `bench/pig_verify.py` checked the requests, tool results, answers and files
+written on every platform. Times to start and sessions are medians of 21 runs, streaming of three rounds, the long session of
+two. Linux and Windows: GitHub's runners (CI runs 39939443543 and 39939443492; Linux pinned to one CPU, Windows two cores); macOS:
+an Apple M5 Mac, not pinned. Raw data: [`bench/results/2026-10-23-pig-1.0.0`](../bench/results/2026-10-23-pig-1.0.0). Lower is
+better; Pi-Bolt 1.0.0 / PiG 0.5.1 / Pi-Bolt 0.9.9.
+
+| CPU or memory | Linux x86-64 | Linux ARM64 | Windows x64 | Apple M5 |
+|---|---|---|---|---|
+| Ready to type, ms | 43 / **16** / 48 | 39 / **15** / 43 | **93** / 106 / 107 | 25 / **17** / 26 |
+| One prompt (`pi -p`), CPU ms | 58 / **24** / 63 | 55 / **26** / 60 | 97 / **93** / 106 | 34 / **24** / 37 |
+| Interactive session, CPU ms | 176 / **165** / 187 | 171 / **160** / 199 | **274** / 378 / 285 | **78** / 118 / 80 |
+| 60,000-character answer, CPU s | 2.31 / **1.33** / 2.61 | 2.40 / **0.96** / 2.49 | 3.25 / **3.08** / 3.87 | 1.58 / **1.11** / 1.91 |
+| CPU per prompt at 20 / 40 prompts, ms | 29.2 / **46.9**; 28.8 / 49.5; 36.1 / 69.5 | **26.0 / 41.3**; 26.9 / 43.3; 33.3 / 57.3 | **41.7 / 61.0**; 50.4 / 69.2; 43.8 / 70.2 | at 40: **19.3-25.5** / 30.9-52.7 / 21.2-50.9 (two runs each) |
+| Peak memory, interactive, MB (rss, own) | 116, 33 / **72, 20** / 134, 42 | 116, 38 / **56, 18** / 132, 48 | 70, 90 / **45, 67** / 84, 101 (ws, private) | 73, 31 / **54, 26** / 91, 40 (rss, footprint) |
+| Memory after 40 prompts, MB (rss, own) | 123, **39** / **94**, 42 / 162, 70 | 123, 44 / **76, 39** / 199, 114 | 78, 100 / **67, 88** / 112, 132 (ws, private) | 83-84, **40-44** / **74-76**, 48-49 / 236-257, 35-69 |
+| Answer streaming into a 4,000-entry session, fullscreen, CPU s | **0.48** / 0.54 / 4.46 | **0.32** / 0.45 / 3.77 | **0.50** / 0.61 / 4.34 | **0.21** / 0.23 / 1.36 |
+| The same at 2,292 entries, regular mode, CPU s | 0.73 / **0.22** / 4.29 | 0.60 / **0.22** / 3.83 | 0.70 / **0.33** / 4.67 | (not run: 0.9.9 did not start in time) |
+| Files written in tmux (write:50), Pi CPU s | **0.99** / 3.22 / 1.08 | | | **0.61** / 2.13 / 1.16 |
+| Idle CPU, two minutes after an answer, ms/s | 0.017 / **0.003** / 0.043 | 0.046 / **0.004** / 0.065 | **0.20** / 1.64 / 0.41 | 0.18 / **0.006** / 0.17 |
+| Download / installed, MB | 55.6 / **32.1** / 55.4; 268 / **70** / 267 | 52.5 / **30.2** / 52.3; 253 / **66** / 252 | | |
+
+- **Against 0.9.9,** every speed and memory row improves or ties on every platform. Over 40 prompts, CPU per prompt falls by a
+  third on Linux x86-64 (69.5 to 46.9 ms) and Pi's own memory by 44% (70 to 39 MB); on ARM64 from 114 to 44 MB. A frame no
+  longer costs more the longer the session: an answer streaming into a 4,000-entry session takes a tenth of 0.9.9's CPU. The
+  executable is about 1 MB larger.
+- **Against PiG,** Pi-Bolt 1.0.0 uses less CPU per prompt deep into a session (Linux, Windows), less own memory after 40 prompts
+  on Linux x86-64, a third of PiG's CPU writing files through a terminal (longest pause 84 against 610 ms), and less CPU on long
+  sessions in fullscreen. On Windows it is also ready sooner, uses less CPU over an interactive session and idles lower.
+- **PiG** starts sooner and answers `pi -p` with less than half the CPU on Linux, streams a long answer with less CPU (1.7 to
+  2.5 times on Linux, close on Windows), peaks lower in memory, idles at zero on Linux, draws long sessions in regular mode with
+  less CPU, and is a third of the size: a native Go program.
+
+The long-transcript rows are one round on Linux (0.9.9 did not start within the tool's deadline at 4,000 entries in regular
+mode, which ended that tool); the Linux "own" memory is the process's anonymous resident memory, sampled (`peak_own_mb`), the
+counterpart of macOS's footprint, since `ru_maxrss` also counts the clean pages of the files a build maps.
 
 ## 0.9.7 against Pi as released
 

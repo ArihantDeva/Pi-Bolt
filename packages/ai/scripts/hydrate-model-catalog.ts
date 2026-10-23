@@ -3,6 +3,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { writeModelCatalogModules } from "./model-catalog-modules.ts";
 import {
 	createModelDataManifest,
 	groupProviderModelData,
@@ -75,6 +76,12 @@ export function hydrateModelCatalog(
 		const dataDir = join(providersDir, "data");
 		rmSync(dataDir, { recursive: true, force: true });
 		renameSync(stagedData, dataDir);
+		// The catalog modules repeat the data.
+		writeModelCatalogModules(
+			packageRoot,
+			Object.fromEntries(Object.entries(files).map(([name, content]) => [name.replace(/\.json$/, ""), content])),
+			{ catalogsOnly: true },
+		);
 	} finally {
 		rmSync(stagingRoot, { recursive: true, force: true });
 	}

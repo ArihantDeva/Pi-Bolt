@@ -1,15 +1,21 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { DEEPSEEK_MODELS } from "./deepseek.models.ts";
+import { DEEPSEEK_MODEL_CATALOG } from "./deepseek.catalog.generated.ts";
+import { withCatalogListing } from "./model-listing.ts";
 
 export function deepseekProvider(): Provider<"openai-completions"> {
-	return createProvider({
-		id: "deepseek",
-		name: "DeepSeek",
-		baseUrl: "https://api.deepseek.com",
-		auth: { apiKey: envApiKeyAuth("DeepSeek API key", ["DEEPSEEK_API_KEY"]) },
-		models: Object.values(DEEPSEEK_MODELS),
-		api: openAICompletionsApi(),
-	});
+	return withCatalogListing(
+		createProvider({
+			id: "deepseek",
+			name: "DeepSeek",
+			baseUrl: "https://api.deepseek.com",
+			auth: { apiKey: envApiKeyAuth("DeepSeek API key", ["DEEPSEEK_API_KEY"]) },
+			get models() {
+				return Object.values(DEEPSEEK_MODEL_CATALOG.chat());
+			},
+			api: openAICompletionsApi(),
+		}),
+		DEEPSEEK_MODEL_CATALOG,
+	);
 }

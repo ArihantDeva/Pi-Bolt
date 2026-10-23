@@ -372,6 +372,10 @@ def main():
     if not windows:
         memory = [
             ("Peak memory, interactive session", "MB", vals(lambda x: b(x, "interactive", "peak_mb"))),
+            # Own memory at the peak: macOS's footprint, Linux's sampled RssAnon (neither counts the clean file pages a build
+            # maps, which peak_mb does: Pi-Bolt maps a 114 MB static heap and compiled code, of which a session reads a part).
+            ("Peak own memory, interactive session", "MB",
+             vals(lambda x: b(x, "interactive", "peak_fp_mb") or b(x, "interactive", "peak_own_mb"))),
             (f"Own memory, {terminal} session", "MB", vals(tm_own)),
             (f"Own memory, end of {session}", "MB", vals(lambda x: lg(x, "own_mb"))),
             (f"Streaming replies ({terminal}), CPU", "ms", vals(lambda x: tm(x, "prompt_cpu_ms")), "amount"),

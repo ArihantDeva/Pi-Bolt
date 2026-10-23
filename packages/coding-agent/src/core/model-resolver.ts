@@ -458,7 +458,9 @@ export function resolveCliModel(options: {
 
 	// Important: use *all* models here, not just models with pre-configured auth.
 	// This allows "--api-key" to be used for first-time setup.
-	const models = [...modelRuntime.getModels()];
+	// (Catalogs not built yet take part by provider, id and name; only the chosen model's provider is built.)
+	const choices = modelRuntime.getModelChoices();
+	const models = [...choices.models];
 	if (models.length === 0) {
 		return {
 			model: undefined,
@@ -485,7 +487,12 @@ export function resolveCliModel(options: {
 		inlineApiKey ? () => false : (providerId) => modelRuntime.hasConfiguredAuth(providerId),
 	);
 	if (result.status === "resolved") {
-		return { model: result.model, thinkingLevel: result.thinkingLevel, warning: result.warning, error: undefined };
+		return {
+			model: choices.model(result.model),
+			thinkingLevel: result.thinkingLevel,
+			warning: result.warning,
+			error: undefined,
+		};
 	}
 	if (result.status === "ambiguous") {
 		const matches = result.candidates
@@ -518,7 +525,8 @@ export function resolveCliModel(options: {
 	// e.g. "zai-org/GLM-5.1-FP8:high" → modelId="zai-org/GLM-5.1-FP8", fallbackThinking="high"
 	const modelId = cliThinking ? target.modelText : target.modelId;
 	const fallbackThinking = cliThinking ? undefined : target.thinkingLevel;
-	const fallbackModel = buildFallbackModel(target.providerModels, modelId);
+	const [first, ...rest] = target.providerModels;
+	const fallbackModel = buildFallbackModel([choices.model(first), ...rest.map(choices.model)], modelId);
 	const requestedThinking = cliThinking ?? fallbackThinking;
 	return {
 		model: requestedThinking && requestedThinking !== "off" ? { ...fallbackModel, reasoning: true } : fallbackModel,

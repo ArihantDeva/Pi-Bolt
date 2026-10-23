@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { catalogModuleData, renderCatalogModule } from "./model-catalog-modules.ts";
 
 export const MODEL_DATA_SCHEMA_VERSION = 6;
 export const MODEL_DATA_MANIFEST_FILE = ".manifest.json";
@@ -15,7 +16,7 @@ export interface ModelDataManifest {
 }
 
 const MODEL_DATA_IMPORT_PATTERN =
-	/^import \{ [A-Z][A-Z0-9_]*_CLASSIFIER_MODELS, [A-Z][A-Z0-9_]*_IMAGE_MODELS, [A-Z][A-Z0-9_]*_MODELS \} from "\.\/providers\/([^"/]+)\.models\.ts";$/gm;
+	/^import type \{ [A-Z][A-Z0-9_]*_CLASSIFIER_MODELS, [A-Z][A-Z0-9_]*_IMAGE_MODELS, [A-Z][A-Z0-9_]*_MODELS \} from "\.\/providers\/([^"/]+)\.models\.ts";$/gm;
 
 function sha256(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
@@ -101,9 +102,11 @@ export function readModelDataStructure(packageRoot: string): ModelDataStructure 
 	const providersDir = join(packageRoot, "src", "providers");
 	const dataDir = join(providersDir, "data");
 	const providerIds = readModelDataProviderIds(packageRoot);
-	const expectedShards = providerIds.map((providerId) => `${providerId}.models.ts`).sort();
+	const expectedShards = providerIds
+		.flatMap((providerId) => [`${providerId}.models.ts`, `${providerId}.catalog.generated.ts`])
+		.sort();
 	const actualShards = readdirSync(providersDir)
-		.filter((entry) => entry.endsWith(".models.ts"))
+		.filter((entry) => entry.endsWith(".models.ts") || entry.endsWith(".catalog.generated.ts"))
 		.sort();
 	if (!sameStrings(expectedShards, actualShards)) {
 		throw new Error(
@@ -302,7 +305,33 @@ export function validateModelDataDirectory(structure: ModelDataStructure, dataDi
 
 export function validateGeneratedModelData(packageRoot: string): void {
 	const structure = readModelDataStructure(packageRoot);
-	validateModelDataDirectory(structure, join(packageRoot, "src", "providers", "data"));
+	const dataDir = join(packageRoot, "src", "providers", "data");
+	validateModelDataDirectory(structure, dataDir);
+	validateCatalogModules(Object.keys(structure), join(packageRoot, "src", "providers"), dataDir);
+}
+
+/** Each providers/<provider>.catalog.generated.ts must hold its data file's text, and the chat ids and names that text lists. */
+function validateCatalogModules(providerIds: readonly string[], providersDir: string, dataDir: string): void {
+	const errors: string[] = [];
+	for (const providerId of providerIds) {
+		const dataText = readFileSync(join(dataDir, `${providerId}.json`), "utf8");
+		const modulePath = join(providersDir, `${providerId}.catalog.generated.ts`);
+		if (!existsSync(modulePath)) {
+			errors.push(`${providerId}.catalog.generated.ts is missing`);
+			continue;
+		}
+		const source = readFileSync(modulePath, "utf8");
+		if (catalogModuleData(source) !== dataText.replace(/\n$/, "")) {
+			errors.push(`${providerId}.catalog.generated.ts does not hold data/${providerId}.json`);
+		} else if (source !== renderCatalogModule(providerId, dataText)) {
+			errors.push(`${providerId}.catalog.generated.ts is not what the generator writes for data/${providerId}.json`);
+		}
+	}
+	if (errors.length > 0) {
+		throw new Error(
+			`${errors.join("\n")}\nRun \`npm run generate-catalog-modules\` in packages/ai to write the catalog modules again.`,
+		);
+	}
 }
 
 export interface ModelCatalogEntry {

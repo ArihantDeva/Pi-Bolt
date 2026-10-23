@@ -9,6 +9,8 @@ packages/*/dist/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
 packages/ai/src/providers/.model-generation-*/
+# Generated from packages/ai/src/providers/data by every build (packages/ai/scripts/model-catalog-modules.ts).
+packages/ai/src/providers/*.catalog.generated.ts
 *.cpuprofile
 
 # Environment

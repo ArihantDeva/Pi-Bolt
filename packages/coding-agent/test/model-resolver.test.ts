@@ -22,6 +22,11 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
+/** ModelRuntime.getModelChoices() of a runtime whose models are all built. */
+function modelChoices(models: Model<Api>[]) {
+	return { models, model: (model: Model<Api>) => model };
+}
+
 // Mock models for testing
 const mockModels: Model<"anthropic-messages">[] = [
 	{
@@ -472,6 +477,7 @@ describe("resolveCliModel", () => {
 	test("does not strip invalid :suffix as thinking level in --model (treat as raw id)", () => {
 		const registry = {
 			getModels: () => allModels,
+			getModelChoices: () => modelChoices(allModels),
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -488,6 +494,7 @@ describe("resolveCliModel", () => {
 	test("allows custom model ids for explicit providers without double prefixing", () => {
 		const registry = {
 			getModels: () => allModels,
+			getModelChoices: () => modelChoices(allModels),
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -504,6 +511,7 @@ describe("resolveCliModel", () => {
 	test("returns a clear error when there are no models", () => {
 		const registry = {
 			getModels: () => [],
+			getModelChoices: () => modelChoices([]),
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -523,6 +531,7 @@ describe("resolveCliModel", () => {
 		const registry = (configured: string[]) =>
 			({
 				getModels: () => [direct, openrouter, vercel],
+				getModelChoices: () => modelChoices([direct, openrouter, vercel]),
 				hasConfiguredAuth: (provider: string) => configured.includes(provider),
 			}) as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
@@ -582,6 +591,7 @@ describe("resolveCliModel", () => {
 		test("strips :thinking suffix from custom model id in fallback path", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				getModelChoices: () => modelChoices(modelsWithNeuralwatt),
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -600,6 +610,7 @@ describe("resolveCliModel", () => {
 		test("custom model without thinking suffix works normally in fallback path", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				getModelChoices: () => modelChoices(modelsWithNeuralwatt),
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -616,6 +627,7 @@ describe("resolveCliModel", () => {
 		test("all valid thinking levels work in fallback path", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				getModelChoices: () => modelChoices(modelsWithNeuralwatt),
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
@@ -633,6 +645,7 @@ describe("resolveCliModel", () => {
 		test("invalid thinking suffix on custom model is treated as part of model id", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				getModelChoices: () => modelChoices(modelsWithNeuralwatt),
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -650,6 +663,7 @@ describe("resolveCliModel", () => {
 		test("explicit --provider with custom model:thinking strips suffix correctly", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				getModelChoices: () => modelChoices(modelsWithNeuralwatt),
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -667,6 +681,7 @@ describe("resolveCliModel", () => {
 		test("with explicit --thinking, :suffix is kept as part of model id", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				getModelChoices: () => modelChoices(modelsWithNeuralwatt),
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({

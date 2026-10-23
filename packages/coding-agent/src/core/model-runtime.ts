@@ -58,6 +58,7 @@ import {
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
+import { getModelListing, type ModelListing } from "@earendil-works/pi-ai/providers/model-listing";
 import { personalizeOpenRouterCatalog } from "@earendil-works/pi-ai/providers/openrouter";
 import {
 	assertChatModel,
@@ -99,8 +100,46 @@ interface RegisteredVirtualModel {
 	route: VirtualModelDefinition["route"];
 }
 
+/**
+ * Every provider's chat models as they were when taken (what `getModels()` returned then, in its order), without building the
+ * catalogs not yet built: such a provider is held as its listing, whose models are built when first needed. Every model of a
+ * listing has the listing's provider as its `provider`.
+ */
+class ChatModelsSnapshot {
+	private readonly parts: readonly (
+		| { provider: string; listing: ModelListing; models?: undefined }
+		| { provider: string; models: readonly Model<Api>[] }
+	)[];
+
+	constructor(providers: readonly Provider[]) {
+		this.parts = providers.map((provider) => {
+			const listing = getModelListing(provider);
+			if (listing) return { provider: provider.id, listing };
+			try {
+				return { provider: provider.id, models: provider.getModels() };
+			} catch {
+				// As in Models.getModels(): a provider whose getModels() throws has no models.
+				return { provider: provider.id, models: [] };
+			}
+		});
+	}
+
+	/** The models whose `provider` is one of `providers`, in order. */
+	ofProviders(providers: ReadonlySet<string>): Model<Api>[] {
+		const models: Model<Api>[] = [];
+		for (const part of this.parts) {
+			if (part.models) {
+				for (const model of part.models) if (providers.has(model.provider)) models.push(model);
+			} else if (providers.has(part.provider)) {
+				models.push(...part.listing.models());
+			}
+		}
+		return models;
+	}
+}
+
 interface ModelRuntimeSnapshot {
-	all: readonly Model<Api>[];
+	all: ChatModelsSnapshot;
 	available: readonly Model<Api>[];
 	configuredProviders: ReadonlySet<string>;
 	storedProviders: ReadonlySet<string>;
@@ -185,7 +224,7 @@ export class ModelRuntime implements Models {
 	private readonly modelNetworkEnabled: boolean;
 	private config: ModelConfig;
 	private snapshot: ModelRuntimeSnapshot = {
-		all: [],
+		all: new ChatModelsSnapshot([]),
 		available: [],
 		configuredProviders: new Set(),
 		storedProviders: new Set(),
@@ -339,11 +378,11 @@ export class ModelRuntime implements Models {
 	}
 
 	private updateModelSnapshot(): void {
-		const all = [...this.models.getModels()];
+		const all = new ChatModelsSnapshot(this.models.getProviders());
 		this.snapshot = {
 			...this.snapshot,
 			all,
-			available: all.filter((model) => this.snapshot.configuredProviders.has(model.provider)),
+			available: all.ofProviders(this.snapshot.configuredProviders),
 		};
 	}
 
@@ -369,7 +408,7 @@ export class ModelRuntime implements Models {
 				.map(([providerId]) => providerId),
 		);
 		this.snapshot = {
-			all: [...this.models.getModels()],
+			all: new ChatModelsSnapshot(this.models.getProviders()),
 			available: [...available],
 			configuredProviders,
 			storedProviders: new Set(credentials.map((entry) => entry.providerId)),
@@ -419,16 +458,20 @@ export class ModelRuntime implements Models {
 			}
 			if (credential) storedProviders.add(providerId);
 			else storedProviders.delete(providerId);
-			const all = [...this.models.getModels()];
+			const all = new ChatModelsSnapshot(this.models.getProviders());
 			const availableById = new Map(
 				[...this.snapshot.available.filter((model) => model.provider !== providerId), ...available].map((model) => [
 					`${model.provider}\0${model.id}`,
 					model,
 				]),
 			);
+			// (Only the providers of these models have models to look up.)
+			const availableProviders = new Set(Array.from(availableById.values(), (model) => model.provider));
 			this.snapshot = {
 				all,
-				available: all.flatMap((model) => availableById.get(`${model.provider}\0${model.id}`) ?? []),
+				available: all
+					.ofProviders(availableProviders)
+					.flatMap((model) => availableById.get(`${model.provider}\0${model.id}`) ?? []),
 				configuredProviders,
 				storedProviders,
 				auth: authByProvider,
@@ -460,6 +503,39 @@ export class ModelRuntime implements Models {
 
 	getModel(providerId: string, modelId: string): Model<Api> | undefined {
 		return this.models.getModel(providerId, modelId);
+	}
+
+	/**
+	 * Every chat model in `getModels()` order, for choosing models by provider, id and name without building every catalog:
+	 * a provider whose catalog is not built yet is listed by stand-ins that have only `provider`, `id` and `name`.
+	 * `model()` returns the model a stand-in stands for (building that provider's catalog), and a model as it is.
+	 */
+	getModelChoices(): { models: readonly Model<Api>[]; model(choice: Model<Api>): Model<Api> } {
+		const models: Model<Api>[] = [];
+		const standIns = new Map<Model<Api>, { listing: ModelListing; index: number }>();
+		for (const provider of this.models.getProviders()) {
+			const listing = getModelListing(provider);
+			if (!listing) {
+				try {
+					models.push(...provider.getModels());
+				} catch {
+					// As in Models.getModels(): a provider whose getModels() throws has no models.
+				}
+				continue;
+			}
+			listing.entries.forEach((entry, index) => {
+				const standIn = entry as Model<Api>;
+				models.push(standIn);
+				standIns.set(standIn, { listing, index });
+			});
+		}
+		return {
+			models,
+			model: (choice) => {
+				const standIn = standIns.get(choice);
+				return standIn ? standIn.listing.models()[standIn.index] : choice;
+			},
+		};
 	}
 
 	getModelsOfType<TType extends ModelType>(type: TType, providerId?: string): readonly ModelTypeMap[TType][] {
@@ -965,7 +1041,7 @@ export class ModelRuntime implements Models {
 			...this.snapshot,
 			auth,
 			configuredProviders,
-			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
+			available: this.snapshot.all.ofProviders(configuredProviders),
 		};
 	}
 
