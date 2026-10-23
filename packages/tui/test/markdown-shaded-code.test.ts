@@ -167,6 +167,20 @@ describe("Shaded code blocks", () => {
 		assert.strictEqual(getActiveBackgroundAnsi(afterReset.slice(0, afterReset.indexOf(" a = 1;"))), palette.bg);
 	});
 
+	it("keeps the shading after a background span from the highlighter", () => {
+		Object.assign(palette, PALETTES[0]);
+		const theme: MarkdownTheme = {
+			...shadedTheme,
+			highlightCode: (code) =>
+				code.split("\n").map((line) => line.replace("const", "\x1b[48;2;1;2;3mconst\x1b[49m")),
+		};
+		const [line] = new Markdown("```\nconst a = 1;\n```", 0, 0, theme)
+			.render(30)
+			.filter((rendered) => rendered.includes("const"));
+		const afterSpan = line!.slice(line!.indexOf("const\x1b[49m") + "const\x1b[49m".length);
+		assert.strictEqual(getActiveBackgroundAnsi(afterSpan.slice(0, afterSpan.indexOf(" a = 1;"))), palette.bg);
+	});
+
 	it("keeps the indent on wrapped lines", () => {
 		Object.assign(palette, PALETTES[0]);
 		const lines = new Markdown("```\nconst value = compute(first, second);\n```", 0, 0, shadedTheme)
