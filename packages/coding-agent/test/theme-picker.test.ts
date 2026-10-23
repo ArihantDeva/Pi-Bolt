@@ -9,6 +9,9 @@ import {
 	getThemeByName,
 	loadThemeFromPath,
 	setRegisteredThemes,
+	setTheme,
+	stopThemeWatcher,
+	theme,
 } from "../src/modes/interactive/theme/theme.ts";
 
 type ThemeFile = {
@@ -29,6 +32,7 @@ describe("theme picker", () => {
 	});
 
 	afterEach(() => {
+		stopThemeWatcher();
 		setRegisteredThemes([]);
 		rmSync(tempRoot, { recursive: true, force: true });
 		vi.unstubAllEnvs();
@@ -82,5 +86,38 @@ describe("theme picker", () => {
 		);
 		const accent = (theme: { fg(color: "accent", text: string): string } | undefined) => theme?.fg("accent", "x");
 		expect(accent(getThemeByName("nord"))).toBe(accent(loadThemeFromPath(builtinPath)));
+	});
+
+	it("does not watch a custom file of a built-in's name that declares another name", async () => {
+		const builtinPath = fileURLToPath(new URL("../src/modes/interactive/theme/nord.json", import.meta.url));
+		const builtin = JSON.parse(readFileSync(builtinPath, "utf-8")) as ThemeFile;
+		const customPath = join(process.env.PI_CODING_AGENT_DIR!, "themes", "nord.json");
+		const write = (accent: string) =>
+			writeFileSync(
+				customPath,
+				JSON.stringify({ ...builtin, name: "my-nord", colors: { ...builtin.colors, accent } }),
+			);
+		write("#123456");
+		expect(setTheme("nord", true).success).toBe(true);
+		const builtinAccent = loadThemeFromPath(builtinPath).fg("accent", "x");
+		expect(theme.fg("accent", "x")).toBe(builtinAccent);
+		write("#654321");
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(theme.fg("accent", "x")).toBe(builtinAccent);
+	});
+
+	it("watches a custom theme that replaces a built-in", async () => {
+		const builtinPath = fileURLToPath(new URL("../src/modes/interactive/theme/dark.json", import.meta.url));
+		const builtin = JSON.parse(readFileSync(builtinPath, "utf-8")) as ThemeFile;
+		const customPath = join(process.env.PI_CODING_AGENT_DIR!, "themes", "dark.json");
+		const write = (accent: string) =>
+			writeFileSync(customPath, JSON.stringify({ ...builtin, colors: { ...builtin.colors, accent } }));
+		write("#123456");
+		expect(setTheme("dark", true).success).toBe(true);
+		expect(theme.fg("accent", "x")).toBe(loadThemeFromPath(customPath).fg("accent", "x"));
+		write("#654321");
+		await vi.waitFor(() => expect(theme.fg("accent", "x")).toBe(loadThemeFromPath(customPath).fg("accent", "x")), {
+			timeout: 3000,
+		});
 	});
 });

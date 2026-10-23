@@ -753,16 +753,20 @@ export function onThemeChange(callback: () => void): void {
 	onThemeChangeCallback = callback;
 }
 
+/** Whether the theme file declares this name; a file that cannot be read now is taken as the theme (it may be fixed). */
+function declaresName(themeFile: string, name: string): boolean {
+	try {
+		return (JSON.parse(stripBom(fs.readFileSync(themeFile, "utf-8"))) as { name?: unknown }).name === name;
+	} catch {
+		return true;
+	}
+}
+
 function startThemeWatcher(): void {
 	stopThemeWatcher();
 
-	// Only watch if it's a custom theme (not built-in)
-	if (
-		!currentThemeName ||
-		currentThemeName === "dark" ||
-		currentThemeName === "light" ||
-		currentThemeName === SYSTEM_THEME_NAME
-	) {
+	// Only watch a custom theme's file (the system theme has none)
+	if (!currentThemeName || currentThemeName === SYSTEM_THEME_NAME) {
 		return;
 	}
 
@@ -771,8 +775,12 @@ function startThemeWatcher(): void {
 	const watchedFileName = `${watchedThemeName}.json`;
 	const themeFile = path.join(customThemesDir, watchedFileName);
 
-	// Only watch if the file exists
-	if (!fs.existsSync(themeFile)) {
+	// Only watch if the file exists, and is the theme in use: a file that names another theme does not replace the
+	// built-in theme of its file name (loadThemeJson()).
+	if (
+		!fs.existsSync(themeFile) ||
+		(getBuiltinThemeNames().includes(watchedThemeName) && !declaresName(themeFile, watchedThemeName))
+	) {
 		return;
 	}
 
