@@ -730,7 +730,9 @@ export interface MarkdownTheme {
 	codeBlockIndent?: string;
 	/**
 	 * Background for code blocks. When set, a block renders as shaded lines (language label first) instead of between
-	 * literal ``` fence lines.
+	 * literal ``` fence lines. It must end the background with SGR 49 (`\x1b[49m`), not a full reset (SGR 0): inside a Box
+	 * or a Markdown with a background, the surrounding background is opened again after an SGR 49 only, so the rest of
+	 * the row keeps it.
 	 */
 	codeBlockBg?: (text: string) => string;
 }
