@@ -62,6 +62,8 @@ describe("theme picker", () => {
 		const customTheme: ThemeFile = { ...builtin, colors: { ...builtin.colors, accent: "#123456" } };
 		const customPath = join(process.env.PI_CODING_AGENT_DIR!, "themes", "nord.json");
 		writeFileSync(customPath, JSON.stringify(customTheme, null, 2));
+		// (As theme discovery registers it.)
+		setRegisteredThemes([loadThemeFromPath(customPath)]);
 
 		const listed = getAvailableThemesWithPaths().filter((theme) => theme.name === "nord");
 		expect(listed).toEqual([{ name: "nord", path: customPath }]);
@@ -69,6 +71,15 @@ describe("theme picker", () => {
 		const accent = (theme: { fg(color: "accent", text: string): string } | undefined) => theme?.fg("accent", "x");
 		expect(accent(getThemeByName("nord"))).toBe(accent(loadThemeFromPath(customPath)));
 		expect(accent(getThemeByName("nord"))).not.toBe(accent(loadThemeFromPath(builtinPath)));
+	});
+
+	it("keeps the built-in theme when theme discovery is off (--no-themes), even with a custom file of its name", () => {
+		const builtinPath = fileURLToPath(new URL("../src/modes/interactive/theme/nord.json", import.meta.url));
+		const customPath = join(process.env.PI_CODING_AGENT_DIR!, "themes", "nord.json");
+		// (Not even a valid theme: it must not be read.)
+		writeFileSync(customPath, "{ not json");
+		expect(setTheme("nord").success).toBe(true);
+		expect(theme.fg("accent", "x")).toBe(loadThemeFromPath(builtinPath).fg("accent", "x"));
 	});
 
 	it("keeps the built-in theme when a custom file of its name declares another name", () => {
@@ -163,6 +174,8 @@ describe("theme picker", () => {
 		const write = (accent: string) =>
 			writeFileSync(customPath, JSON.stringify({ ...builtin, colors: { ...builtin.colors, accent } }));
 		write("#123456");
+		// (As theme discovery registers it.)
+		setRegisteredThemes([loadThemeFromPath(customPath)]);
 		expect(setTheme("dark", true).success).toBe(true);
 		expect(theme.fg("accent", "x")).toBe(loadThemeFromPath(customPath).fg("accent", "x"));
 		write("#654321");

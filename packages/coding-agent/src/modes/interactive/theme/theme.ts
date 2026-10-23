@@ -492,7 +492,9 @@ function parseThemeJsonContent(label: string, content: string): ThemeJson {
 }
 
 function loadThemeJson(name: string): ThemeJson {
-	// A registered or custom theme wins over a built-in of the same name, so a user's own `nord.json` is not replaced.
+	// A registered theme (one theme discovery found: the user's or a trusted project's, by the name it declares) wins over
+	// a built-in of the same name. A custom file of a built-in's name replaces it only that way, so `--no-themes`, which
+	// turns discovery off, gives back the built-in.
 	const registeredTheme = registeredThemes.get(name);
 	if (registeredTheme?.sourcePath) {
 		const content = fs.readFileSync(registeredTheme.sourcePath, "utf-8");
@@ -501,20 +503,15 @@ function loadThemeJson(name: string): ThemeJson {
 	if (registeredTheme) {
 		throw new Error(`Theme "${name}" does not have a source path for export`);
 	}
-	const customThemePath = path.join(getCustomThemesDir(), `${name}.json`);
-	if (fs.existsSync(customThemePath)) {
-		const content = fs.readFileSync(customThemePath, "utf-8");
-		// (A custom `nord.json` that names itself `my-nord` is listed as `my-nord`, and does not replace the built-in
-		// `nord`, valid or not: its name is checked before the theme is.)
-		if (!getBuiltinThemeNames().includes(name) || declaresName(content, name)) {
-			return parseThemeJsonContent(name, content);
-		}
-	}
 	const builtinTheme = getBuiltinTheme(name);
-	if (!builtinTheme) {
+	if (builtinTheme) {
+		return builtinTheme;
+	}
+	const customThemePath = path.join(getCustomThemesDir(), `${name}.json`);
+	if (!fs.existsSync(customThemePath)) {
 		throw new Error(`Theme not found: ${name}`);
 	}
-	return builtinTheme;
+	return parseThemeJsonContent(name, fs.readFileSync(customThemePath, "utf-8"));
 }
 
 function splitThemeColors(colors: ResolvedThemeColorValues<string | number>): {
@@ -754,24 +751,13 @@ export function onThemeChange(callback: () => void): void {
 	onThemeChangeCallback = callback;
 }
 
-/** Whether theme JSON declares this name; content that does not parse is taken as the theme (it may be fixed). */
-function declaresName(content: string, name: string): boolean {
-	try {
-		return (JSON.parse(stripBom(content)) as { name?: unknown }).name === name;
-	} catch {
-		return true;
-	}
-}
-
-/** declaresName() for a file; a file that cannot be read now is taken as the theme too. */
+/** Whether the theme file declares this name; a file that cannot be read or parsed now is taken as the theme (it may be fixed). */
 function fileDeclaresName(themeFile: string, name: string): boolean {
-	let content: string;
 	try {
-		content = fs.readFileSync(themeFile, "utf-8");
+		return (JSON.parse(stripBom(fs.readFileSync(themeFile, "utf-8"))) as { name?: unknown }).name === name;
 	} catch {
 		return true;
 	}
-	return declaresName(content, name);
 }
 
 function startThemeWatcher(): void {
@@ -787,16 +773,13 @@ function startThemeWatcher(): void {
 	const watchedFileName = `${watchedThemeName}.json`;
 	const themeFile = path.join(customThemesDir, watchedFileName);
 
-	// Only watch if the file exists, and is the theme in use: a theme of this name registered from another file (a
-	// trusted project's) wins over it, and a file that names another theme does not replace the built-in theme of its file
-	// name (loadThemeJson()).
+	// Only watch if the file exists, and is the theme in use (loadThemeJson()): a theme of this name registered from
+	// another file (a trusted project's) wins over it, and a built-in theme is replaced only by a registered file.
 	const registeredSource = registeredThemes.get(watchedThemeName)?.sourcePath;
 	const replacesBuiltin = getBuiltinThemeNames().includes(watchedThemeName);
-	if (
-		!fs.existsSync(themeFile) ||
-		(registeredSource !== undefined && path.resolve(registeredSource) !== path.resolve(themeFile)) ||
-		(replacesBuiltin && !fileDeclaresName(themeFile, watchedThemeName))
-	) {
+	const inUse =
+		registeredSource === undefined ? !replacesBuiltin : path.resolve(registeredSource) === path.resolve(themeFile);
+	if (!fs.existsSync(themeFile) || !inUse) {
 		return;
 	}
 
