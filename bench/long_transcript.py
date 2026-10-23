@@ -149,6 +149,7 @@ def run(build, entries, mode, a):
         row["minstr_per_frame"] = round((after - instr) / 1e6 / max(frames, 1), 2)
     if latencies:
         row["echo_ms_median"] = round(statistics.median(latencies), 1)
+        row["echo_ms_p95"] = round(sorted(latencies)[min(len(latencies) - 1, int(len(latencies) * 0.95))], 1)
         row["echo_ms_max"] = round(max(latencies), 1)
     return row
 
@@ -186,7 +187,7 @@ def main():
         for mode, entries, name in keys:
             group = [row for row in rows if (row["mode"], row["entries"], row["build"]) == (mode, entries, name)]
             out = {"build": name, "mode": mode, "entries": entries}
-            for field in ("cpu_s", "fps", "minstr_per_frame", "echo_ms_median", "echo_ms_max"):
+            for field in ("cpu_s", "fps", "minstr_per_frame", "echo_ms_median", "echo_ms_p95", "echo_ms_max"):
                 values = [row[field] for row in group if field in row]
                 if values:
                     out[field] = round(statistics.median(values), 2)
