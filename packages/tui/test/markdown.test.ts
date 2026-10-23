@@ -228,6 +228,26 @@ describe("Markdown component", () => {
 			assert.deepStrictEqual(lines, ["- [ ] beep", "- [x] boop"]);
 		});
 
+		it("shades code blocks to the full width without fence lines when the theme has codeBlockBg", () => {
+			const theme: MarkdownTheme = {
+				...defaultMarkdownTheme,
+				codeBlockBg: (text) => `\x1b[48;5;236m${text}\x1b[49m`,
+			};
+			const markdown = new Markdown("```ts\nconst a = 1;\nconst longer = 2222222222;\n```", 0, 0, theme);
+
+			const rendered = markdown.render(12);
+
+			assert.ok(rendered.every((line) => line.startsWith("\x1b[48;5;236m")));
+			assert.deepStrictEqual(rendered.map(stripAnsi), [
+				"ts          ",
+				"  const a = ",
+				"1;          ",
+				"  const     ",
+				"longer =    ",
+				"2222222222; ",
+			]);
+		});
+
 		it("should maintain numbering when code blocks are not indented (LLM output)", () => {
 			// When code blocks aren't indented, marked parses each item as a separate list.
 			// We use token.start to preserve the original numbering.

@@ -551,6 +551,11 @@ export interface MarkdownTheme {
 	highlightCode?: (code: string, lang?: string) => string[];
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
+	/**
+	 * Background for code blocks. When set, a block renders as full-width shaded lines (language label first) instead of
+	 * between literal ``` fence lines.
+	 */
+	codeBlockBg?: (text: string) => string;
 }
 
 export interface MarkdownOptions {
@@ -953,20 +958,26 @@ export class Markdown implements Component {
 
 			case "code": {
 				const indent = this.theme.codeBlockIndent ?? "  ";
-				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
-				if (this.theme.highlightCode) {
-					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
-					for (const hlLine of highlightedLines) {
-						lines.push(`${indent}${hlLine}`);
+				const codeLines: string[] = this.theme.highlightCode
+					? this.theme.highlightCode(token.text, token.lang)
+					: token.text.split("\n").map((codeLine: string) => this.theme.codeBlock(codeLine));
+				const shade = this.theme.codeBlockBg;
+				if (shade) {
+					const body = token.lang ? [this.theme.codeBlockBorder(token.lang)] : [];
+					body.push(...codeLines.map((codeLine) => `${indent}${codeLine}`));
+					for (const bodyLine of body) {
+						// Wrapped here, not by renderBlock(), so continuation lines stay shaded to the full width.
+						for (const wrapped of wrapTextWithAnsi(bodyLine, width)) {
+							lines.push(shade(wrapped + " ".repeat(Math.max(0, width - visibleWidth(wrapped)))));
+						}
 					}
 				} else {
-					// Split code by newlines and style each line
-					const codeLines = token.text.split("\n");
+					lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
 					for (const codeLine of codeLines) {
-						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
+						lines.push(`${indent}${codeLine}`);
 					}
+					lines.push(this.theme.codeBlockBorder("```"));
 				}
-				lines.push(this.theme.codeBlockBorder("```"));
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after code blocks (unless space token follows)
 				}
