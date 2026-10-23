@@ -23,12 +23,12 @@ One executable for Linux x86-64 and ARM64, macOS on Apple silicon and Windows x6
 
 Pi-Bolt is the Pi you already use, with the same commands, sessions, settings, providers and extensions. Every function is
 compiled to machine code when the executable is built, so nothing is parsed or JIT-compiled at launch. Against Pi as released on
-Node 24, it writes a 400 KB file 112 times faster, uses 13 times less CPU while a long answer streams, 6 times less over a
-session and a third of the memory; against Pi on stock Bun, much the same.
+Node 24, it writes a 400 KB file 120 times faster, uses 8 times less CPU while a long answer streams, 7 times less over a session
+and a quarter of the memory; against Pi on stock Bun, much the same.
 
-<img alt="Pi-Bolt 0.9.7 against Pi 1.3.0 as released, Linux x86-64: writing a 400 KB file 112 times faster than on Node 24 (140 times than on Bun), 13 times less CPU while a long answer streams, 6.2 times less CPU over an interactive session, 3.5 times less memory after 40 prompts" src="docs/images/pi-bolt-benchmarks.png" width="880">
+<img alt="Pi-Bolt 1.0.0 against Pi 1.4.0 as released, Linux x86-64: writing a 400 KB file 120 times faster than on Node 24 (162 times than on Bun), 8 times less CPU while a long answer streams, 7.1 times less CPU over an interactive session, 4.5 times less memory after 40 prompts" src="docs/images/pi-bolt-benchmarks.png" width="880">
 
-<img alt="Pi-Bolt 0.9.7 against Pi 1.3.0 as released on Node 24 and on Bun, on Linux x86-64, Linux ARM64, macOS and Windows: 70 to 140 times faster writing a 400 KB file, 11 to 14 times less CPU streaming a long answer, 5 to 6 times less CPU per prompt and per session, 1.4 to 4.2 times less memory, 3 to 9 times sooner ready to type" src="docs/images/pi-bolt-every-platform.png" width="880">
+<img alt="Pi-Bolt 1.0.0 against Pi 1.4.0 as released on Node 24 and on Bun, on Linux x86-64, Linux ARM64, macOS and Windows: 61 to 162 times faster writing a 400 KB file, 4.8 to 17 times less CPU streaming a long answer, 5.3 to 8.8 times less CPU per prompt, 5.9 to 7.1 times less CPU over a session, 2.5 to 15 times less memory, 3.8 to 11 times sooner ready to type" src="docs/images/pi-bolt-every-platform.png" width="880">
 
 https://github.com/user-attachments/assets/a9531e80-9e94-4b9c-8223-650a9fb8dc7a
 
@@ -129,21 +129,20 @@ uninstalls it.
 
 ## Benchmarks
 
-Pi-Bolt 0.9.7 against Pi 1.3.0 as released on npm, run by stock Bun 1.4.2 and by Node 24, doing the same work against the same
+Pi-Bolt 1.0.0 against Pi 1.4.0 as released on npm, run by stock Bun 1.4.4 and by Node 24, doing the same work against the same
 local model; lower is better. Pi-Bolt / Pi on Bun / Pi on Node 24:
 
 | Benchmark | Linux x86-64 | Linux ARM64 | macOS | Windows x64 |
 |---|---:|---:|---:|---:|
-| Writing a 400 KB file through a tool call, s | **1.3** / 182.2 / 145.8 | **1.3** / 157.3 / 131.8 | **1.7** / 129.7 / 129.2 | **1.6** / 139.4 / 112.1 |
-| CPU, streaming a 60,000-character answer, s | **2.94** / 41.14 / 37.87 | **3.01** / 40.45 / 37.55 | **5.40** / 66.68 / 63.16 | **3.39** / 44.58 / 38.20 |
-| CPU per prompt, prompts 21 to 40 of a session, ms | **65** / 350 / 362 | **58** / 308 / 301 | **47** / 272 / 291 | **59** / 303 / 361 |
-| CPU, interactive session, ms | **190** / 1,189 / 1,179 | **196** / 1,187 / 1,183 | **199** / 1,133 / 1,287 | **243** / 1,407 / 1,280 |
-| Memory after 40 prompts, MB | **166** / 289 / 578 | **197** / 267 / 612 | **182** / 423 / 762 | **141** / 262 / 325 |
-| Ready to type, ms | **45** / 382 / 411 | **44** / 353 / 410 | **85** / 253 / 383 | **93** / 315 / 363 |
+| Writing a 400 KB file through a tool call, s | **1.2** / 194.8 / 143.7 | **1.3** / 164.1 / 134.5 | **0.6** / 76.2 / 96.7 | **1.8** / 131.0 / 110.1 |
+| CPU, streaming a 60,000-character answer, s | **2.34** / 21.92 / 18.62 | **2.32** / 18.82 / 18.19 | **1.35** / 7.10 / 6.47 | **2.69** / 44.86 / 39.01 |
+| CPU per prompt, prompts 21 to 40 of a session, ms | **46** / 328 / 352 | **42** / 280 / 299 | **17** / 111 / 149 | **53** / 278 / 379 |
+| CPU, interactive session, ms | **167** / 1,087 / 1,180 | **156** / 1,021 / 1,099 | **80** / 485 / 523 | **213** / 1,266 / 1,286 |
+| Memory after 40 prompts, MB | **117** / 309 / 521 | **120** / 299 / 640 | **89** / 746 / 1,363 | **79** / 286 / 378 |
+| Ready to type, ms | **41** / 366 / 423 | **37** / 334 / 390 | **24** / 120 / 151 | **78** / 300 / 363 |
 
-GitHub's runners: Linux pinned to one CPU, macOS on Apple M1 (3 CPUs), Windows on 2 cores; memory on Windows is the working
-set. Node 22, the method and the raw data: [`bench/results/2026-10-21-stock-bun-0.9.7`](bench/results/2026-10-21-stock-bun-0.9.7)
-and [docs/BENCHMARKS.md](docs/BENCHMARKS.md#097-against-pi-as-released).
+GitHub's runners for Linux (pinned to one CPU) and Windows (2 cores; memory there is the working set); macOS on an Apple M5,
+not pinned. Node 22, the method and the raw data: [`bench/results/2026-10-23-stock-bun-1.0.0`](bench/results/2026-10-23-stock-bun-1.0.0).
 
 ### Against PiG
 
