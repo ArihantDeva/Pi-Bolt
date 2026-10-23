@@ -66,4 +66,21 @@ describe("theme picker", () => {
 		expect(accent(getThemeByName("nord"))).toBe(accent(loadThemeFromPath(customPath)));
 		expect(accent(getThemeByName("nord"))).not.toBe(accent(loadThemeFromPath(builtinPath)));
 	});
+
+	it("keeps the built-in theme when a custom file of its name declares another name", () => {
+		const builtinPath = fileURLToPath(new URL("../src/modes/interactive/theme/nord.json", import.meta.url));
+		const builtin = JSON.parse(readFileSync(builtinPath, "utf-8")) as ThemeFile;
+		const customTheme: ThemeFile = { ...builtin, name: "my-nord", colors: { ...builtin.colors, accent: "#123456" } };
+		const customPath = join(process.env.PI_CODING_AGENT_DIR!, "themes", "nord.json");
+		writeFileSync(customPath, JSON.stringify(customTheme, null, 2));
+
+		expect(getAvailableThemesWithPaths()).toEqual(
+			expect.arrayContaining([
+				{ name: "my-nord", path: customPath },
+				{ name: "nord", path: builtinPath },
+			]),
+		);
+		const accent = (theme: { fg(color: "accent", text: string): string } | undefined) => theme?.fg("accent", "x");
+		expect(accent(getThemeByName("nord"))).toBe(accent(loadThemeFromPath(builtinPath)));
+	});
 });

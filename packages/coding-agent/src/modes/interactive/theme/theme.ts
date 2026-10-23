@@ -502,10 +502,14 @@ function loadThemeJson(name: string): ThemeJson {
 		throw new Error(`Theme "${name}" does not have a source path for export`);
 	}
 	const customThemePath = path.join(getCustomThemesDir(), `${name}.json`);
-	if (fs.existsSync(customThemePath)) {
-		return parseThemeJsonContent(name, fs.readFileSync(customThemePath, "utf-8"));
+	const customTheme = fs.existsSync(customThemePath)
+		? parseThemeJsonContent(name, fs.readFileSync(customThemePath, "utf-8"))
+		: undefined;
+	// (A custom `nord.json` that names itself `my-nord` is listed as `my-nord`, and does not replace the built-in `nord`.)
+	if (customTheme && customTheme.name === name) {
+		return customTheme;
 	}
-	const builtinTheme = getBuiltinTheme(name);
+	const builtinTheme = getBuiltinTheme(name) ?? customTheme;
 	if (!builtinTheme) {
 		throw new Error(`Theme not found: ${name}`);
 	}
