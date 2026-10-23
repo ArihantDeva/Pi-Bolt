@@ -1039,7 +1039,7 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
 	auth: ProviderAuth;
 	/**
 	 * Static baseline models of every type (empty for purely dynamic providers).
-	 * Models without `type` are chat models.
+	 * Models without `type` are chat models. A getter is called when the models are first needed, once.
 	 */
 	models: readonly ProviderModel<TApi>[];
 	/**
@@ -1089,7 +1089,8 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		throw new Error(`Provider ${input.id}: at least one of "api", "images", or "classifiers" is required.`);
 	}
 
-	const baselineModels = input.models;
+	// `models` given as a getter (the built-in providers' catalogs) is read when the models are first asked for.
+	let baselineModels = Object.getOwnPropertyDescriptor(input, "models")?.get ? undefined : input.models;
 	let dynamicModels: readonly ProviderModel<TApi>[] = [];
 	const fetchModels = input.fetchModels;
 	// The models as they are merged for the dynamic models of the moment: asked for hundreds of times as Pi starts (for every
@@ -1100,6 +1101,7 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		| undefined;
 	const mergedModels = () => {
 		if (merged?.dynamic === dynamicModels) return merged;
+		baselineModels ??= input.models;
 		const all = [...baselineModels];
 		for (const model of dynamicModels) {
 			const index = all.findIndex((entry) => getModelType(entry) === getModelType(model) && entry.id === model.id);

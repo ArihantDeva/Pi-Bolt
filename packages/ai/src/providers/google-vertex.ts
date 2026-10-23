@@ -1,7 +1,8 @@
 import { googleVertexApi } from "../api/google-vertex.lazy.ts";
 import type { ApiKeyAuth } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { GOOGLE_VERTEX_MODELS } from "./google-vertex.models.ts";
+import { GOOGLE_VERTEX_MODEL_CATALOG } from "./google-vertex.catalog.generated.ts";
+import { withCatalogListing } from "./model-listing.ts";
 
 const VERTEX_ADC_PATH = "~/.config/gcloud/application_default_credentials.json";
 
@@ -90,11 +91,16 @@ const vertexAuth: ApiKeyAuth = {
 };
 
 export function googleVertexProvider(): Provider<"google-vertex"> {
-	return createProvider({
-		id: "google-vertex",
-		name: "Google Vertex AI",
-		auth: { apiKey: vertexAuth },
-		models: Object.values(GOOGLE_VERTEX_MODELS),
-		api: googleVertexApi(),
-	});
+	return withCatalogListing(
+		createProvider({
+			id: "google-vertex",
+			name: "Google Vertex AI",
+			auth: { apiKey: vertexAuth },
+			get models() {
+				return Object.values(GOOGLE_VERTEX_MODEL_CATALOG.chat());
+			},
+			api: googleVertexApi(),
+		}),
+		GOOGLE_VERTEX_MODEL_CATALOG,
+	);
 }

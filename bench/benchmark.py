@@ -33,8 +33,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness
 from harness import (
-    DONE, MACOS, MODEL_ARGS, PROMPT, WINDOWS, Build, Tty, done, fake_model, maxrss_mb, median, parse_builds, peak_footprint_mb,
-    pi_env, pi_home, pinned, warm_page_cache, workdir,
+    DONE, MACOS, MODEL_ARGS, PROMPT, WINDOWS, Build, PeakOwnSampler, Tty, done, fake_model, maxrss_mb, median, parse_builds,
+    peak_footprint_mb, pi_env, pi_home, pinned, warm_page_cache, workdir,
 )
 
 if WINDOWS:
@@ -61,11 +61,15 @@ def run_plain(build, args, env, cwd, cpus):
     t0 = time.perf_counter()
     p = subprocess.Popen(pinned([*build.argv, *args], cpus), env=env, cwd=cwd, stdin=subprocess.DEVNULL,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    own = PeakOwnSampler(p.pid)
     out = p.stdout.read()
     peak_fp = peak_footprint_mb(p.pid)
+    peak_own = own.stop()
     _, status, ru = os.wait4(p.pid, 0)
     r = {"ok": os.waitstatus_to_exitcode(status) == 0, "wall_ms": (time.perf_counter() - t0) * 1e3,
          "cpu_ms": (ru.ru_utime + ru.ru_stime) * 1e3, "peak_mb": maxrss_mb(ru)}
+    if peak_own is not None:
+        r["peak_own_mb"] = peak_own
     if peak_fp is not None:
         r["peak_fp_mb"] = peak_fp
         r.update(harness.last_exit_counters)
@@ -87,6 +91,7 @@ def headless(build, env, cwd, cpus):
 def interactive(build, env, cwd, cpus, prompts=5):
     t0 = time.perf_counter()
     tty = Tty(pinned([*build.argv, "--no-session", *MODEL_ARGS], cpus), env, cwd)
+    own = PeakOwnSampler(tty.pid)
     deadline = t0 + 120
     r = {"ok": False}
     if not tty.wait_for("fake-model", 0, deadline):
@@ -106,6 +111,8 @@ def interactive(build, env, cwd, cpus, prompts=5):
     else:
         r["turns_ms"] = turns
     status, ru = tty.quit()
+    if (peak_own := own.stop()) is not None:
+        r["peak_own_mb"] = peak_own
     r["ok"] = "turns_ms" in r and status == 0
     r["wall_ms"] = (time.perf_counter() - t0) * 1e3
     r["cpu_ms"] = (ru.ru_utime + ru.ru_stime) * 1e3
@@ -142,6 +149,11 @@ if MACOS:
     # (peak_mb, ru_maxrss, counts clean file pages and freed pages the kernel may take back; the footprint does not.)
     for columns in COLUMNS.values():
         columns.extend(["peak_fp_mb", "instr_m"])
+if not MACOS and not WINDOWS:
+    # (Linux: peak_mb, ru_maxrss, counts the clean file pages a build maps; peak_own_mb, its own memory, does not.)
+    for columns in COLUMNS.values():
+        if "peak_mb" in columns:
+            columns.append("peak_own_mb")
 if WINDOWS:
     # peak_mb is the peak working set; peak_private_mb the peak commit charge (private bytes); peak_private_ws_mb the peak
     # private working set. cpu_ms is the main process's, by cycles; job_cpu_ms adds what it started, in clock ticks. (The rise of

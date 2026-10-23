@@ -1,9 +1,17 @@
-import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
+import { Lexer, Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
 import markedCjkFriendly from "marked-cjk-friendly";
 import { renderLatex } from "../latex.ts";
 import { invalidateRenderedMarkdown, renderedMarkdownGeneration } from "../rendered-markdown.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
-import { type Component, markStableRender } from "../tui.ts";
+import {
+	type Component,
+	LiveLineArray,
+	type LiveLines,
+	markLiveRender,
+	markReportsChanges,
+	markStableRender,
+	reportRenderChange,
+} from "../tui.ts";
 import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
@@ -180,7 +188,8 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 	// Trim streamed partial closing fences so code blocks do not shrink/flicker
 	// when the final fence character arrives. See https://github.com/earendil-works/pi/issues/5825.
 	const marker = /^(`{3,}|~{3,})/.exec(token.raw)?.[1];
-	const lastLine = token.raw.split("\n").pop();
+	// (The text after the last line break: the whole of a code block's raw text is not split into lines for it.)
+	const lastLine = token.raw.slice(token.raw.lastIndexOf("\n") + 1);
 	if (!marker || !lastLine || lastLine.length >= marker.length || lastLine !== marker[0]?.repeat(lastLine.length)) {
 		return;
 	}
@@ -197,14 +206,122 @@ markdownParser.use({
 	extensions: [...LATEX_MARKDOWN_EXTENSIONS],
 });
 
+/** What inlineTokens() made of a text, and the lexer's state after it. */
+interface LexedInline {
+	tokens: Token[];
+	inLink: boolean;
+	inRawBlock: boolean;
+	linkEmitted: boolean;
+}
+
+/**
+ * The inline tokens of the texts lexed by the last lex and by this one so far, by the lexer's state before them (the bits
+ * of inlineFlags()). While a reply streams in, the blocks it ends with are lexed again for each chunk, and all their texts
+ * but the one that grew (a list's items, a table's cells, a block lexed again unchanged) are texts lexed the time before.
+ */
+let lexedInlines = new Map<number, Map<string, LexedInline>>();
+let nextLexedInlines = new Map<number, Map<string, LexedInline>>();
+
+function inlineFlags(state: Lexer["state"]): number {
+	return (state.inLink ? 1 : 0) | (state.inRawBlock ? 2 : 0) | (state.linkEmitted ? 4 : 0);
+}
+
+/**
+ * marked's lexer, taking the inline tokens of a text from the last lex when it lexed the same text from the same state.
+ * What inlineTokens() makes of a text depends on the text, on the lexer's state before it (inLink, inRawBlock, linkEmitted;
+ * it leaves them changed for the next text), and on the link definitions of the document, which only a text with a "["
+ * can refer to. A text with a "[" in a document with link definitions is lexed as marked lexes it, and so are the texts
+ * lexed inside a text (an emphasis's, a link's) and those given tokens to add to (a task's checkbox).
+ * The tokens are shared by the token lists they are in: nothing changes inline tokens after lexing (trimPartialClosingFences()
+ * changes code blocks only).
+ */
+class InlineMemoLexer extends Lexer {
+	private inlineDepth = 0;
+
+	override lex(src: string): ReturnType<Lexer["lex"]> {
+		try {
+			return super.lex(src);
+		} finally {
+			lexedInlines = nextLexedInlines;
+			nextLexedInlines = new Map();
+		}
+	}
+
+	override inlineTokens(src: string, tokens: Token[] = []): Token[] {
+		if (
+			this.inlineDepth > 0 ||
+			tokens.length > 0 ||
+			(src.includes("[") && Object.keys(this.tokens.links ?? {}).length > 0)
+		) {
+			this.inlineDepth++;
+			try {
+				return super.inlineTokens(src, tokens);
+			} finally {
+				this.inlineDepth--;
+			}
+		}
+		const state = this.state;
+		const flags = inlineFlags(state);
+		let next = nextLexedInlines.get(flags);
+		if (next === undefined) {
+			next = new Map();
+			nextLexedInlines.set(flags, next);
+		}
+		let lexed = next.get(src) ?? lexedInlines.get(flags)?.get(src);
+		if (lexed === undefined) {
+			this.inlineDepth++;
+			try {
+				super.inlineTokens(src, tokens);
+			} finally {
+				this.inlineDepth--;
+			}
+			lexed = {
+				tokens: tokens.slice(),
+				inLink: state.inLink,
+				inRawBlock: state.inRawBlock,
+				linkEmitted: state.linkEmitted,
+			};
+		} else {
+			for (const token of lexed.tokens) tokens.push(token);
+			state.inLink = lexed.inLink;
+			state.inRawBlock = lexed.inRawBlock;
+			state.linkEmitted = lexed.linkEmitted;
+		}
+		next.set(src, lexed);
+		return tokens;
+	}
+}
+
+let memos = true;
+
+/** marked's lexer() for Pi's Markdown: InlineMemoLexer, or marked's own lexer with the memos off. */
+function lexTokens(source: string): Token[] {
+	return memos && markdownCaching
+		? new InlineMemoLexer(markdownParser.defaults).lex(source)
+		: markdownParser.lexer(source);
+}
+
 interface LexedMarkdown {
 	source: string;
+	/** For tokens lexed from those of a shorter source: the text lexed for them, and where in `source` it starts. */
+	end?: { start: number; text: string };
 	tokens: Token[];
 	/** Whether lexing can go on from these tokens when text is added to the source. */
 	resumable: boolean;
 	/** Whether the tokens were lexed from those of a shorter source (lexAddedMarkdown()), not from all of this one. */
 	pieced: boolean;
 }
+
+/** A source that is one lexed before (`from`) with `added` after it (replaceTabs()). */
+interface ExtendedSource {
+	from: LexedMarkdown;
+	added: string;
+}
+
+/** What the last lexMarkdown() lexed or took, kept with the source (when it was kept). */
+let lastLexed: LexedMarkdown | undefined;
+/** The end of the source the last lexAddedMarkdown() lexed (LexedMarkdown.end). */
+let lastEnd: { start: number; text: string } | undefined;
 
 /** The sources lexed last, most recent last: a message that is streaming in is lexed again each time it grows. */
 const lexedMarkdown: LexedMarkdown[] = [];
@@ -277,7 +394,7 @@ function lastBlockSettlesOneBefore(tokens: readonly Token[], before: number, las
  * is settled too when lastBlockSettlesOneBefore() says so, and only the last block is lexed.
  * Undefined when that would not give what lexing all of it gives: link definitions change how links before them read.
  */
-function lexAddedMarkdown(previous: LexedMarkdown, source: string): Token[] | undefined {
+function lexAddedMarkdown(previous: LexedMarkdown, source: string, added?: string): Token[] | undefined {
 	let last = previous.tokens.length;
 	let lastBlock = -1;
 	for (let blocks = 0; blocks < 2; blocks++) {
@@ -301,8 +418,18 @@ function lexAddedMarkdown(previous: LexedMarkdown, source: string): Token[] | un
 	// The text of a token is a part of the string that was lexed, and keeps all of that string in memory. Lexing the end
 	// of `source` as a part of it would leave every block of a long message holding the whole message as it was when
 	// the block was lexed, megabytes for each answer: the end is lexed as a string of its own.
-	const added = markdownParser.lexer(ownString(source.slice(offset)));
-	if (hasLinkDefinitions(added)) {
+	// (`added`: what `source` adds to the previous source, when that is known. The end is then taken from the end of the
+	// previous source kept with it and the added text: `source` is not read, which for a source made of the last one and
+	// the added text would copy all of it.)
+	const kept = previous.end;
+	const end = ownString(
+		added !== undefined && kept !== undefined && offset >= kept.start
+			? kept.text.slice(offset - kept.start) + added
+			: source.slice(offset),
+	);
+	lastEnd = { start: offset, text: end };
+	const lexedEnd = lexTokens(end);
+	if (hasLinkDefinitions(lexedEnd)) {
 		return undefined;
 	}
 	const tokens = previous.tokens.slice(0, last);
@@ -314,13 +441,13 @@ function lexAddedMarkdown(previous: LexedMarkdown, source: string): Token[] | un
 	// indentation in one case and not in the other), so the tokens are compared in full. The last token is always the
 	// new one: trimPartialClosingFences() may change it.
 	let shared = last;
-	for (let i = 0; i < added.length; i++) {
-		let token = added[i]!;
+	for (let i = 0; i < lexedEnd.length; i++) {
+		let token = lexedEnd[i]!;
 		const before = previous.tokens[last + i];
 		if (
 			fastPaths &&
 			shared === last + i &&
-			i < added.length - 1 &&
+			i < lexedEnd.length - 1 &&
 			before !== undefined &&
 			before.raw === token.raw &&
 			sameTokens(before, token)
@@ -346,21 +473,27 @@ function lexAddedMarkdown(previous: LexedMarkdown, source: string): Token[] | un
  * pieces can split a block that a full lex keeps whole ("2. Install" after a paragraph line, or `$$` math across blank
  * lines), and the tokens kept for a source are what it renders to from then on.
  */
-function lexMarkdown(source: string, complete = false): Token[] {
+function lexMarkdown(source: string, complete = false, extended?: ExtendedSource): Token[] {
+	lastLexed = undefined;
+	lastEnd = undefined;
 	if (!markdownCaching) {
 		const tokens = markdownParser.lexer(source);
 		trimPartialClosingFences(tokens);
 		return tokens;
 	}
+	// (`extended`: `source` is a source lexed before with `added` after it, as replaceTabs() made it; that one needs no
+	// comparing with `source`, which would copy all of the text made of pieces.)
+	const known = extended !== undefined && lexedMarkdown.includes(extended.from) ? extended.from : undefined;
 	let previous = -1;
 	for (let i = lexedMarkdown.length - 1; i >= 0; i--) {
 		const entry = lexedMarkdown[i];
-		if (entry.source === source) {
+		if (entry.source.length === source.length && entry !== known && entry.source === source) {
 			lexedMarkdown.splice(i, 1);
 			if (complete && entry.pieced) {
 				break;
 			}
 			lexedMarkdown.push(entry);
+			lastLexed = entry;
 			return entry.tokens;
 		}
 		if (
@@ -368,17 +501,28 @@ function lexMarkdown(source: string, complete = false): Token[] {
 			entry.resumable &&
 			source.length > entry.source.length &&
 			(previous < 0 || entry.source.length > lexedMarkdown[previous].source.length) &&
-			source.startsWith(entry.source)
+			(entry === known || source.startsWith(entry.source))
 		) {
 			previous = i;
 		}
 	}
 
-	let tokens = previous >= 0 ? lexAddedMarkdown(lexedMarkdown[previous], source) : undefined;
+	let tokens =
+		previous >= 0
+			? lexAddedMarkdown(
+					lexedMarkdown[previous],
+					source,
+					lexedMarkdown[previous] === known ? extended?.added : undefined,
+				)
+			: undefined;
 	const pieced = tokens !== undefined;
 	let resumable = pieced;
 	if (!tokens) {
-		tokens = markdownParser.lexer(source);
+		tokens = lexTokens(source);
+		if (complete) {
+			// The text will not be lexed again: what its texts lexed to is not kept (up to ten times its size).
+			lexedInlines = new Map();
+		}
 		let length = 0;
 		for (const token of tokens) {
 			length += token.raw.length;
@@ -392,45 +536,70 @@ function lexMarkdown(source: string, complete = false): Token[] {
 		// The shorter source is not coming back.
 		lexedMarkdown.splice(previous, 1);
 	}
-	lexedMarkdown.push({ source, tokens, resumable, pieced });
+	lastLexed = { source, tokens, resumable, pieced, ...(pieced && lastEnd !== undefined ? { end: lastEnd } : {}) };
+	lexedMarkdown.push(lastLexed);
 	if (lexedMarkdown.length > LEXED_MARKDOWN_KEPT) {
 		lexedMarkdown.shift();
 	}
 	return tokens;
 }
 
-/** Texts whose tabs were replaced last, most recent last, and what they became. */
-const textsWithoutTabs: Array<{ text: string; replaced: string }> = [];
+/**
+ * Texts whose tabs were replaced last, most recent last, what they became, and how that was lexed (lexMarkdown(), when it
+ * was kept).
+ */
+const textsWithoutTabs: Array<{ text: string; replaced: string; lexed?: LexedMarkdown }> = [];
 const TEXTS_WITHOUT_TABS_KEPT = 4;
 
 /**
  * `text` with each tab replaced by three spaces. A message that is streaming in is rendered again each time it grows: what
- * was replaced in it the last time is kept, and only the text added since is gone through.
+ * was replaced in it the last time is kept, and only the text added since is gone through. When the text is that one with
+ * text added, the result is the last result with the added text after it: `extended` says so (for lexMarkdown()), and
+ * `remember` keeps what the result was lexed to.
  */
-function replaceTabs(text: string): string {
+function replaceTabs(text: string): {
+	text: string;
+	extended?: ExtendedSource;
+	remember: (lexed: LexedMarkdown | undefined) => void;
+} {
+	const none = () => {};
 	if (!text.includes("\t")) {
-		return text;
+		return { text, remember: none };
 	}
 	if (!markdownCaching) {
-		return text.replace(/\t/g, "   ");
+		return { text: text.replace(/\t/g, "   "), remember: none };
 	}
 	let replaced: string | undefined;
+	let extended: ExtendedSource | undefined;
 	for (let i = textsWithoutTabs.length - 1; i >= 0 && replaced === undefined; i--) {
 		const entry = textsWithoutTabs[i];
 		if (text.length >= entry.text.length && text.startsWith(entry.text)) {
-			replaced =
-				text.length === entry.text.length
-					? entry.replaced
-					: entry.replaced + text.slice(entry.text.length).replace(/\t/g, "   ");
+			if (text.length === entry.text.length) {
+				replaced = entry.replaced;
+			} else {
+				// (The added text as a string of its own: a part of `text` keeps all of `text` in memory, and the result keeps
+				// the part, as the next result keeps this one: every chunk of a reply would keep the whole reply as it was.)
+				const added = ownString(text.slice(entry.text.length)).replace(/\t/g, "   ");
+				replaced = entry.replaced + added;
+				// (What the last result was lexed to was kept with it: its source is that result.)
+				if (entry.lexed !== undefined) extended = { from: entry.lexed, added };
+			}
 			textsWithoutTabs.splice(i, 1);
 		}
 	}
 	replaced ??= text.replace(/\t/g, "   ");
-	textsWithoutTabs.push({ text, replaced });
+	const kept: { text: string; replaced: string; lexed?: LexedMarkdown } = { text, replaced };
+	textsWithoutTabs.push(kept);
 	if (textsWithoutTabs.length > TEXTS_WITHOUT_TABS_KEPT) {
 		textsWithoutTabs.shift();
 	}
-	return replaced;
+	return {
+		text: replaced,
+		...(extended === undefined ? {} : { extended }),
+		remember: (lexed) => {
+			kept.lexed = lexed;
+		},
+	};
 }
 
 /** Everything a block's lines depend on besides its token and the type of the token after it. */
@@ -503,6 +672,14 @@ export function setMarkdownCachingForTest(enabled: boolean): void {
  */
 export function setMarkdownFastPathsForTest(enabled: boolean): void {
 	fastPaths = enabled;
+}
+
+/**
+ * For tests: with this off, inline texts are lexed by marked's own lexer each time (InlineMemoLexer), and lines are
+ * wrapped each time they are rendered (Markdown.wrapLine()).
+ */
+export function setMarkdownMemosForTest(enabled: boolean): void {
+	memos = enabled;
 }
 
 /** For tests: lexes as render() does. */
@@ -596,6 +773,27 @@ export class Markdown implements Component {
 	// about ten times the size of its source, and every message of a long transcript keeps a Markdown component. The
 	// tokens survive a burst of re-renders, such as a theme preview, and are collected afterwards.
 	private cachedTokens?: WeakRef<{ source: string; tokens: Token[] }>;
+	/**
+	 * Lines wrapped by the last render that rendered a block, by width (wrapLine()), and those wrapped by this render so
+	 * far. While a reply streams in, the block it ends with is rendered again for each chunk, and all its lines but the
+	 * last few are the lines it had the time before.
+	 */
+	private wraps = new Map<number, Map<string, readonly string[]>>();
+	private nextWraps = new Map<number, Map<string, readonly string[]>>();
+	/**
+	 * What renderLive() holds: the lines, the text and width they are for, the tokens and settings their blocks were
+	 * rendered from and where each block's lines end (not counting the padding), and whether the lines are the empty line
+	 * render() returns for an empty result.
+	 */
+	private live: {
+		array: LiveLineArray;
+		text?: string;
+		width?: number;
+		tokens?: Token[];
+		settings?: RenderSettings;
+		ends: number[];
+		substituted: boolean;
+	} = { array: new LiveLineArray(), ends: [], substituted: false };
 
 	constructor(
 		text: string,
@@ -618,6 +816,7 @@ export class Markdown implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		reportRenderChange(this);
 	}
 
 	invalidate(): void {
@@ -626,6 +825,7 @@ export class Markdown implements Component {
 		this.cachedLines = undefined;
 		// What the theme's functions give may have changed: nothing rendered with them is good any more.
 		invalidateRenderedMarkdown();
+		reportRenderChange(this);
 	}
 
 	/** Everything the lines of a block rendered at `width` depend on besides its token and the next token's type. */
@@ -647,6 +847,24 @@ export class Markdown implements Component {
 			renderLatex: this.options.renderLatex,
 			capabilities: getCapabilities(),
 		};
+	}
+
+	/**
+	 * wrapTextWithAnsi(line, width), from the lines wrapped by the render before this one when `line` is one of them
+	 * (wraps). The result is shared: not to be modified.
+	 */
+	private wrapLine(line: string, width: number): readonly string[] {
+		if (!markdownCaching || !memos) {
+			return wrapTextWithAnsi(line, width);
+		}
+		let next = this.nextWraps.get(width);
+		if (next === undefined) {
+			next = new Map();
+			this.nextWraps.set(width, next);
+		}
+		const wrapped = next.get(line) ?? this.wraps.get(width)?.get(line) ?? wrapTextWithAnsi(line, width);
+		next.set(line, wrapped);
+		return wrapped;
 	}
 
 	/**
@@ -689,7 +907,7 @@ export class Markdown implements Component {
 			if (isImageLine(line)) {
 				add(line);
 			} else {
-				for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
+				for (const wrappedLine of this.wrapLine(line, contentWidth)) {
 					add(wrappedLine);
 				}
 			}
@@ -739,18 +957,68 @@ export class Markdown implements Component {
 		return lines;
 	}
 
-	render(width: number): string[] {
-		// Check cache
-		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
-			return this.cachedLines;
-		}
-
+	/** The tokens of the text at `width` (after the transform and tab replacement), or undefined when it has no text. */
+	private tokensFor(width: number): { tokens: Token[]; contentWidth: number } | undefined {
 		// Calculate available width for content (subtract horizontal padding)
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const text = this.options.transform?.(this.text, contentWidth) ?? this.text;
 
 		// Don't render anything if there's no actual text
 		if (!text || !/\S/.test(text)) {
+			return undefined;
+		}
+
+		// Replace tabs with 3 spaces for consistent rendering
+		const normalized = replaceTabs(text);
+		const normalizedText = normalized.text;
+
+		// Parse markdown to HTML-like tokens
+		const cached = this.cachedTokens?.deref();
+		let tokens =
+			cached?.source.length === normalizedText.length && cached.source === normalizedText
+				? cached.tokens
+				: undefined;
+		if (!tokens) {
+			tokens = lexMarkdown(normalizedText, this.options.complete, normalized.extended);
+			normalized.remember(lastLexed?.tokens === tokens ? lastLexed : undefined);
+			this.cachedTokens = new WeakRef({ source: normalizedText, tokens });
+		}
+		return { tokens, contentWidth };
+	}
+
+	/** The empty lines above and below the content. */
+	private paddingLines(width: number): string[] {
+		const bgFn = this.defaultTextStyle?.bgColor;
+		const emptyLine = " ".repeat(width);
+		const emptyLines: string[] = [];
+		for (let i = 0; i < this.paddingY; i++) {
+			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
+			emptyLines.push(line);
+		}
+		// (The lines of the blocks are flat already: renderBlock().)
+		flattenLines(emptyLines);
+		return emptyLines;
+	}
+
+	/** Keeps the lines wrapped by this render, if it rendered any blocks (wrapLine()). */
+	private keepWraps(): void {
+		if (this.nextWraps.size > 0) {
+			this.wraps = this.nextWraps;
+			this.nextWraps = new Map();
+		}
+	}
+
+	render(width: number): string[] {
+		// Check cache
+		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
+			return this.cachedLines;
+		}
+		// (Rendered last as live lines, for the same text and width: what that render would have kept, with nothing in its
+		// place for an empty result.)
+		const rendered = this.cachedText === this.text && this.cachedWidth === width;
+
+		const prepared = this.tokensFor(width);
+		if (!prepared) {
 			const result: string[] = [];
 			// Update cache
 			this.cachedText = this.text;
@@ -758,21 +1026,10 @@ export class Markdown implements Component {
 			this.cachedLines = result;
 			return result;
 		}
-
-		// Replace tabs with 3 spaces for consistent rendering
-		const normalizedText = replaceTabs(text);
-
-		// Parse markdown to HTML-like tokens
-		const cached = this.cachedTokens?.deref();
-		let tokens = cached?.source === normalizedText ? cached.tokens : undefined;
-		if (!tokens) {
-			tokens = lexMarkdown(normalizedText, this.options.complete);
-			this.cachedTokens = new WeakRef({ source: normalizedText, tokens });
-		}
+		const { tokens, contentWidth } = prepared;
 
 		// Convert tokens to styled terminal output, wrapped, with margins and background: block by block, each from what it
 		// was rendered to the last time when nothing it depends on has changed.
-		const bgFn = this.defaultTextStyle?.bgColor;
 		const settings = this.renderSettings(width);
 		let contentLines: string[];
 		if (markdownCaching) {
@@ -786,25 +1043,106 @@ export class Markdown implements Component {
 			}
 		}
 
-		// Add top/bottom padding (empty lines)
-		const emptyLine = " ".repeat(width);
-		const emptyLines: string[] = [];
-		for (let i = 0; i < this.paddingY; i++) {
-			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
-			emptyLines.push(line);
-		}
-
 		// Combine top padding, content, and bottom padding
-		// (The lines of the blocks are flat already: renderBlock().)
-		flattenLines(emptyLines);
+		const emptyLines = this.paddingLines(width);
 		const result = emptyLines.concat(contentLines, emptyLines);
+		this.keepWraps();
 
 		// Update cache
 		this.cachedText = this.text;
 		this.cachedWidth = width;
 		this.cachedLines = result;
 
-		return result.length > 0 ? result : [""];
+		if (result.length > 0 || rendered) return result;
+		// (The next render returns none: a change, for containers that render this again only when told.)
+		reportRenderChange(this);
+		return [""];
+	}
+
+	/**
+	 * render()'s lines as LiveLines (renderLiveLines()): changed in place from the first line of the first block rendered
+	 * again. While a reply streams in, its text is lexed from the tokens of the text before (lexMarkdown()), and the lines
+	 * of the blocks the two have in common are the lines of this component's last render: only the blocks lexed again are
+	 * rendered and added, so a chunk does not cost time in proportion to the length of the reply. What it holds after each
+	 * call is what render() returns for the call.
+	 */
+	renderLive(width: number): LiveLines {
+		const live = this.live;
+		const lines = live.array;
+		const rendered = this.cachedText === this.text && this.cachedWidth === width;
+		if (rendered && live.text === this.text && live.width === width) {
+			// What render() returns when nothing changed: the result kept, not the line in place of an empty one.
+			if (live.substituted) {
+				lines.edit(0);
+				live.substituted = false;
+			}
+			return lines;
+		}
+
+		const prepared = this.tokensFor(width);
+		live.text = this.text;
+		live.width = width;
+		this.cachedText = this.text;
+		this.cachedWidth = width;
+		this.cachedLines = undefined;
+		if (!prepared) {
+			if (lines.lines.length > 0) lines.edit(0);
+			live.tokens = undefined;
+			live.settings = undefined;
+			live.substituted = false;
+			return lines;
+		}
+		const { tokens, contentWidth } = prepared;
+		const settings = this.renderSettings(width);
+		const before = live.tokens;
+		const sameContent =
+			markdownCaching &&
+			before !== undefined &&
+			!live.substituted &&
+			live.settings !== undefined &&
+			sameSettings(live.settings, settings);
+		if (!(sameContent && before === tokens)) {
+			let reused = 0;
+			const from = sameContent ? lexedFrom.get(tokens) : undefined;
+			if (from && before !== undefined && from.tokens.deref() === before) {
+				reused = from.shared;
+				// (The lines of a block depend on the type of the block after it.)
+				if (reused > 0 && tokens[reused]?.type !== before[reused]?.type) {
+					reused--;
+				}
+			}
+			const padding = this.paddingLines(width);
+			const ends = live.ends;
+			if (reused > 0) {
+				lines.edit(padding.length + ends[reused - 1]!);
+				ends.length = reused;
+			} else {
+				lines.edit(0);
+				ends.length = 0;
+				for (const line of padding) lines.lines.push(line);
+			}
+			let contentLength = reused > 0 ? ends[reused - 1]! : 0;
+			for (let i = reused; i < tokens.length; i++) {
+				const blockLines = this.renderBlock(tokens[i], tokens[i + 1]?.type, settings, contentWidth);
+				for (const line of blockLines) lines.lines.push(line);
+				contentLength += blockLines.length;
+				ends.push(contentLength);
+			}
+			for (const line of padding) lines.lines.push(line);
+			this.keepWraps();
+		}
+		live.tokens = tokens;
+		live.settings = settings;
+		live.substituted = false;
+		if (lines.lines.length === 0 && !rendered) {
+			// (As render(): an empty result is returned as one empty line, and kept as none.)
+			lines.edit(0);
+			lines.lines.push("");
+			live.substituted = true;
+			// (The next render returns none: a change, for containers that render this again only when told.)
+			reportRenderChange(this);
+		}
+		return lines;
 	}
 
 	/**
@@ -1037,7 +1375,7 @@ export class Markdown implements Component {
 
 				for (const quoteLine of renderedQuoteLines) {
 					const styledLine = applyQuoteStyle(quoteLine);
-					const wrappedLines = wrapTextWithAnsi(styledLine, quoteContentWidth);
+					const wrappedLines = this.wrapLine(styledLine, quoteContentWidth);
 					for (const wrappedLine of wrappedLines) {
 						lines.push(this.theme.quoteBorder("│ ") + wrappedLine);
 					}
@@ -1231,7 +1569,7 @@ export class Markdown implements Component {
 
 				const itemLines = this.renderToken(itemToken, itemWidth, undefined, styleContext);
 				for (const line of itemLines) {
-					for (const wrappedLine of wrapTextWithAnsi(line, itemWidth)) {
+					for (const wrappedLine of this.wrapLine(line, itemWidth)) {
 						const linePrefix = renderedAnyLine ? continuationPrefix : firstPrefix;
 						lines.push(linePrefix + wrappedLine);
 						renderedAnyLine = true;
@@ -1461,3 +1799,7 @@ export class Markdown implements Component {
 }
 
 markStableRender(Markdown);
+markReportsChanges(Markdown);
+markLiveRender(Markdown.prototype.render, function (this: Component, width: number) {
+	return (this as Markdown).renderLive(width);
+});

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { hydrateModelCatalog } from "../scripts/hydrate-model-catalog.ts";
+import { catalogModuleData } from "../scripts/model-catalog-modules.ts";
 import {
 	assertExactModelIds,
 	createModelDataManifest,
@@ -10,6 +11,7 @@ import {
 	MODEL_DATA_SCHEMA_VERSION,
 	type ModelDataStructure,
 	readModelDataStructure,
+	validateGeneratedModelData,
 	validateModelDataDirectory,
 } from "../scripts/model-data.ts";
 
@@ -33,11 +35,15 @@ function createFixture(): {
 	mkdirSync(dataDir, { recursive: true });
 	writeFileSync(
 		join(packageRoot, "src", "models.generated.ts"),
-		'import { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\n',
+		'import type { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\n',
 	);
 	writeFileSync(
 		join(providersDir, "test-provider.models.ts"),
-		'import values from "./data/test-provider.json" with { type: "json" };\n',
+		'import type values from "./data/test-provider.json";\n',
+	);
+	writeFileSync(
+		join(providersDir, "test-provider.catalog.generated.ts"),
+		'import type values from "./data/test-provider.json";\n',
 	);
 
 	const structure: ModelDataStructure = {
@@ -102,6 +108,25 @@ describe("published model catalog hydration", () => {
 		hydrateModelCatalog(packageRoot, catalogPath);
 		expect(readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8")).toBe(manifest);
 		expect(readFileSync(join(dataDir, "test-provider.json"), "utf8")).toBe(provider);
+		// The catalog module, which repeats the data, is written with it.
+		const catalogModule = readFileSync(
+			join(packageRoot, "src", "providers", "test-provider.catalog.generated.ts"),
+			"utf8",
+		);
+		expect(catalogModuleData(catalogModule)).toBe(provider.replace(/\n$/, ""));
+		expect(() => validateGeneratedModelData(packageRoot)).not.toThrow();
+	});
+
+	it("rejects a catalog module that does not hold its data file", () => {
+		const { packageRoot, values } = createFixture();
+		const catalogPath = join(packageRoot, "catalog.json");
+		writeFileSync(catalogPath, JSON.stringify({ "test-provider": [chatModel(values)] }));
+		hydrateModelCatalog(packageRoot, catalogPath);
+		const modulePath = join(packageRoot, "src", "providers", "test-provider.catalog.generated.ts");
+		writeFileSync(modulePath, readFileSync(modulePath, "utf8").replace('"name":"Model A"', '"name":"Model Z"'));
+		expect(() => validateGeneratedModelData(packageRoot)).toThrow("test-provider.catalog.generated.ts does not hold");
+		rmSync(modulePath);
+		expect(() => validateGeneratedModelData(packageRoot)).toThrow("missing: test-provider.catalog.generated.ts");
 	});
 
 	it("groups models by API and keys them by type and id", () => {
@@ -348,7 +373,7 @@ describe("generated model data validation", () => {
 		const { packageRoot } = createFixture();
 		writeFileSync(
 			join(packageRoot, "src", "models.generated.ts"),
-			'import { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\nimport { MISSING_CLASSIFIER_MODELS, MISSING_IMAGE_MODELS, MISSING_MODELS } from "./providers/missing.models.ts";\n',
+			'import type { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\nimport type { MISSING_CLASSIFIER_MODELS, MISSING_IMAGE_MODELS, MISSING_MODELS } from "./providers/missing.models.ts";\n',
 		);
 		expect(() => readModelDataStructure(packageRoot)).toThrow("aggregator and provider shards do not match");
 	});

@@ -7,6 +7,7 @@ import {
 	type Provider,
 	type RefreshModelsContext,
 } from "@earendil-works/pi-ai";
+import { getModelListing, setModelListing } from "@earendil-works/pi-ai/providers/model-listing";
 import { VERSION } from "../config.ts";
 import { fetchWithRetry } from "../utils/management-http.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -147,7 +148,7 @@ export function withRemoteCatalog(
 	const mergeChat = memoizedMerge<ReturnType<Provider["getModels"]>[number]>();
 	const mergeAll = memoizedMerge<AnyModel>();
 
-	return {
+	const wrapped: Provider = {
 		...provider,
 		getModels: () => mergeChat(provider.getModels(), dynamicChatModels()),
 		getAllModels: () => mergeAll(provider.getAllModels?.() ?? provider.getModels(), dynamicModels),
@@ -217,6 +218,8 @@ export function withRemoteCatalog(
 			});
 		},
 	};
+	// Without newer chat models it lists the provider's own.
+	return setModelListing(wrapped, () => (dynamicChatModels().length === 0 ? getModelListing(provider) : undefined));
 }
 
 /**
@@ -237,7 +240,7 @@ export function withPersonalizedCatalog(
 	const builtinModels = (): readonly AnyModel[] => provider.getAllModels?.() ?? provider.getModels();
 	const getAllModels = (): readonly AnyModel[] => (personalModels.length > 0 ? personalModels : builtinModels());
 
-	return {
+	const wrapped: Provider = {
 		...provider,
 		getModels: () => getAllModels().filter((model) => isModelType(model, "chat")),
 		getAllModels,
@@ -272,4 +275,6 @@ export function withPersonalizedCatalog(
 			});
 		},
 	};
+	// Until a personalized catalog replaces them, it lists the provider's own models.
+	return setModelListing(wrapped, () => (personalModels.length === 0 ? getModelListing(provider) : undefined));
 }

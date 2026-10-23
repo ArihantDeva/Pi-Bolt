@@ -15249,3 +15249,321 @@ index e259d9fdc4..49b62b2fe6 100644
 -- 
 2.54.0 (Apple Git-157)
 
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kushal khemka <kushalkhemka@Kushals-MacBook-Air.local>
+Date: Fri, 23 Oct 2026 01:04:09 +0530
+Subject: [PATCH] Heap: bytes allocated since the last collection, and whether
+ a collection is unfinished, for the embedder
+
+Bun's idle GC timer uses them to skip a collection that would find nothing new and to stop ticking while
+the program waits, without leaving a collection that needs the mutator at a safepoint unfinished.
+---
+ Source/JavaScriptCore/heap/Heap.h | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/Source/JavaScriptCore/heap/Heap.h b/Source/JavaScriptCore/heap/Heap.h
+index 9f04701d7e..f623142400 100644
+--- a/Source/JavaScriptCore/heap/Heap.h
++++ b/Source/JavaScriptCore/heap/Heap.h
+@@ -395,6 +395,17 @@ public:
+     size_t sizeAfterLastCollection() const { return m_sizeAfterLastCollect; }
+     // Everything the mutator has allocated (cells and reported extra memory), the current cycle included. Mutator thread only.
+     uint64_t totalBytesAllocated() const { return m_bytesAllocatedInPastCycles + m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
++    // What the mutator has allocated since the last collection (eden or full) ended: 0 when a collection now would find
++    // nothing new. Counted per free list used up and per extra-memory report, so a few cells allocated from a free list
++    // handed out after the collection do not count yet. Mutator thread only.
++    size_t bytesAllocatedSinceLastCollection() const { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
++    // Whether a collection has been requested and has not finished: queued, running, or waiting for the mutator to reach a
++    // safepoint (one that a parked mutator holding heap access does not reach until something wakes it).
++    bool hasUnfinishedCollection() const
++    {
++        Locker locker { *m_threadLock };
++        return m_lastServedTicket < m_lastGrantedTicket;
++    }
+     // How much the mutator may allocate before the heap collects by itself: what updateAllocationLimits() decided after the last
+     // collection. For an embedder that wants to say "this program is allocating a lot" in the heap's own terms and not in bytes
+     // per second of its own choosing. Mutator thread only.
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <contactus@opensec.in>
+Date: Fri, 23 Oct 2026 01:58:07 +0530
+Subject: [PATCH] AOT image: lay out the code of the functions a recorded run
+ ran first, in the order it ran them
+
+The image's code was in source order (module, then position in the text), so the
+functions a session runs were spread over all of the 35-48 MB of code. A page of code
+that is touched is resident, and on Linux the kernel also maps the pages around a fault
+that are in the page cache (fault-around, 64 KB): code used and code not used side by
+side both count in the process's RSS. Measured on GitHub's runners (Pi-Bolt 0.9.9, TUI
+start + 5 tool turns + a 20,000-character answer, pagemap): image code resident 25.9 MB
+(x64) / 20.4 MB (arm64), of which touched 11.7 / 8.6 MB.
+
+Now the modules' own code comes first, then the functions the order file's recorded run
+ran (LinkClass::Hot, bytecode.order's F lines), in its order, then the rest in source
+order as before. Placement only: the same code, at other addresses (the image's records
+and key table follow the code, as before).
+
+Measured (macOS M5, 15 interleaved runs, Pi 1.4.0 built from the same tree on the same
+runtime without and with this): TUI ready RSS 60.7 -> 55.2 MB, minor faults 4,712 ->
+4,363; headless peak RSS 70.4 -> 64.9 MB, minor faults 4,921 -> 4,565; instructions
+-1% (221.0 -> 219.0M ready, 299.7 -> 297.6M headless).
+---
+ Source/JavaScriptCore/runtime/CachedTypes.cpp | 26 +++++++++++++++++--
+ 1 file changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/Source/JavaScriptCore/runtime/CachedTypes.cpp b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+index 157c7a8691..ffaa0b0516 100644
+--- a/Source/JavaScriptCore/runtime/CachedTypes.cpp
++++ b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+@@ -1192,6 +1192,16 @@ public:
+         m_link->matchedHotRanks.ensureSize(hotFunctions.size());
+     }
+     unsigned namedHotFunctions() const { return m_link->namedHotFunctions; }
++    // Where the order file put a function that the recorded run ran (LinkClass::Hot): its rank there. Nothing for the others.
++    std::optional<uint64_t> hotRankOf(const UnlinkedFunctionExecutable& executable) const
++    {
++        if (!m_link)
++            return std::nullopt;
++        auto it = m_link->placements.find(&executable);
++        if (it == m_link->placements.end() || it->value.linkClass != LinkClass::Hot)
++            return std::nullopt;
++        return it->value.rank;
++    }
+     unsigned placedHotFunctions() const { return m_link->placedHotFunctions; }
+     unsigned functionsWithoutName() const { return m_link->functionsWithoutName; }
+     // The names are the embedder's, and only for as long as its add* call lasts.
+@@ -6324,6 +6334,9 @@ struct BytecodeLinkEncoder::Impl {
+             UnlinkedFunctionExecutable* executable { nullptr };
+         };
+         Vector<Job> jobs;
++        // The top bits of a function's rank (below): how soon its code comes. A module's own code has none.
++        constexpr uint64_t classOfHotCode = 1ull << 60;
++        constexpr uint64_t classOfColdCode = 2ull << 60;
+         for (unsigned index = 0; index < modules.size(); ++index) {
+             // The code of the module itself, which comes before its functions' as it runs before them.
+             if (auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get()))
+@@ -6376,8 +6389,17 @@ struct BytecodeLinkEncoder::Impl {
+                 key.kind = static_cast<uint32_t>(function.key.kind) << 1 | isConstruct;
+                 if (!keys.insert({ key.module, key.start, key.kind }).second)
+                     continue;
+-                // In the order the modules are loaded in, and in a module in the order of the text.
+-                jobs.append({ key, static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module, function.executable });
++                // The code is laid out by rank. First the modules' own code (above), then the functions the order file's run ran, in the
++                // order it ran them, then the rest: in the order the modules are loaded in, and in a module in the order of the text.
++                // What a run uses is then on as few pages as can be: a page of code that is touched is resident, and on Linux the
++                // kernel maps the pages around it too (fault-around), so code used and code not used side by side costs the
++                // process both.
++                uint64_t rank = static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2;
++                if (auto hotRank = encoder.hotRankOf(*function.executable))
++                    rank = classOfHotCode | *hotRank << 2 | static_cast<uint64_t>(isConstruct) | 2;
++                else
++                    rank |= classOfColdCode;
++                jobs.append({ key, rank, codeBlock, function.module, function.executable });
+             }
+         }
+ 
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <contactus@opensec.in>
+Date: Fri, 23 Oct 2026 02:25:51 +0530
+Subject: [PATCH] BytecodeLinkEncoder: name the functions the order file's run
+ ran, for the static heap's first blocks
+
+StaticHeap::build() makes the executables of the functions a recorded run touched
+(BUN_STATIC_HEAP_FUNCTIONS_FIRST, heap-functions.txt) side by side at the start of the
+cells. Those names are of where each function starts in its module's text, which any
+edit of the program shifts: Pi 1.4.0's list (trained on 53c041af6) matches 249 of its
+11,349 functions in a build of 0.9.9's tree on macOS and 1,412 on Linux, so the blocks
+were nearly empty. The order file's F lines are named by the functions' text and still
+match: Result::namesOfFunctionsRun gives the heap's names of the hot functions of the
+link (in the order file's order), for the embedder to add to the second tier.
+
+Measured (macOS M5, 15 interleaved runs, with the image's hot-first code on both sides):
+function cells in the first blocks 1,495 -> ~9,250; TUI ready RSS 55.19 -> 54.89 MB,
+minor faults 4,366 -> 4,348; headless unchanged (64.94 vs 65.00 MB).
+---
+ Source/JavaScriptCore/runtime/CachedTypes.cpp | 14 ++++++++++++++
+ Source/JavaScriptCore/runtime/CachedTypes.h   |  3 +++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/Source/JavaScriptCore/runtime/CachedTypes.cpp b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+index ffaa0b0516..a54c005e47 100644
+--- a/Source/JavaScriptCore/runtime/CachedTypes.cpp
++++ b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+@@ -7270,6 +7270,20 @@ auto BytecodeLinkEncoder::finish() -> Result
+     result.namedHotFunctions = encoder.namedHotFunctions();
+     result.placedHotFunctions = encoder.placedHotFunctions();
+     result.functionsWithoutName = encoder.functionsWithoutName();
++#if ENABLE(FTL_JIT)
++    {
++        // (A function's executable is named by its module's place among the modules, entryOffsetsOfModules below, plus one, and
++        // where its text starts: StaticHeap's nameOfFunction().)
++        Vector<std::pair<uint64_t, uint64_t>> run;
++        for (auto& function : m_impl->functionsToCompile) {
++            if (auto rank = encoder.hotRankOf(*function.executable))
++                run.append({ *rank, (static_cast<uint64_t>(function.module) + 1) << 32 | function.executable->unlinkedFunctionStart() });
++        }
++        std::ranges::sort(run);
++        for (auto& [rank, name] : run)
++            result.namesOfFunctionsRun.append(name);
++    }
++#endif
+     for (unsigned index = 0; index < m_impl->modules.size(); ++index) {
+         auto& module = m_impl->modules[index];
+         if (!module.isOfEngine)
+diff --git a/Source/JavaScriptCore/runtime/CachedTypes.h b/Source/JavaScriptCore/runtime/CachedTypes.h
+index e25ef778b7..1a26e37bfb 100644
+--- a/Source/JavaScriptCore/runtime/CachedTypes.h
++++ b/Source/JavaScriptCore/runtime/CachedTypes.h
+@@ -497,6 +497,9 @@ public:
+         unsigned namedHotFunctions { 0 }; // of Hints::hotFunctions, how many name a function of this link
+         unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT
+         unsigned functionsWithoutName { 0 }; // functions with code that the names of their module, which has some, do not cover
++        // Hints::compileAheadOfTime: the functions the order file's recorded run ran (its hot functions that are functions of this
++        // link), in its order, by the names StaticHeap::build() gives their executables (StaticHeap::FunctionCell::function).
++        Vector<uint64_t> namesOfFunctionsRun;
+         std::array<uint32_t, numberOfRegions> regionEnds { };
+         // Hints::compileAheadOfTime: the code of every function of the link, from the static compiler (AOT::Image). It goes on a page
+         // boundary of the executable's file, and to registerAOTImage when the executable runs.
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <contactus@opensec.in>
+Date: Fri, 23 Oct 2026 08:11:54 +0530
+Subject: [PATCH] BytecodeLinkEncoder: also name the functions the modules' own
+ code makes, for the static heap's first blocks
+
+A module's top-level code makes a function object of every function it declares or
+assigns (Pi's bundle: some 6,000 at every start), and that reads the function's
+executables whether or not it is ever called. After the functions the order file's run
+ran, Result::namesOfFunctionsRun now lists those of the program's modules (not the
+engine's own), from their op_new_func* instructions.
+
+Measured (macOS M5, 15 interleaved runs, against the commit before): --version RSS
+24.92 -> 24.55 MB (minflt 1,967 -> 1,943), TUI ready 54.92 -> 54.83 MB, headless 64.89 ->
+64.66 MB; instructions unchanged.
+---
+ Source/JavaScriptCore/runtime/CachedTypes.cpp | 41 +++++++++++++++++++
+ Source/JavaScriptCore/runtime/CachedTypes.h   |  3 +-
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/Source/JavaScriptCore/runtime/CachedTypes.cpp b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+index a54c005e47..467d8f6c19 100644
+--- a/Source/JavaScriptCore/runtime/CachedTypes.cpp
++++ b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+@@ -7282,6 +7282,47 @@ auto BytecodeLinkEncoder::finish() -> Result
+         std::ranges::sort(run);
+         for (auto& [rank, name] : run)
+             result.namesOfFunctionsRun.append(name);
++        // Then the functions that a module's own code makes (its declarations, and what its statements assign): whenever the
++        // module is evaluated, which nearly all of a program's are at its start, it makes a function object of each, which reads its
++        // executables, whether or not the function is ever called.
++        for (unsigned index = 0; index < m_impl->modules.size(); ++index) {
++            auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(m_impl->modules[index].root.get());
++            if (!codeBlock || m_impl->modules[index].isOfEngine)
++                continue;
++            for (const auto& instruction : codeBlock->instructions()) {
++                UnlinkedFunctionExecutable* made = nullptr;
++                switch (instruction->opcodeID()) {
++                case op_new_func:
++                    made = codeBlock->functionDecl(instruction->as<OpNewFunc>().m_functionDecl);
++                    break;
++                case op_new_func_exp:
++                    made = codeBlock->functionExpr(instruction->as<OpNewFuncExp>().m_functionDecl);
++                    break;
++                case op_new_generator_func:
++                    made = codeBlock->functionDecl(instruction->as<OpNewGeneratorFunc>().m_functionDecl);
++                    break;
++                case op_new_generator_func_exp:
++                    made = codeBlock->functionExpr(instruction->as<OpNewGeneratorFuncExp>().m_functionDecl);
++                    break;
++                case op_new_async_func:
++                    made = codeBlock->functionDecl(instruction->as<OpNewAsyncFunc>().m_functionDecl);
++                    break;
++                case op_new_async_func_exp:
++                    made = codeBlock->functionExpr(instruction->as<OpNewAsyncFuncExp>().m_functionDecl);
++                    break;
++                case op_new_async_generator_func:
++                    made = codeBlock->functionDecl(instruction->as<OpNewAsyncGeneratorFunc>().m_functionDecl);
++                    break;
++                case op_new_async_generator_func_exp:
++                    made = codeBlock->functionExpr(instruction->as<OpNewAsyncGeneratorFuncExp>().m_functionDecl);
++                    break;
++                default:
++                    break;
++                }
++                if (made)
++                    result.namesOfFunctionsRun.append((static_cast<uint64_t>(index) + 1) << 32 | made->unlinkedFunctionStart());
++            }
++        }
+     }
+ #endif
+     for (unsigned index = 0; index < m_impl->modules.size(); ++index) {
+diff --git a/Source/JavaScriptCore/runtime/CachedTypes.h b/Source/JavaScriptCore/runtime/CachedTypes.h
+index 1a26e37bfb..dbc77c1da6 100644
+--- a/Source/JavaScriptCore/runtime/CachedTypes.h
++++ b/Source/JavaScriptCore/runtime/CachedTypes.h
+@@ -498,7 +498,8 @@ public:
+         unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT
+         unsigned functionsWithoutName { 0 }; // functions with code that the names of their module, which has some, do not cover
+         // Hints::compileAheadOfTime: the functions the order file's recorded run ran (its hot functions that are functions of this
+-        // link), in its order, by the names StaticHeap::build() gives their executables (StaticHeap::FunctionCell::function).
++        // link), in its order, then those that the modules' own code makes, by the names StaticHeap::build() gives their
++        // executables (StaticHeap::FunctionCell::function).
+         Vector<uint64_t> namesOfFunctionsRun;
+         std::array<uint32_t, numberOfRegions> regionEnds { };
+         // Hints::compileAheadOfTime: the code of every function of the link, from the static compiler (AOT::Image). It goes on a page
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <contactus@opensec.in>
+Date: Fri, 23 Oct 2026 19:07:03 +0530
+Subject: [PATCH] AOT image: functions with the same place in the order file
+ are laid out in text order
+
+Functions with the same text share a name, and so a place in the order
+file. Their code was laid out in the order the compile jobs were found in,
+which follows addresses: two builds of the same tree laid the code out
+differently, which the Windows release's check (the prebuilt heap the same
+from two builds, the runtime loaded at two addresses) caught. The order
+file's place now goes above the text order (module, start, construct), so
+every function's rank is unique and the layout is the same from build to
+build.
+---
+ Source/JavaScriptCore/runtime/CachedTypes.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/Source/JavaScriptCore/runtime/CachedTypes.cpp b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+index 467d8f6c19..61ebc19424 100644
+--- a/Source/JavaScriptCore/runtime/CachedTypes.cpp
++++ b/Source/JavaScriptCore/runtime/CachedTypes.cpp
+@@ -6395,8 +6395,14 @@ struct BytecodeLinkEncoder::Impl {
+                 // kernel maps the pages around it too (fault-around), so code used and code not used side by side costs the
+                 // process both.
+                 uint64_t rank = static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2;
+-                if (auto hotRank = encoder.hotRankOf(*function.executable))
+-                    rank = classOfHotCode | *hotRank << 2 | static_cast<uint64_t>(isConstruct) | 2;
++                // Functions with the same text share a name, and so a place in the order file: their order among themselves is
++                // their order in the text, so that the layout does not depend on the order the jobs were found in (which follows
++                // addresses, and differs from one build to the next). The order file's place goes above the text order, which
++                // takes the low 46 bits (a module below 4096).
++                constexpr unsigned hotRankShift = 46;
++                constexpr uint64_t maxHotRank = (1ull << (60 - hotRankShift)) - 1;
++                if (auto hotRank = encoder.hotRankOf(*function.executable); hotRank && function.module < (1u << (hotRankShift - 34)))
++                    rank = classOfHotCode | std::min<uint64_t>(*hotRank, maxHotRank) << hotRankShift | rank;
+                 else
+                     rank |= classOfColdCode;
+                 jobs.append({ key, rank, codeBlock, function.module, function.executable });
+-- 
+2.54.0 (Apple Git-157)
+

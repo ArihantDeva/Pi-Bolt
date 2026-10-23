@@ -50,32 +50,66 @@ export type ClassifierModelCatalog<TGroups extends ModelGroups, TProvider extend
 	};
 };
 
-function flattenModelCatalog(groups: ModelGroups, type: ModelType): Record<string, object> {
-	return Object.fromEntries(
-		Object.values(groups)
-			.flatMap((models) => Object.values(models))
-			.filter((model) => (model as { type?: unknown }).type === type)
-			.map((model) => [(model as { id: string }).id, model]),
-	);
+/**
+ * One provider's generated models (`providers/data/<provider>.json`), built when they are first asked for: a start builds
+ * the catalogs of the providers it uses, not all of them. Each record is built once and keeps its model objects.
+ */
+export interface LazyModelCatalog<TProvider extends ProviderId, TGroups extends ModelGroups> {
+	readonly provider: TProvider;
+	/** Chat models by id, in catalog order. */
+	chat(): ChatModelCatalog<TGroups, TProvider>;
+	/** Image models by id, in catalog order. */
+	image(): ImageModelCatalog<TGroups, TProvider>;
+	/** Classifier models by id, in catalog order. */
+	classifier(): ClassifierModelCatalog<TGroups, TProvider>;
+	/**
+	 * The chat models' ids and names, in `chat()` order, without building the models: id and name of the first model, then
+	 * of the second, and so on.
+	 */
+	chatNames(): readonly string[];
+	/** Whether the models have been built. */
+	isBuilt(): boolean;
 }
 
-export function flattenChatModelCatalog<const TProvider extends ProviderId, const TGroups extends ModelGroups>(
-	_provider: TProvider,
-	groups: TGroups,
-): ChatModelCatalog<TGroups, TProvider> {
-	return flattenModelCatalog(groups, "chat") as ChatModelCatalog<TGroups, TProvider>;
-}
-
-export function flattenImageModelCatalog<const TProvider extends ProviderId, const TGroups extends ModelGroups>(
-	_provider: TProvider,
-	groups: TGroups,
-): ImageModelCatalog<TGroups, TProvider> {
-	return flattenModelCatalog(groups, "image") as ImageModelCatalog<TGroups, TProvider>;
-}
-
-export function flattenClassifierModelCatalog<const TProvider extends ProviderId, const TGroups extends ModelGroups>(
-	_provider: TProvider,
-	groups: TGroups,
-): ClassifierModelCatalog<TGroups, TProvider> {
-	return flattenModelCatalog(groups, "classifier") as ClassifierModelCatalog<TGroups, TProvider>;
+/**
+ * `load` returns the provider's models grouped by API and keyed by `type:id` (the data file's layout), a new object at each
+ * call; `chatNames` returns the chat models' ids and names in the order `chat()` lists them.
+ */
+export function lazyModelCatalog<const TProvider extends ProviderId, TGroups extends ModelGroups>(
+	provider: TProvider,
+	chatNames: () => readonly string[],
+	load: () => TGroups,
+): LazyModelCatalog<TProvider, TGroups> {
+	let byType: Record<ModelType, Record<string, object>> | undefined;
+	let names: readonly string[] | undefined;
+	// The three records from one pass over the groups: each type's models in the order the groups list them.
+	const built = (): Record<ModelType, Record<string, object>> => {
+		if (byType) return byType;
+		const entries: Record<ModelType, [string, object][]> = { chat: [], image: [], classifier: [] };
+		for (const models of Object.values(load())) {
+			for (const model of Object.values(models)) {
+				const type = (model as { type?: unknown }).type;
+				if (type === "chat" || type === "image" || type === "classifier") {
+					entries[type].push([(model as { id: string }).id, model]);
+				}
+			}
+		}
+		byType = {
+			chat: Object.fromEntries(entries.chat),
+			image: Object.fromEntries(entries.image),
+			classifier: Object.fromEntries(entries.classifier),
+		};
+		return byType;
+	};
+	return {
+		provider,
+		chat: () => built().chat as ChatModelCatalog<TGroups, TProvider>,
+		image: () => built().image as ImageModelCatalog<TGroups, TProvider>,
+		classifier: () => built().classifier as ClassifierModelCatalog<TGroups, TProvider>,
+		chatNames: () => {
+			names ??= chatNames();
+			return names;
+		},
+		isBuilt: () => byType !== undefined,
+	};
 }
