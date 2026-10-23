@@ -787,10 +787,16 @@ function startThemeWatcher(): void {
 	const watchedFileName = `${watchedThemeName}.json`;
 	const themeFile = path.join(customThemesDir, watchedFileName);
 
-	// Only watch if the file exists, and is the theme in use: a file that names another theme does not replace the
-	// built-in theme of its file name (loadThemeJson()).
+	// Only watch if the file exists, and is the theme in use: a theme of this name registered from another file (a
+	// trusted project's) wins over it, and a file that names another theme does not replace the built-in theme of its file
+	// name (loadThemeJson()).
+	const registeredSource = registeredThemes.get(watchedThemeName)?.sourcePath;
 	const replacesBuiltin = getBuiltinThemeNames().includes(watchedThemeName);
-	if (!fs.existsSync(themeFile) || (replacesBuiltin && !fileDeclaresName(themeFile, watchedThemeName))) {
+	if (
+		!fs.existsSync(themeFile) ||
+		(registeredSource !== undefined && path.resolve(registeredSource) !== path.resolve(themeFile)) ||
+		(replacesBuiltin && !fileDeclaresName(themeFile, watchedThemeName))
+	) {
 		return;
 	}
 

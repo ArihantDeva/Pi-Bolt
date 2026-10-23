@@ -138,6 +138,24 @@ describe("theme picker", () => {
 		expect(theme.fg("accent", "x")).toBe(builtinAccent);
 	});
 
+	it("does not watch a user theme file when a theme of its name from another file (a project's) won", async () => {
+		const builtinPath = fileURLToPath(new URL("../src/modes/interactive/theme/dark.json", import.meta.url));
+		const builtin = JSON.parse(readFileSync(builtinPath, "utf-8")) as ThemeFile;
+		const projectPath = join(tempRoot, "project-dark.json");
+		writeFileSync(projectPath, JSON.stringify({ ...builtin, colors: { ...builtin.colors, accent: "#123456" } }));
+		const userPath = join(process.env.PI_CODING_AGENT_DIR!, "themes", "dark.json");
+		const writeUser = (accent: string) =>
+			writeFileSync(userPath, JSON.stringify({ ...builtin, colors: { ...builtin.colors, accent } }));
+		writeUser("#654321");
+		setRegisteredThemes([loadThemeFromPath(projectPath)]);
+		expect(setTheme("dark", true).success).toBe(true);
+		const projectAccent = loadThemeFromPath(projectPath).fg("accent", "x");
+		expect(theme.fg("accent", "x")).toBe(projectAccent);
+		writeUser("#abcdef");
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(theme.fg("accent", "x")).toBe(projectAccent);
+	});
+
 	it("watches a custom theme that replaces a built-in", async () => {
 		const builtinPath = fileURLToPath(new URL("../src/modes/interactive/theme/dark.json", import.meta.url));
 		const builtin = JSON.parse(readFileSync(builtinPath, "utf-8")) as ThemeFile;

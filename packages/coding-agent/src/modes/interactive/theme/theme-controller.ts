@@ -179,6 +179,18 @@ export class InteractiveThemeController {
 	}
 
 	/**
+	 * Whether this theme is the member of a light/dark pair setting that is in use: the one for the terminal's appearance
+	 * now, and it loaded. Choosing it keeps the pair.
+	 */
+	isPairMemberInUse(themeName: string): boolean {
+		return (
+			parseAutoThemeSetting(this.getThemeSetting()) !== undefined &&
+			this.resolveThemeName() === themeName &&
+			this.getActiveThemeName() === themeName
+		);
+	}
+
+	/**
 	 * What gives back the theme in use now after previews (a theme selector closed without a choice): the theme an extension
 	 * set, or else the theme that is in use.
 	 */

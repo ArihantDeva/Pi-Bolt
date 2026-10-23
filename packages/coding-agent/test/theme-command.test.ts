@@ -11,8 +11,8 @@ type ThemeCommandContext = {
 
 type ThemeSelectorContext = {
 	themeController: {
-		getThemeSelection: () => string | undefined;
 		getActiveThemeName: () => string;
+		isPairMemberInUse: (themeName: string) => boolean;
 		previewRestorer: () => () => void;
 		preview: (themeName: string) => void;
 	};
@@ -59,14 +59,15 @@ describe("InteractiveMode.handleThemeCommand", () => {
 });
 
 describe("InteractiveMode.showThemeSelector", () => {
-	function open(setting: string, active: string) {
+	function open(setting: string, active: string, pairMember?: string) {
 		const restore = vi.fn();
 		const done = vi.fn();
 		let selector: ThemeSelectorComponent | undefined;
 		const context: ThemeSelectorContext = {
 			themeController: {
-				getThemeSelection: () => setting,
 				getActiveThemeName: () => active,
+				// (As the controller answers: the pair's member for the terminal's appearance, when it loaded.)
+				isPairMemberInUse: (themeName) => setting.includes("/") && themeName === active && themeName === pairMember,
 				previewRestorer: () => restore,
 				preview: vi.fn(),
 			},
@@ -80,7 +81,7 @@ describe("InteractiveMode.showThemeSelector", () => {
 	}
 
 	test("selects the member of a light/dark pair in use, and Enter on it keeps the pair", () => {
-		const { list, restore, selectTheme } = open("nord/dracula", "nord");
+		const { list, restore, selectTheme } = open("nord/dracula", "nord", "nord");
 		expect(list.getSelectedItem()?.value).toBe("nord");
 		list.onSelect?.(list.getSelectedItem()!);
 		expect(selectTheme).not.toHaveBeenCalled();
@@ -88,9 +89,17 @@ describe("InteractiveMode.showThemeSelector", () => {
 	});
 
 	test("saves another theme chosen from a pair", () => {
-		const { list, selectTheme } = open("nord/dracula", "nord");
+		const { list, selectTheme } = open("nord/dracula", "nord", "nord");
 		list.onSelect?.({ value: "dracula", label: "dracula" });
 		expect(selectTheme).toHaveBeenCalledWith("dracula");
+	});
+
+	test("saves the system theme chosen when the pair's member failed to load", () => {
+		const { list, restore, selectTheme } = open("missing/dracula", "system", "missing");
+		expect(list.getSelectedItem()?.value).toBe("system");
+		list.onSelect?.(list.getSelectedItem()!);
+		expect(restore).not.toHaveBeenCalled();
+		expect(selectTheme).toHaveBeenCalledWith("system");
 	});
 
 	test("selects the theme in use when the setting failed to load", () => {
