@@ -1,10 +1,11 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { colorToHex, okhslColor, styleText } from "@earendil-works/pi-tui";
+import { colorToHex, Markdown, okhslColor, styleText } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	getMarkdownTheme,
+	initTheme,
 	loadThemeFromPath,
 	setShadedCodeBlocks,
 	setTerminalColors,
@@ -130,6 +131,23 @@ describe("mdCodeBlockBg", () => {
 	it("only shades code blocks in the markdown theme when enabled", () => {
 		expect(getMarkdownTheme().codeBlockBg).toBeUndefined();
 		setShadedCodeBlocks(true);
+		expect(getMarkdownTheme().codeBlockBg).toBeTypeOf("function");
+	});
+
+	it("applies to a Markdown already shown once it is redrawn, as a streaming answer is", () => {
+		initTheme("dark");
+		const markdown = new Markdown("Code:\n\n```ts\nconst a = 1;\n```", 1, 0, getMarkdownTheme());
+		const plain = (lines: string[]) => lines.map((line) => line.replace(/\x1b\[[0-9;:]*m/g, "").trimEnd());
+		expect(plain(markdown.render(40))).toContain(" ```ts");
+		setShadedCodeBlocks(true);
+		markdown.invalidate();
+		const shaded = markdown.render(40);
+		expect(plain(shaded)).not.toContain(" ```ts");
+		expect(shaded.join("\n")).toContain(getMarkdownTheme().codeBlockBg?.("x").split("x")[0]);
+	});
+
+	it("follows the setting made by another instance of the theme module (an extension's, loaded by jiti)", () => {
+		(globalThis as Record<symbol, boolean>)[Symbol.for("@earendil-works/pi-coding-agent:shadedCodeBlocks")] = true;
 		expect(getMarkdownTheme().codeBlockBg).toBeTypeOf("function");
 	});
 });

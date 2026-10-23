@@ -1464,10 +1464,10 @@ export class InteractiveMode {
 	}
 
 	private getMarkdownThemeWithSettings(): MarkdownTheme {
-		return {
-			...getMarkdownTheme(),
-			codeBlockIndent: this.settingsManager.getCodeBlockIndent(),
-		};
+		// (Set on the theme itself, not spread into a copy: a copy would take its codeBlockBg getter's value of now.)
+		const markdownTheme = getMarkdownTheme();
+		markdownTheme.codeBlockIndent = this.settingsManager.getCodeBlockIndent();
+		return markdownTheme;
 	}
 
 	// =========================================================================
@@ -5136,7 +5136,9 @@ export class InteractiveMode {
 					onShadedCodeBlocksChange: (shaded) => {
 						this.settingsManager.setShadedCodeBlocks(shaded);
 						setShadedCodeBlocks(shaded);
-						this.rebuildChatFromMessages();
+						// (Redrawn, not rebuilt: an answer that is streaming keeps its component.)
+						this.ui.invalidate();
+						this.ui.requestRender();
 					},
 					onCollapseChangelogChange: (collapsed) => {
 						this.settingsManager.setCollapseChangelog(collapsed);
