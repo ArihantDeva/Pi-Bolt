@@ -41,7 +41,7 @@ nudged toward the text color for contrast, so the files are adaptations, not cop
 | Tokyo Night Day (`tokyo-night-day`) | [folke/tokyonight.nvim](https://github.com/folke/tokyonight.nvim) | Folke Lemaitre (the license file carries no copyright line) | Apache-2.0 |
 | One Dark (`one-dark`) | [atom/atom](https://github.com/atom/atom/tree/master/packages/one-dark-syntax), `one-dark-syntax` | © 2016 GitHub Inc. | MIT |
 | Rosé Pine (`rose-pine`) | [rose-pine/rose-pine-theme](https://github.com/rose-pine/rose-pine-theme) | © 2023 Rosé Pine | MIT |
-| Monokai (`monokai`) | Wimer Hazenberg, [monokai.nl](https://monokai.nl) | Wimer Hazenberg | No license is published for the original palette; the colors are the widely reproduced ones |
+| Monokai (`monokai`) | [tinted-theming/schemes](https://github.com/tinted-theming/schemes), `base16/monokai.yaml` (palette by Wimer Hazenberg, [monokai.nl](https://monokai.nl)) | © 2022 Tinted Theming | MIT |
 
 The MIT-licensed palettes are used under this permission, which applies to each copyright holder above:
 
