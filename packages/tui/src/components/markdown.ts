@@ -14,9 +14,28 @@ import {
 } from "../tui.ts";
 import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
-// A full SGR reset (SGR 0, or no parameters) or a background reset (SGR 49): in a shaded code block it would end the shading.
-const BACKGROUND_END = /\x1b\[(?:0|49)?m/;
-const BACKGROUND_END_ALL = /\x1b\[(?:0|49)?m/g;
+const SGR_SEQUENCE_ALL = /\x1b\[([0-9;:]*)m/g;
+
+/**
+ * Whether an SGR sequence with these parameters leaves the background reset: a full reset (0, or no parameters) or a
+ * background reset (49) that no later background color in the same sequence replaces. In a shaded code block it would end
+ * the shading.
+ */
+function endsBackground(params: string): boolean {
+	const codes = params.split(/[;:]/);
+	let reset = false;
+	for (let i = 0; i < codes.length; i++) {
+		const code = Number(codes[i] || 0);
+		if (code === 0 || code === 49) reset = true;
+		else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) reset = false;
+		// (An extended color's operands are not codes: 38;5;N, 48;2;R;G;B.)
+		if (code === 38 || code === 48 || code === 58) {
+			if (code === 48) reset = false;
+			i += codes[i + 1] === "5" ? 2 : 4;
+		}
+	}
+	return reset;
+}
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
 class StrictStrikethroughTokenizer extends Tokenizer {
@@ -1322,10 +1341,13 @@ export class Markdown implements Component {
 					for (const codeLine of codeLines) {
 						for (const wrapped of this.wrapLine(codeLine, codeWidth)) {
 							let line = `${indent}${wrapped}`;
-							if (BACKGROUND_END.test(line)) {
+							if (line.includes("\x1b[")) {
 								shadeOpen ??= shade("\0").split("\0")[0]!;
 								if (shadeOpen !== "\x1b[49m") {
-									line = line.replace(BACKGROUND_END_ALL, (reset) => reset + shadeOpen);
+									const open = shadeOpen;
+									line = line.replace(SGR_SEQUENCE_ALL, (sequence: string, params: string) =>
+										endsBackground(params) ? sequence + open : sequence,
+									);
 								}
 							}
 							lines.push(shade(line));

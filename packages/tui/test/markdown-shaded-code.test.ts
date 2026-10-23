@@ -181,6 +181,24 @@ describe("Shaded code blocks", () => {
 		assert.strictEqual(getActiveBackgroundAnsi(afterSpan.slice(0, afterSpan.indexOf(" a = 1;"))), palette.bg);
 	});
 
+	it("keeps the shading after compound resets from the highlighter, but not over a span's own background", () => {
+		Object.assign(palette, PALETTES[0]);
+		const render = (styled: string) => {
+			const theme: MarkdownTheme = {
+				...shadedTheme,
+				highlightCode: (code) => code.split("\n").map((line) => line.replace("const", styled)),
+			};
+			const [line] = new Markdown("```\nconst a = 1;\n```", 0, 0, theme)
+				.render(30)
+				.filter((rendered) => rendered.includes(" a = 1;"));
+			return getActiveBackgroundAnsi(line!.slice(0, line!.indexOf(" a = 1;")));
+		};
+		assert.strictEqual(render("\x1b[1mconst\x1b[0;31m"), palette.bg);
+		assert.strictEqual(render("\x1b[48;2;1;2;3mconst\x1b[39;49m"), palette.bg);
+		// (A reset followed by a background of the span's own: that background stays.)
+		assert.strictEqual(render("const\x1b[0;48;2;1;2;3m"), "\x1b[48;2;1;2;3m");
+	});
+
 	it("keeps the indent on wrapped lines", () => {
 		Object.assign(palette, PALETTES[0]);
 		const lines = new Markdown("```\nconst value = compute(first, second);\n```", 0, 0, shadedTheme)
