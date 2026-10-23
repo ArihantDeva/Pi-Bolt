@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { colorToHex, okhslColor, styleText } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadThemeFromPath, setTerminalColors } from "../src/modes/interactive/theme/theme.ts";
+import {
+	getMarkdownTheme,
+	loadThemeFromPath,
+	setShadedCodeBlocks,
+	setTerminalColors,
+} from "../src/modes/interactive/theme/theme.ts";
 
 const tempDirs: string[] = [];
 
@@ -100,5 +105,31 @@ describe("theme styles", () => {
 		setTerminalColors({ foreground: { r: 200, g: 210, b: 220 }, background: { r: 10, g: 20, b: 30 } });
 		expect(colorToHex(theme.colors.text)).toBe("#c8d2dc");
 		expect(colorToHex(theme.colors.userMessageBg)).toBe("#0a141e");
+	});
+});
+
+describe("mdCodeBlockBg", () => {
+	afterEach(() => setShadedCodeBlocks(false));
+
+	it("falls back to toolPendingBg when a theme omits it", () => {
+		const theme = loadTheme("dark", (json) => {
+			json.colors.toolPendingBg = "#102030";
+			delete json.colors.mdCodeBlockBg;
+		});
+		expect(theme.getBgAnsi("mdCodeBlockBg")).toBe(theme.getBgAnsi("toolPendingBg"));
+	});
+
+	it("is a separate color when a theme sets it", () => {
+		const theme = loadTheme("dark", (json) => {
+			json.colors.toolPendingBg = "#102030";
+			json.colors.mdCodeBlockBg = "#304050";
+		});
+		expect(theme.getBgAnsi("mdCodeBlockBg")).not.toBe(theme.getBgAnsi("toolPendingBg"));
+	});
+
+	it("only shades code blocks in the markdown theme when enabled", () => {
+		expect(getMarkdownTheme().codeBlockBg).toBeUndefined();
+		setShadedCodeBlocks(true);
+		expect(getMarkdownTheme().codeBlockBg).toBeTypeOf("function");
 	});
 });

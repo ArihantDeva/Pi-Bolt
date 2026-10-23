@@ -552,8 +552,8 @@ export interface MarkdownTheme {
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
 	/**
-	 * Background for code blocks. When set, a block renders as full-width shaded lines (language label first) instead of
-	 * between literal ``` fence lines.
+	 * Background for code blocks. When set, a block renders as shaded lines (language label first) instead of between
+	 * literal ``` fence lines.
 	 */
 	codeBlockBg?: (text: string) => string;
 }
@@ -963,12 +963,13 @@ export class Markdown implements Component {
 					: token.text.split("\n").map((codeLine: string) => this.theme.codeBlock(codeLine));
 				const shade = this.theme.codeBlockBg;
 				if (shade) {
-					const body = token.lang ? [this.theme.codeBlockBorder(token.lang)] : [];
-					body.push(...codeLines.map((codeLine) => `${indent}${codeLine}`));
-					for (const bodyLine of body) {
-						// Wrapped here, not by renderBlock(), so continuation lines stay shaded to the full width.
-						for (const wrapped of wrapTextWithAnsi(bodyLine, width)) {
-							lines.push(shade(wrapped + " ".repeat(Math.max(0, width - visibleWidth(wrapped)))));
+					// Each line is shaded up to the end of its text only, so copied code has no trailing spaces. Wrapped here,
+					// not by renderBlock(), so continuation lines keep the block's indent.
+					if (token.lang) lines.push(shade(this.theme.codeBlockBorder(token.lang)));
+					const codeWidth = Math.max(1, width - visibleWidth(indent));
+					for (const codeLine of codeLines) {
+						for (const wrapped of wrapTextWithAnsi(codeLine, codeWidth)) {
+							lines.push(shade(`${indent}${wrapped}`));
 						}
 					}
 				} else {

@@ -44,6 +44,7 @@
 		"mdLinkUrl": "muted",
 		"mdCode": "violet",
 		"mdCodeBlock": "green",
+		"mdCodeBlockBg": "okhsl(229 5% 24%)",
 		"mdCodeBlockBorder": "muted",
 		"mdQuote": "muted",
 		"mdQuoteBorder": "muted",

@@ -210,6 +210,7 @@ import {
 	onThemeChange,
 	SYSTEM_THEME_NAME,
 	setRegisteredThemes,
+	setShadedCodeBlocks,
 	stopThemeWatcher,
 	Theme,
 	type ThemeColor,
@@ -630,6 +631,7 @@ export class InteractiveMode {
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
 		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
+		setShadedCodeBlocks(this.settingsManager.getShadedCodeBlocks());
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
@@ -5022,6 +5024,7 @@ export class InteractiveMode {
 					treeFilterMode: this.settingsManager.getTreeFilterMode(),
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
+					shadedCodeBlocks: this.settingsManager.getShadedCodeBlocks(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
 					outputPad: this.settingsManager.getOutputPad(),
@@ -5127,6 +5130,11 @@ export class InteractiveMode {
 					},
 					onShowCacheMissNoticesChange: (shown) => {
 						this.settingsManager.setShowCacheMissNotices(shown);
+						this.rebuildChatFromMessages();
+					},
+					onShadedCodeBlocksChange: (shaded) => {
+						this.settingsManager.setShadedCodeBlocks(shaded);
+						setShadedCodeBlocks(shaded);
 						this.rebuildChatFromMessages();
 					},
 					onCollapseChangelogChange: (collapsed) => {

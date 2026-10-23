@@ -228,24 +228,34 @@ describe("Markdown component", () => {
 			assert.deepStrictEqual(lines, ["- [ ] beep", "- [x] boop"]);
 		});
 
-		it("shades code blocks to the full width without fence lines when the theme has codeBlockBg", () => {
+		it("shades code blocks without fence lines or trailing spaces when the theme has codeBlockBg", () => {
 			const theme: MarkdownTheme = {
 				...defaultMarkdownTheme,
 				codeBlockBg: (text) => `\x1b[48;5;236m${text}\x1b[49m`,
 			};
-			const markdown = new Markdown("```ts\nconst a = 1;\nconst longer = 2222222222;\n```", 0, 0, theme);
+			const markdown = new Markdown("```ts\nconst a = 1;\n    nested();\n```", 0, 0, theme);
 
-			const rendered = markdown.render(12);
+			const rendered = markdown.render(40);
+			const plain = rendered.map(stripAnsi);
 
-			assert.ok(rendered.every((line) => line.startsWith("\x1b[48;5;236m")));
-			assert.deepStrictEqual(rendered.map(stripAnsi), [
-				"ts          ",
-				"  const a = ",
-				"1;          ",
-				"  const     ",
-				"longer =    ",
-				"2222222222; ",
-			]);
+			assert.deepStrictEqual(
+				plain.map((line) => line.trimEnd()),
+				["ts", "  const a = 1;", "      nested();"],
+			);
+			// Shaded to the end of the text, then plain padding to the width; nothing shaded past the text.
+			assert.match(rendered[1], /^\x1b\[48;5;236m {2}.*const a = 1;\x1b\[39m\x1b\[49m {2,}$/);
+		});
+
+		it("keeps the indent on wrapped lines of a shaded code block", () => {
+			const theme: MarkdownTheme = {
+				...defaultMarkdownTheme,
+				codeBlockBg: (text) => `\x1b[48;5;236m${text}\x1b[49m`,
+			};
+			const markdown = new Markdown("```\nconst a = 1;\n```", 0, 0, theme);
+
+			const lines = markdown.render(12).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["  const a =", "  1;"]);
 		});
 
 		it("should maintain numbering when code blocks are not indented (LLM output)", () => {

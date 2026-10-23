@@ -1088,6 +1088,13 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 	return extToLang[ext];
 }
 
+let shadedCodeBlocks = false;
+
+/** Render code blocks on a background, without fence lines, instead of between literal ``` lines. */
+export function setShadedCodeBlocks(enabled: boolean): void {
+	shadedCodeBlocks = enabled;
+}
+
 export function getMarkdownTheme(): MarkdownTheme {
 	return {
 		heading: (text: string) => theme.fg("mdHeading", text),
@@ -1096,7 +1103,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 		code: (text: string) => theme.fg("mdCode", text),
 		codeBlock: (text: string) => theme.fg("mdCodeBlock", text),
 		codeBlockBorder: (text: string) => theme.fg("mdCodeBlockBorder", text),
-		codeBlockBg: (text: string) => theme.bg("toolPendingBg", text),
+		codeBlockBg: shadedCodeBlocks ? (text: string) => theme.bg("mdCodeBlockBg", text) : undefined,
 		quote: (text: string) => theme.fg("mdQuote", text),
 		quoteBorder: (text: string) => theme.fg("mdQuoteBorder", text),
 		hr: (text: string) => theme.fg("mdHr", text),
