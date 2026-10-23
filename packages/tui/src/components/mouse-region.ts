@@ -2,8 +2,16 @@ import {
 	type Component,
 	dispatchMouseEvent,
 	isStableRender,
+	type LiveLines,
+	markLiveRender,
+	markReportsChanges,
 	markStableRender,
-	renderSharedLines,
+	renderChildLines,
+	renderLiveLines,
+	reportRenderChange,
+	reportsChanges,
+	setRenderOwner,
+	setSubtreeReportsChanges,
 	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
@@ -24,7 +32,8 @@ export class MouseRegion implements Component {
 	}
 
 	render(width: number): string[] {
-		const lines = renderSharedLines(this.child, width);
+		const lines = renderChildLines(this, this.child, width);
+		setSubtreeReportsChanges(this, reportsChanges(this.child));
 		if (isStableRender(this.child)) return lines;
 		const copied = this.copiedLines;
 		if (copied !== undefined && copied.length === lines.length && copied.every((line, i) => line === lines[i])) {
@@ -42,7 +51,20 @@ export class MouseRegion implements Component {
 	invalidate(): void {
 		this.copiedLines = undefined;
 		this.child.invalidate();
+		reportRenderChange(this);
+	}
+
+	/** renderLiveLines() for a MouseRegion: its child's, live when the child's are. */
+	static renderLive(region: MouseRegion, width: number): LiveLines | undefined {
+		setRenderOwner(region.child, region);
+		const lines = renderLiveLines(region.child, width);
+		setSubtreeReportsChanges(region, reportsChanges(region.child));
+		return lines;
 	}
 }
 
 markStableRender(MouseRegion);
+markReportsChanges(MouseRegion);
+markLiveRender(MouseRegion.prototype.render, function (this: Component, width: number) {
+	return MouseRegion.renderLive(this as MouseRegion, width);
+});

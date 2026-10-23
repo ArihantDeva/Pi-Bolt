@@ -13464,3 +13464,2841 @@ index 4d76ec8e..c7fe4ecd 100644
 -- 
 2.54.0 (Apple Git-157)
 
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jarred Sumner <jarred@jarredsumner.com>
+Date: Sat, 3 Oct 2026 01:07:44 -0700
+Subject: [PATCH] dns(macOS): use DNSServiceQueryRecord so split DNS can fail
+ over (#44519)
+
+Fixes #44075. Closes #44449. On macOS, dns.lookup(), fetch() and sockets
+now resolve split-DNS names, for example a VPN resolver behind iCloud
+Private Relay. getaddrinfo(3) resolves these names, but Bun reported
+ENOTFOUND. mDNSResponder asks the next resolver after a negative answer
+only when the client sends the failover attribute.
+DNSServiceGetAddrInfoEx (#40675) accepts that attribute but never sends
+it, and the daemon reads it only for QueryRecord requests. This PR does
+what libinfo does: one DNSServiceQueryRecordWithAttribute per family.
+macOS 12 falls back to plain DNSServiceQueryRecord on the same code
+path. Thanks to @mimi1vx for the diagnosis. Compared with #44449: the
+hostname is sent as written (a trailing dot turns off search domains, so
+http://intranet/ would stop resolving), a link-local AAAA keeps its
+interface scope (fe80::1%7), and removed records are still ignored.
+Verified: new tests put a scripted mDNSResponder behind the unix socket
+of the daemon and check the requests and the answers. All 10 pass with
+bun bd test test/js/bun/dns/. The 9 that existed at that time all fail
+on 1.4.3 with USE_SYSTEM_BUN=1, and the tenth was not run there. The
+requests are now identical to those of getaddrinfo(3), and 21 lookups
+through the real daemon match 1.4.3. Not verified: real failover, which
+needs a split-DNS machine. @mimi1vx @sassdavid, can you try this build
+with bunx bun-pr?
+
+(cherry picked from commit 0ba17d5f7cc607262aa14e9d45ab425233fcee02)
+---
+ src/runtime/dns_jsc/dns.rs               |  63 +---
+ src/runtime/dns_jsc/dns_sd.rs            | 361 ++++++++++++++---------
+ test/js/bun/dns/mdnsresponder-fixture.ts | 222 ++++++++++++++
+ test/js/bun/dns/resolve-dns.test.ts      | 242 ++++++++++++++-
+ 4 files changed, 686 insertions(+), 202 deletions(-)
+ create mode 100644 test/js/bun/dns/mdnsresponder-fixture.ts
+
+diff --git a/src/runtime/dns_jsc/dns.rs b/src/runtime/dns_jsc/dns.rs
+index d9889aa6b2..6cb0b0aed5 100644
+--- a/src/runtime/dns_jsc/dns.rs
++++ b/src/runtime/dns_jsc/dns.rs
+@@ -118,7 +118,7 @@ bun_output::declare_scope!(DNSResolver, visible);
+ const IANA_DNS_PORT: i32 = 53;
+ 
+ // ──────────────────────────────────────────────────────────────────────────
+-// dns_sd (macOS): DNSServiceGetAddrInfo over one shared mDNSResponder connection, no per-lookup threads.
++// dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
+ // ──────────────────────────────────────────────────────────────────────────
+ 
+ #[cfg(target_os = "macos")]
+@@ -1209,33 +1209,6 @@ impl GetAddrInfoRequest {
+         request
+     }
+ 
+-    /// Reply callback (inside `DNSServiceProcessResult`): records state; completion happens in `on_readable`.
+-    /// # Safety
+-    /// `context` is the registered `*mut GetAddrInfoRequest`; `address`, if non-null, is a valid sockaddr.
+-    #[cfg(target_os = "macos")]
+-    pub(crate) unsafe extern "C" fn dns_sd_reply(
+-        _sd_ref: dns_sd::DNSServiceRef,
+-        flags: u32,
+-        _interface_index: u32,
+-        error_code: i32,
+-        _hostname: *const c_char,
+-        address: *const Sockaddr,
+-        ttl: u32,
+-        context: *mut c_void,
+-    ) {
+-        dns_sd::SharedConnection::note_reply(context);
+-        // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
+-        let this: *mut Self = context.cast();
+-        // SAFETY: `this` is the live heap request (JS thread); `address` is valid per dns_sd.h.
+-        unsafe {
+-            (*this)
+-                .backend
+-                .as_dns_sd_mut()
+-                .query
+-                .record_reply(flags, error_code, address, ttl);
+-        }
+-    }
+-
+     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
+     #[cfg(target_os = "macos")]
+     #[allow(clippy::not_unsafe_ptr_arg_deref)]
+@@ -2791,39 +2764,7 @@ pub(crate) mod internal {
+                 query: dns_sd::QueryState::new(protocol),
+             };
+         }
+-        let Some(_) = shared.start(
+-            dns_sd::Inflight::Internal(req),
+-            protocol,
+-            host,
+-            dns_sd_reply,
+-            req.cast::<c_void>(),
+-        ) else {
+-            return false;
+-        };
+-
+-        true
+-    }
+-
+-    #[cfg(target_os = "macos")]
+-    unsafe extern "C" fn dns_sd_reply(
+-        _sd_ref: dns_sd::DNSServiceRef,
+-        flags: u32,
+-        _interface_index: u32,
+-        error_code: i32,
+-        _hostname: *const c_char,
+-        address: *const Sockaddr,
+-        ttl: u32,
+-        context: *mut c_void,
+-    ) {
+-        dns_sd::SharedConnection::note_reply(context);
+-        let req: *mut Request = context.cast();
+-        // SAFETY: `context` is the registered `req` (event-loop thread); `address` is valid per dns_sd.h.
+-        unsafe {
+-            (*req)
+-                .dns_sd
+-                .query
+-                .record_reply(flags, error_code, address, ttl)
+-        };
++        shared.start(dns_sd::Inflight::Internal(req), protocol, host)
+     }
+ 
+     /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
+diff --git a/src/runtime/dns_jsc/dns_sd.rs b/src/runtime/dns_jsc/dns_sd.rs
+index a2a7d844f6..95d0b2a01b 100644
+--- a/src/runtime/dns_jsc/dns_sd.rs
++++ b/src/runtime/dns_jsc/dns_sd.rs
+@@ -1,9 +1,9 @@
+-//! macOS DNSServiceGetAddrInfo backend: all lookups share one mDNSResponder connection (see dns.rs banner).
++//! macOS DNSServiceQueryRecord backend: all lookups share one mDNSResponder connection (see dns.rs banner).
+ 
+ use super::*;
+ use bun_collections::index_sort;
+ 
+-pub(crate) type DNSServiceRef = *mut c_void;
++type DNSServiceRef = *mut c_void;
+ type DNSServiceFlags = u32;
+ type DNSServiceErrorType = i32;
+ pub(crate) type DNSServiceProtocol = u32;
+@@ -18,18 +18,23 @@ const FLAGS_TIMEOUT: DNSServiceFlags = 0x10000;
+ pub(crate) const PROTOCOL_IPV4: DNSServiceProtocol = 0x01;
+ pub(crate) const PROTOCOL_IPV6: DNSServiceProtocol = 0x02;
+ 
++const TYPE_A: u16 = 1;
++const TYPE_AAAA: u16 = 28;
++const CLASS_IN: u16 = 1;
++
+ pub(crate) const ERR_NO_ERROR: DNSServiceErrorType = 0;
+-pub(crate) const ERR_NO_SUCH_RECORD: DNSServiceErrorType = -65554;
+ pub(crate) const ERR_TIMEOUT: DNSServiceErrorType = -65568;
+-const ERR_DEFUNCT_CONNECTION: DNSServiceErrorType = -65569;
+ 
+-type GetAddrInfoReply = unsafe extern "C" fn(
++type QueryRecordReply = unsafe extern "C" fn(
+     sd_ref: DNSServiceRef,
+     flags: DNSServiceFlags,
+     interface_index: u32,
+     error_code: DNSServiceErrorType,
+-    hostname: *const c_char,
+-    address: *const Sockaddr,
++    fullname: *const c_char,
++    rrtype: u16,
++    rrclass: u16,
++    rdlen: u16,
++    rdata: *const c_void,
+     ttl: u32,
+     context: *mut c_void,
+ );
+@@ -40,35 +45,37 @@ unsafe extern "C" {
+     fn DNSServiceRefSockFD(sd_ref: DNSServiceRef) -> c_int;
+     fn DNSServiceProcessResult(sd_ref: DNSServiceRef) -> DNSServiceErrorType;
+     fn DNSServiceRefDeallocate(sd_ref: DNSServiceRef);
+-    fn DNSServiceGetAddrInfo(
++    fn DNSServiceQueryRecord(
+         sd_ref: *mut DNSServiceRef,
+         flags: DNSServiceFlags,
+         interface_index: u32,
+-        protocol: DNSServiceProtocol,
+-        hostname: *const c_char,
+-        callback: GetAddrInfoReply,
++        fullname: *const c_char,
++        rrtype: u16,
++        rrclass: u16,
++        callback: QueryRecordReply,
+         context: *mut c_void,
+     ) -> DNSServiceErrorType;
+ }
+ 
+-/// SPI: `DNSServiceGetAddrInfo` plus the attribute libinfo's getaddrinfo passes. Absent on macOS 12, so resolved at runtime.
+-type GetAddrInfoExFn = unsafe extern "C" fn(
++/// `DNSServiceQueryRecord` plus an attribute. Absent on macOS 12, so resolved at runtime.
++type QueryRecordWithAttributeFn = unsafe extern "C" fn(
+     sd_ref: *mut DNSServiceRef,
+     flags: DNSServiceFlags,
+     interface_index: u32,
+-    protocol: DNSServiceProtocol,
+-    hostname: *const c_char,
++    fullname: *const c_char,
++    rrtype: u16,
++    rrclass: u16,
+     attr: *const DNSServiceAttribute,
+-    callback: GetAddrInfoReply,
++    callback: QueryRecordReply,
+     context: *mut c_void,
+ ) -> DNSServiceErrorType;
+ 
+-/// `DNSServiceGetAddrInfoEx` with `kDNSServiceAttrAllowFailover` (lets mDNSResponder fail a query over to
+-/// scoped/supplemental resolvers, as getaddrinfo does), when this OS has both.
+-fn getaddrinfo_ex() -> Option<(GetAddrInfoExFn, *const DNSServiceAttribute)> {
++/// libinfo's getaddrinfo call: only QueryRecord sends `kDNSServiceAttrAllowFailover` to the daemon (`DNSServiceGetAddrInfoEx` drops it).
++fn query_record_allowing_failover()
++-> Option<(QueryRecordWithAttributeFn, *const DNSServiceAttribute)> {
+     let f = bun_sys::dlsym_with_handle!(
+-        GetAddrInfoExFn,
+-        "DNSServiceGetAddrInfoEx",
++        QueryRecordWithAttributeFn,
++        "DNSServiceQueryRecordWithAttribute",
+         Some(libc::RTLD_DEFAULT)
+     )?;
+     let attr = bun_sys::dlsym_with_handle!(
+@@ -150,41 +157,75 @@ enum Attempt {
+     Reissued,
+ }
+ 
++/// The A and the AAAA subordinate of one lookup; null for a family that was not asked for.
++type FamilyRefs = [DNSServiceRef; 2];
++
++fn deallocate_refs(sd_refs: FamilyRefs) {
++    for sd_ref in sd_refs {
++        if !sd_ref.is_null() {
++            // SAFETY: FFI; a non-null entry is a live subordinate that nothing else releases.
++            unsafe { DNSServiceRefDeallocate(sd_ref) };
++        }
++    }
++}
++
++/// What dnssd_clientstub's `handle_addrinfo_response` builds: a link-local address is scoped to the interface it was seen on.
++fn address_from_record(
++    rrtype: u16,
++    rdata: &[u8],
++    interface_index: u32,
++) -> Option<bun_dns::Address> {
++    match rrtype {
++        TYPE_A => {
++            let ip = Ipv4Addr::from(<[u8; 4]>::try_from(rdata).ok()?);
++            Some(bun_dns::Address::from_ip(ip.into(), 0))
++        }
++        TYPE_AAAA => {
++            let ip = Ipv6Addr::from(<[u8; 16]>::try_from(rdata).ok()?);
++            let mut address = bun_dns::Address::from_ip(ip.into(), 0);
++            if ip.is_unicast_link_local() {
++                address.set_scope_id(interface_index);
++            }
++            Some(address)
++        }
++        _ => None,
++    }
++}
++
+ /// Per-query state shared by the JS `dns.lookup` path and the internal connect path.
+ pub(crate) struct QueryState {
+-    pub(crate) sd_ref: DNSServiceRef,
++    sd_refs: FamilyRefs,
+     pub(crate) results: bun_dns::ResultList,
+-    /// First hard error (NoSuchRecord/Timeout are per-family negatives, not errors).
+-    pub(crate) sd_error: DNSServiceErrorType,
+     /// A family timed out: an unsuppressed reissue would only wait out the timeout again.
+     saw_timeout: bool,
+     /// Last reply had `MoreComing` and no other request's reply followed: more is queued daemon-side.
+     awaiting_more: bool,
+-    /// Protocol bits with no reply yet; any family-tagged callback clears its bit.
++    /// Protocol bits with no reply yet; an address record or any error for a family's question clears its bit.
+     pub(crate) pending_proto: DNSServiceProtocol,
+     stragglers: Stragglers,
+     attempt: Attempt,
+     /// Kept so `finish()` can reissue the query for the retry.
+     hostname: bun::ZBox,
+-    callback: Option<GetAddrInfoReply>,
+ }
+ 
+ impl QueryState {
+     pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
+         Self {
+-            sd_ref: ptr::null_mut(),
++            sd_refs: [ptr::null_mut(); 2],
+             results: Default::default(),
+-            sd_error: 0,
+             saw_timeout: false,
+             awaiting_more: false,
+             pending_proto: protocol,
+             stragglers: Stragglers::None,
+             attempt: Attempt::Plain,
+             hostname: bun::ZBox::from_bytes(b""),
+-            callback: None,
+         }
+     }
+ 
++    fn deallocate_refs(&mut self) {
++        deallocate_refs(core::mem::replace(&mut self.sd_refs, [ptr::null_mut(); 2]));
++    }
++
+     /// Back to a fresh in-flight state for the unsuppressed reissue.
+     pub(crate) fn reset_for_retry(&mut self, protocol: DNSServiceProtocol) {
+         self.attempt = Attempt::Reissued;
+@@ -200,49 +241,40 @@ impl QueryState {
+ 
+     /// A suppressed query that returned nothing at all gets one unsuppressed retry.
+     fn should_retry_unsuppressed(&self) -> bool {
+-        self.attempt == Attempt::Suppressed
+-            && self.results.is_empty()
+-            && self.sd_error == 0
+-            && !self.saw_timeout
++        self.attempt == Attempt::Suppressed && self.results.is_empty() && !self.saw_timeout
+     }
+ 
+-    /// Absorb one callback. SAFETY: `address`, if non-null, is a valid sockaddr (dnssd_clientstub guarantees it).
+-    pub(crate) unsafe fn record_reply(
++    /// Absorb one callback for the question `sd_ref`.
++    fn record_reply(
+         &mut self,
++        sd_ref: DNSServiceRef,
+         flags: DNSServiceFlags,
++        interface_index: u32,
+         error_code: DNSServiceErrorType,
+-        address: *const Sockaddr,
++        rrtype: u16,
++        rdata: &[u8],
+         ttl: u32,
+     ) {
+         self.awaiting_more = flags & FLAGS_MORE_COMING != 0;
+-        // Only PolicyDenied passes a null sockaddr; A/AAAA replies (incl. negatives) are family-tagged.
+-        if address.is_null() {
+-            if self.sd_error == 0 {
+-                self.sd_error = error_code;
+-            }
+-            return;
++        // As in libinfo, any error ends only its own family. The daemon's refusals carry no rrtype, so `sd_ref` names the family.
++        if error_code != ERR_NO_ERROR || matches!(rrtype, TYPE_A | TYPE_AAAA) {
++            self.pending_proto &= !if sd_ref == self.sd_refs[0] {
++                PROTOCOL_IPV4
++            } else {
++                PROTOCOL_IPV6
++            };
+         }
+-        // SAFETY: caller contract.
+-        let fam = unsafe { (*address).sa_family } as i32;
+-        // Any reply retires the family's bit; completeness is tracked by `awaiting_more`.
+-        self.pending_proto &= !if fam == netc::AF_INET6 {
+-            PROTOCOL_IPV6
+-        } else {
+-            PROTOCOL_IPV4
+-        };
+-        if error_code == ERR_NO_ERROR && flags & FLAGS_ADD != 0 {
+-            self.results.push(GetAddrInfoResult {
+-                // SAFETY: caller contract.
+-                address: unsafe { bun_dns::Address::init_posix(address.cast()) },
+-                ttl: ttl as i32,
+-            });
+-        } else if error_code == ERR_TIMEOUT {
+-            self.saw_timeout = true;
+-        } else if error_code != ERR_NO_ERROR
+-            && error_code != ERR_NO_SUCH_RECORD
+-            && self.sd_error == 0
+-        {
+-            self.sd_error = error_code;
++        match error_code {
++            ERR_NO_ERROR if flags & FLAGS_ADD != 0 => {
++                if let Some(address) = address_from_record(rrtype, rdata, interface_index) {
++                    self.results.push(GetAddrInfoResult {
++                        address,
++                        ttl: ttl as i32,
++                    });
++                }
++            }
++            ERR_TIMEOUT => self.saw_timeout = true,
++            _ => {}
+         }
+         self.stragglers = match (self.only_stragglers_left(), self.stragglers) {
+             (false, _) => Stragglers::None,
+@@ -258,9 +290,7 @@ impl QueryState {
+     }
+ 
+     pub(crate) fn is_ready(&self) -> bool {
+-        self.sd_error != 0
+-            || self.stragglers == Stragglers::GaveUp
+-            || (self.pending_proto == 0 && !self.awaiting_more)
++        self.stragglers == Stragglers::GaveUp || (self.pending_proto == 0 && !self.awaiting_more)
+     }
+ 
+     /// Deadline for giving up on stragglers (a silent second family, or a dangling `MoreComing`).
+@@ -295,6 +325,21 @@ impl Inflight {
+         }
+     }
+ 
++    /// The `on_reply` that turns `context()` back into this variant.
++    fn reply_callback(&self) -> QueryRecordReply {
++        match *self {
++            Inflight::Jsc(_) => on_reply::<false>,
++            Inflight::Internal(_) => on_reply::<true>,
++        }
++    }
++
++    fn complete(self) {
++        match self {
++            Inflight::Jsc(r) => GetAddrInfoRequest::complete_dns_sd(r),
++            Inflight::Internal(r) => internal::dns_sd_complete(r),
++        }
++    }
++
+     /// SAFETY: the request behind `self` is live (pinned in `inflight`);
+     /// the `&mut` derives from the stored raw pointer, not from a borrow.
+     unsafe fn query<'a>(self) -> &'a mut QueryState {
+@@ -308,6 +353,41 @@ impl Inflight {
+     }
+ }
+ 
++/// Records a reply; `on_readable` completes. SAFETY: `context` is a live request of the `INTERNAL` kind; `rdata` spans `rdlen` bytes.
++unsafe extern "C" fn on_reply<const INTERNAL: bool>(
++    sd_ref: DNSServiceRef,
++    flags: DNSServiceFlags,
++    interface_index: u32,
++    error_code: DNSServiceErrorType,
++    _fullname: *const c_char,
++    rrtype: u16,
++    _rrclass: u16,
++    rdlen: u16,
++    rdata: *const c_void,
++    ttl: u32,
++    context: *mut c_void,
++) {
++    SharedConnection::note_reply(context);
++    let owner = if INTERNAL {
++        Inflight::Internal(context.cast())
++    } else {
++        Inflight::Jsc(context.cast())
++    };
++    // SAFETY: caller contract; the slice is only read before this callback returns.
++    let rdata = unsafe { bun::ffi::slice(rdata.cast::<u8>(), rdlen as usize) };
++    // SAFETY: caller contract; event-loop thread, and no other borrow of the query is live here.
++    let query = unsafe { owner.query() };
++    query.record_reply(
++        sd_ref,
++        flags,
++        interface_index,
++        error_code,
++        rrtype,
++        rdata,
++        ttl,
++    );
++}
++
+ /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
+ pub(crate) struct SharedConnection {
+     main_ref: DNSServiceRef,
+@@ -400,76 +480,88 @@ impl SharedConnection {
+         Self::current()
+     }
+ 
+-    /// Start a subordinate query and track it (keeps the process alive); `None` if the daemon refused.
++    /// Start `owner`'s queries and track it (keeps the process alive); `false` if the daemon refused.
+     pub(crate) fn start(
+         &mut self,
+         owner: Inflight,
+         protocol: DNSServiceProtocol,
+         hostname: &ZStr,
+-        callback: GetAddrInfoReply,
+-        context: *mut c_void,
+-    ) -> Option<DNSServiceRef> {
++    ) -> bool {
+         let suppress = addrconfig_flags(protocol);
+-        let sub = self.issue(protocol, suppress, hostname, callback, context)?;
++        let Some(sd_refs) = self.issue(owner, protocol, suppress, hostname) else {
++            return false;
++        };
+         if self.inflight.is_empty() {
+             let ctx = self.ctx;
+             self.file_poll().enable_keeping_process_alive(ctx);
+         }
+         // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
+         let q = unsafe { owner.query() };
+-        q.sd_ref = sub;
++        q.sd_refs = sd_refs;
+         q.attempt = if suppress != 0 {
+             Attempt::Suppressed
+         } else {
+             Attempt::Plain
+         };
+         q.hostname = bun::ZBox::from_bytes(hostname.as_bytes());
+-        q.callback = Some(callback);
+         self.inflight.push(owner);
+-        Some(sub)
++        true
+     }
+ 
++    /// One query per family in `protocol`, as libinfo does; `None`, with none left running, if the daemon refused one.
+     fn issue(
+         &mut self,
++        owner: Inflight,
+         protocol: DNSServiceProtocol,
+         suppress: DNSServiceFlags,
+         hostname: &ZStr,
+-        callback: GetAddrInfoReply,
+-        context: *mut c_void,
+-    ) -> Option<DNSServiceRef> {
+-        // ShareConnection requires `sub` to start as a copy of the primary ref.
+-        let mut sub: DNSServiceRef = self.main_ref;
++    ) -> Option<FamilyRefs> {
+         let flags = FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress;
+-        let hostname = hostname.as_ptr().cast::<c_char>();
+-        // SAFETY: FFI; `hostname` is NUL-terminated (copied by dns_sd); `context` is only stored.
+-        let err = unsafe {
+-            match getaddrinfo_ex() {
+-                Some((ex, attr)) => ex(
+-                    &raw mut sub,
+-                    flags,
+-                    0,
+-                    protocol,
+-                    hostname,
+-                    attr,
+-                    callback,
+-                    context,
+-                ),
+-                None => DNSServiceGetAddrInfo(
+-                    &raw mut sub,
+-                    flags,
+-                    0,
+-                    protocol,
+-                    hostname,
+-                    callback,
+-                    context,
+-                ),
++        // Sent as given: the daemon tries search domains only for a name with no trailing dot.
++        let name = hostname.as_ptr().cast::<c_char>();
++        let (callback, context) = (owner.reply_callback(), owner.context());
++        let mut sd_refs: FamilyRefs = [ptr::null_mut(); 2];
++        let families = [(PROTOCOL_IPV4, TYPE_A), (PROTOCOL_IPV6, TYPE_AAAA)];
++        for (i, (family, rrtype)) in families.into_iter().enumerate() {
++            if protocol & family == 0 {
++                continue;
+             }
+-        };
+-        if err != ERR_NO_ERROR {
+-            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
+-            return None;
++            // ShareConnection requires `sub` to start as a copy of the primary ref.
++            let mut sub: DNSServiceRef = self.main_ref;
++            // SAFETY: FFI; `name` is NUL-terminated (copied by dns_sd); `context` is only stored.
++            let err = unsafe {
++                match query_record_allowing_failover() {
++                    Some((query_record, allow_failover)) => query_record(
++                        &raw mut sub,
++                        flags,
++                        0,
++                        name,
++                        rrtype,
++                        CLASS_IN,
++                        allow_failover,
++                        callback,
++                        context,
++                    ),
++                    None => DNSServiceQueryRecord(
++                        &raw mut sub,
++                        flags,
++                        0,
++                        name,
++                        rrtype,
++                        CLASS_IN,
++                        callback,
++                        context,
++                    ),
++                }
++            };
++            if err != ERR_NO_ERROR {
++                bun_output::scoped_log!(dns, "DNSServiceQueryRecord failed: {}", err);
++                deallocate_refs(sd_refs);
++                return None;
++            }
++            sd_refs[i] = sub;
+         }
+-        Some(sub)
++        Some(sd_refs)
+     }
+ 
+     /// Called first from every reply callback: a different `context` ends the previous request's `MoreComing` run.
+@@ -507,7 +599,7 @@ impl SharedConnection {
+             let ready = core::mem::take(&mut this.inflight);
+             let detached = SHARED.replace(ptr::null_mut());
+             for inf in ready {
+-                Self::finish(inf, Some(rc));
++                Self::fail(inf);
+             }
+             // SAFETY: `detached` was just removed from SHARED and drained.
+             unsafe { Self::destroy(detached) };
+@@ -516,7 +608,7 @@ impl SharedConnection {
+         let ready = this.take_ready(|q| q.is_ready());
+         this.arm_early_out();
+         for inf in ready {
+-            Self::finish(inf, None);
++            Self::finish(inf);
+         }
+     }
+ 
+@@ -600,7 +692,7 @@ impl SharedConnection {
+             ready
+         };
+         for inf in ready {
+-            Self::finish(inf, None);
++            Self::finish(inf);
+         }
+     }
+ 
+@@ -626,22 +718,23 @@ impl SharedConnection {
+         drop(conn);
+     }
+ 
+-    /// `force_err` drops partial results so teardown rejects instead of resolving.
+-    fn finish(inf: Inflight, force_err: Option<DNSServiceErrorType>) {
++    fn finish(inf: Inflight) {
+         // SAFETY: `inf` is a live heap request just removed from `inflight`.
+         let q = unsafe { inf.query() };
+-        // SAFETY: FFI; `sd_ref` is this request's live subordinate.
+-        unsafe { DNSServiceRefDeallocate(q.sd_ref) };
+-        if let Some(e) = force_err {
+-            q.results.clear();
+-            q.sd_error = e;
+-        } else if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
++        q.deallocate_refs();
++        if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
+             return;
+         }
+-        match inf {
+-            Inflight::Jsc(r) => GetAddrInfoRequest::complete_dns_sd(r),
+-            Inflight::Internal(r) => internal::dns_sd_complete(r),
+-        }
++        inf.complete();
++    }
++
++    /// The connection is going away: drops partial results so the request rejects instead of resolving.
++    fn fail(inf: Inflight) {
++        // SAFETY: `inf` is a live heap request just removed from `inflight`.
++        let q = unsafe { inf.query() };
++        q.deallocate_refs();
++        q.results.clear();
++        inf.complete();
+     }
+ 
+     /// Reissue `inf`'s query without SuppressUnusable; `false` if it couldn't be reissued.
+@@ -652,11 +745,8 @@ impl SharedConnection {
+         // SAFETY: `inf` is a live heap request removed from `inflight` by the caller.
+         let q = unsafe { inf.query() };
+         let (protocol, hostname) = (protocol_for_pending(q), q.hostname.clone());
+-        let Some(callback) = q.callback else {
+-            return false;
+-        };
+         q.reset_for_retry(protocol);
+-        let Some(sub) = this.issue(protocol, 0, &hostname, callback, inf.context()) else {
++        let Some(sd_refs) = this.issue(inf, protocol, 0, &hostname) else {
+             return false;
+         };
+         bun_output::scoped_log!(
+@@ -664,7 +754,7 @@ impl SharedConnection {
+             "retrying {} without SuppressUnusable",
+             bstr::BStr::new(hostname.as_bytes())
+         );
+-        q.sd_ref = sub;
++        q.sd_refs = sd_refs;
+         if this.inflight.is_empty() {
+             let ctx = this.ctx;
+             this.file_poll().enable_keeping_process_alive(ctx);
+@@ -687,13 +777,12 @@ impl SharedConnection {
+                 // have waiters on other threads (and its outcome is cached): this
+                 // thread going away is not an answer. Finish it on the work pool.
+                 Inflight::Internal(req) => {
+-                    // SAFETY: `inf` is a live heap request just removed from `inflight`;
+-                    // FFI releases this thread's subordinate for it.
+-                    unsafe { DNSServiceRefDeallocate(inf.query().sd_ref) };
++                    // SAFETY: `inf` is a live heap request just removed from `inflight`.
++                    unsafe { inf.query() }.deallocate_refs();
+                     internal::run_on_work_pool(req);
+                 }
+                 // A dns.lookup() from this thread's script: only this VM waits on it.
+-                Inflight::Jsc(_) => Self::finish(inf, Some(ERR_DEFUNCT_CONNECTION)),
++                Inflight::Jsc(_) => Self::fail(inf),
+             }
+         }
+         // SAFETY: `this` is detached and drained.
+@@ -755,13 +844,7 @@ pub(crate) fn lookup(
+     let promise_value = unsafe { (*request).head.promise.value() };
+ 
+     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
+-    let Some(_) = shared.start(
+-        Inflight::Jsc(request),
+-        protocol,
+-        &name_z,
+-        GetAddrInfoRequest::dns_sd_reply,
+-        request.cast::<c_void>(),
+-    ) else {
++    if !shared.start(Inflight::Jsc(request), protocol, &name_z) {
+         // SAFETY: request is exclusively owned; dns_sd never accepted it.
+         unsafe {
+             if let Some(pos) = (*request).pending_slot {
+@@ -775,7 +858,7 @@ pub(crate) fn lookup(
+             drop(bun_core::heap::take(request));
+         }
+         return lib_c::lookup(this, query, global_this, context);
+-    };
++    }
+ 
+     this.request_sent(this.vm());
+ 
+diff --git a/test/js/bun/dns/mdnsresponder-fixture.ts b/test/js/bun/dns/mdnsresponder-fixture.ts
+new file mode 100644
+index 0000000000..fca1c89771
+--- /dev/null
++++ b/test/js/bun/dns/mdnsresponder-fixture.ts
+@@ -0,0 +1,222 @@
++// A scripted stand-in for mDNSResponder. libsystem_dnssd connects to $DNSSD_UDS_PATH when it is set.
++//
++//   bun mdnsresponder-fixture.ts <socket path> <answers JSON> <client script>
++//
++// Runs the client script in a child Bun, answers its queries from `answers`, and after the client has
++// gone prints every request it made as one line of JSON. The client's own stdout comes first.
++import { dlopen, ptr } from "bun:ffi";
++import { closeSync, writeSync } from "node:fs";
++
++export type Answer = {
++  rrtype: number;
++  /** An IPv4 or IPv6 address as bytes, or any other rdata. */
++  rdata?: number[];
++  /** Defaults to kDNSServiceFlagsAdd. */
++  flags?: number;
++  error?: number;
++  ifindex?: number;
++  ttl?: number;
++  /** Held back until a query for this name arrives. */
++  after?: string;
++};
++/** Keyed by `${name} ${rrtype}`. A query with no entry gets kDNSServiceErr_NoSuchRecord. */
++export type Answers = Record<string, Answer[]>;
++
++const [socketPath, answersJSON, clientScript] = process.argv.slice(2);
++const answers: Answers = JSON.parse(answersJSON);
++
++const { symbols: libc } = dlopen("libSystem.B.dylib", {
++  socket: { args: ["i32", "i32", "i32"], returns: "i32" },
++  bind: { args: ["i32", "ptr", "u32"], returns: "i32" },
++  listen: { args: ["i32", "i32"], returns: "i32" },
++  accept: { args: ["i32", "ptr", "ptr"], returns: "i32" },
++  poll: { args: ["ptr", "u32", "i32"], returns: "i32" },
++  recvmsg: { args: ["i32", "ptr", "i32"], returns: "i64" },
++});
++
++const AF_UNIX = 1;
++const SOCK_STREAM = 1;
++const SOL_SOCKET = 0xffff;
++const SCM_RIGHTS = 1;
++const POLLIN = 1;
++
++const HEADER_SIZE = 28;
++const IPC_FLAGS_TRAILING_TLVS = 2;
++const ops = { 1: "connection", 8: "query", 15: "addrinfo", 63: "cancel" } as const;
++const QUERY_REPLY = 68;
++const ADDRINFO_REPLY = 72;
++
++const FLAGS_ADD = 0x2;
++const ERR_NO_SUCH_RECORD = -65554;
++const ERR_UNSUPPORTED = -65544;
++const TYPE_A = 1;
++const TYPE_AAAA = 28;
++
++function check(rc: number, what: string) {
++  if (rc < 0) throw new Error(`${what} failed`);
++  return rc;
++}
++
++function listenOn(path: string) {
++  const pathBytes = Buffer.from(path);
++  if (pathBytes.length >= 104) throw new Error(`socket path is too long for sun_path: ${path}`);
++  const addr = new Uint8Array(106);
++  addr[0] = addr.length;
++  addr[1] = AF_UNIX;
++  addr.set(pathBytes, 2);
++  const fd = check(libc.socket(AF_UNIX, SOCK_STREAM, 0), "socket");
++  check(libc.bind(fd, ptr(addr), addr.length), "bind");
++  check(libc.listen(fd, 8), "listen");
++  return fd;
++}
++
++/** One recvmsg(): the bytes read (empty at EOF) and any descriptors that came with them. */
++function receive(fd: number) {
++  const data = new Uint8Array(4096);
++  const control = new Uint8Array(64);
++  const iov = new BigUint64Array([BigInt(ptr(data)), BigInt(data.length)]);
++  const msg = new DataView(new ArrayBuffer(48));
++  msg.setBigUint64(16, BigInt(ptr(iov)), true);
++  msg.setInt32(24, 1, true);
++  msg.setBigUint64(32, BigInt(ptr(control)), true);
++  msg.setUint32(40, control.length, true);
++  const n = Number(libc.recvmsg(fd, ptr(new Uint8Array(msg.buffer)), 0));
++  const fds: number[] = [];
++  const cmsg = new DataView(control.buffer);
++  if (msg.getUint32(40, true) >= 16 && cmsg.getInt32(4, true) === SOL_SOCKET && cmsg.getInt32(8, true) === SCM_RIGHTS) {
++    for (let at = 12; at + 4 <= cmsg.getUint32(0, true); at += 4) fds.push(cmsg.getInt32(at, true));
++  }
++  return { bytes: Buffer.from(data.subarray(0, Math.max(n, 0))), fds };
++}
++
++function reply(op: number, context: Buffer, name: string, qtype: number) {
++  const fullname = Buffer.from((name.endsWith(".") ? name : name + ".") + "\0");
++  const list = answers[`${name} ${qtype}`] ?? [{ rrtype: qtype, error: ERR_NO_SUCH_RECORD }];
++  return list.map(({ rrtype, rdata = [], flags = FLAGS_ADD, error = 0, ifindex = 0, ttl = 60, after }) => {
++    const body = Buffer.alloc(12 + fullname.length + 6 + rdata.length + 4);
++    body.writeUInt32BE(flags, 0);
++    body.writeUInt32BE(ifindex, 4);
++    body.writeInt32BE(error, 8);
++    let at = 12 + fullname.copy(body, 12);
++    at = body.writeUInt16BE(rrtype, at);
++    at = body.writeUInt16BE(1, at);
++    at = body.writeUInt16BE(rdata.length, at);
++    at += Buffer.from(rdata).copy(body, at);
++    body.writeUInt32BE(ttl, at);
++    const header = Buffer.alloc(HEADER_SIZE);
++    header.writeUInt32BE(1, 0);
++    header.writeUInt32BE(body.length, 4);
++    header.writeUInt32BE(op, 12);
++    context.copy(header, 16);
++    return { after, bytes: Buffer.concat([header, body]) };
++  });
++}
++
++function cstring(data: Buffer, at: number) {
++  const end = data.indexOf(0, at);
++  return { value: data.toString("latin1", at, end), next: end + 1 };
++}
++
++function tlvs(data: Buffer, at: number) {
++  const out: Record<number, number[]> = {};
++  while (at + 4 <= data.length) {
++    const length = data.readUInt16BE(at + 2);
++    out[data.readUInt16BE(at)] = [...data.subarray(at + 4, at + 4 + length)];
++    at += 4 + length;
++  }
++  return out;
++}
++
++const requests: object[] = [];
++let held: { conn: number; after: string; bytes: Buffer }[] = [];
++
++function handle(conn: number, header: Buffer, data: Buffer, errorFds: number[]) {
++  const op = header.readUInt32BE(12);
++  const context = header.subarray(16, 24);
++  const hasTLVs = (header.readUInt32BE(8) & IPC_FLAGS_TRAILING_TLVS) !== 0;
++  const status = Buffer.alloc(4);
++
++  if (ops[op] === "connection") {
++    writeSync(conn, status);
++    return;
++  }
++  if (ops[op] === "cancel") return;
++
++  // Byte 0 is the empty control path that marks a request whose status goes to a descriptor of its own.
++  const flags = data.readUInt32BE(1);
++  const ifindex = data.readUInt32BE(5);
++  const replies: ReturnType<typeof reply> = [];
++  if (ops[op] === "query") {
++    const { value: name, next } = cstring(data, 9);
++    const rrtype = data.readUInt16BE(next);
++    for (const { conn, bytes } of held.filter(({ after }) => after === name)) writeSync(conn, bytes);
++    held = held.filter(({ after }) => after !== name);
++    requests.push({ op: "query", name, rrtype, flags, ifindex, tlvs: hasTLVs ? tlvs(data, next + 4) : {} });
++    replies.push(...reply(QUERY_REPLY, context, name, rrtype));
++  } else if (ops[op] === "addrinfo") {
++    const protocol = data.readUInt32BE(9);
++    const { value: name, next } = cstring(data, 13);
++    requests.push({ op: "addrinfo", name, protocol, flags, ifindex, tlvs: hasTLVs ? tlvs(data, next) : {} });
++    if (protocol & 2) replies.push(...reply(ADDRINFO_REPLY, context, name, TYPE_AAAA));
++    if (protocol & 1) replies.push(...reply(ADDRINFO_REPLY, context, name, TYPE_A));
++  } else {
++    requests.push({ op });
++    status.writeInt32BE(ERR_UNSUPPORTED);
++  }
++
++  const errorFd = errorFds.shift();
++  if (errorFd === undefined) throw new Error(`request with op ${op} came without a descriptor for its status`);
++  writeSync(errorFd, status);
++  closeSync(errorFd);
++  for (const { after, bytes } of replies) {
++    if (after === undefined) writeSync(conn, bytes);
++    else held.push({ conn, after, bytes });
++  }
++}
++
++const listener = listenOn(socketPath);
++const client = Bun.spawn({
++  cmd: [process.execPath, "-e", clientScript],
++  env: { ...process.env, DNSSD_UDS_PATH: socketPath },
++  stdio: ["ignore", "inherit", "inherit", "pipe"],
++});
++// Only the client holds the other end, so this becomes readable when the client is gone.
++const clientGone = client.stdio[3] as number;
++
++const conns = new Map<number, { pending: Buffer; errorFds: number[] }>();
++serving: while (true) {
++  const fds = [clientGone, listener, ...conns.keys()];
++  const pollfds = new DataView(new ArrayBuffer(fds.length * 8));
++  fds.forEach((fd, i) => {
++    pollfds.setInt32(i * 8, fd, true);
++    pollfds.setInt16(i * 8 + 4, POLLIN, true);
++  });
++  check(libc.poll(ptr(new Uint8Array(pollfds.buffer)), fds.length, -1), "poll");
++  for (let i = 0; i < fds.length; i++) {
++    if (pollfds.getInt16(i * 8 + 6, true) === 0) continue;
++    const fd = fds[i];
++    if (fd === clientGone) break serving;
++    if (fd === listener) {
++      conns.set(check(libc.accept(listener, null, null), "accept"), { pending: Buffer.alloc(0), errorFds: [] });
++      continue;
++    }
++    const conn = conns.get(fd)!;
++    const { bytes, fds: passed } = receive(fd);
++    if (bytes.length === 0) {
++      closeSync(fd);
++      conns.delete(fd);
++      continue;
++    }
++    conn.errorFds.push(...passed);
++    conn.pending = Buffer.concat([conn.pending, bytes]);
++    while (conn.pending.length >= HEADER_SIZE) {
++      const size = HEADER_SIZE + conn.pending.readUInt32BE(4);
++      if (conn.pending.length < size) break;
++      handle(fd, conn.pending.subarray(0, HEADER_SIZE), conn.pending.subarray(HEADER_SIZE, size), conn.errorFds);
++      conn.pending = conn.pending.subarray(size);
++    }
++  }
++}
++
++console.log(JSON.stringify(requests));
++process.exitCode = await client.exited;
+diff --git a/test/js/bun/dns/resolve-dns.test.ts b/test/js/bun/dns/resolve-dns.test.ts
+index a9d7efde6f..6f2fec086a 100644
+--- a/test/js/bun/dns/resolve-dns.test.ts
++++ b/test/js/bun/dns/resolve-dns.test.ts
+@@ -1,9 +1,11 @@
+ import { SystemError, dns } from "bun";
+-import { describe, expect, test } from "bun:test";
+-import { bunEnv, bunExe, isASAN, isWindows, withoutAggressiveGC } from "harness";
++import { afterAll, beforeAll, describe, expect, test } from "bun:test";
++import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+ import { isIP, isIPv4, isIPv6 } from "node:net";
+ import { join } from "node:path";
++import type { Answer, Answers } from "./mdnsresponder-fixture";
+ 
++const cc = Bun.which("cc") || Bun.which("clang");
+ const backends = ["system", "libc", "c-ares"];
+ const validHostnames = ["localhost", "example.com"];
+ const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
+@@ -298,4 +300,240 @@ describe("dns", () => {
+       );
+     });
+   });
++
++  // On macOS the system backend talks to mDNSResponder over a unix socket. These put a scripted responder
++  // behind that socket, so each test sees the requests Bun makes and chooses the replies Bun gets.
++  describe.skipIf(!isMacOS || !cc)("system backend over the mDNSResponder socket", () => {
++    // libsystem_dnssd has a DNSSD_UDS_PATH override of its own, but on macOS 26 only a setuid process reads it.
++    const redirectConnect = /* c */ `
++      #include <stdlib.h>
++      #include <string.h>
++      #include <sys/socket.h>
++      #include <sys/un.h>
++
++      int connect_nocancel(int, const struct sockaddr *, socklen_t) __asm("_connect$NOCANCEL");
++
++      static const struct sockaddr *redirect(const struct sockaddr *addr, struct sockaddr_un *to) {
++        const char *path = getenv("DNSSD_UDS_PATH");
++        if (!path || addr->sa_family != AF_UNIX ||
++            strcmp(((const struct sockaddr_un *)addr)->sun_path, "/var/run/mDNSResponder"))
++          return addr;
++        to->sun_len = sizeof(*to);
++        to->sun_family = AF_UNIX;
++        strlcpy(to->sun_path, path, sizeof(to->sun_path));
++        return (const struct sockaddr *)to;
++      }
++
++      static int redirected_connect(int fd, const struct sockaddr *addr, socklen_t len) {
++        struct sockaddr_un to;
++        return connect(fd, redirect(addr, &to), len);
++      }
++
++      static int redirected_connect_nocancel(int fd, const struct sockaddr *addr, socklen_t len) {
++        struct sockaddr_un to;
++        return connect_nocancel(fd, redirect(addr, &to), len);
++      }
++
++      __attribute__((used, section("__DATA,__interpose"))) static const struct {
++        const void *replacement, *original;
++      } interpose[] = {
++        {(const void *)redirected_connect, (const void *)connect},
++        {(const void *)redirected_connect_nocancel, (const void *)connect_nocancel},
++      };
++    `;
++
++    let dir: ReturnType<typeof tempDir>;
++    let sockets = 0;
++
++    beforeAll(async () => {
++      dir = tempDir("dns-sd", { "redirect.c": redirectConnect });
++      await using proc = Bun.spawn({
++        cmd: [cc!, "-dynamiclib", "-o", "redirect.dylib", "redirect.c"],
++        cwd: String(dir),
++        env: bunEnv,
++        stdout: "inherit",
++        stderr: "pipe",
++      });
++      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
++      if (exitCode !== 0) throw new Error(`could not compile redirect.c: ${stderr}`);
++    });
++
++    afterAll(() => dir?.[Symbol.dispose]());
++
++    const A = 1;
++    const CNAME = 5;
++    const AAAA = 28;
++    // kDNSServiceFlagsShareConnection | kDNSServiceFlagsTimeout | kDNSServiceFlagsReturnIntermediates
++    const baseFlags = 0x4000 | 0x10000 | 0x1000;
++    const suppressUnusable = 0x8000;
++    const alias: Answer = { rrtype: CNAME, rdata: [5, ...Buffer.from("alias"), 4, ...Buffer.from("test"), 0] };
++    const a = (...rdata: number[]): Answer => ({ rrtype: A, rdata });
++    const aaaa = (first: number, last: number, more: Partial<Answer> = {}): Answer => ({
++      rrtype: AAAA,
++      rdata: [first >> 8, first & 0xff, ...Buffer.alloc(13), last],
++      ...more,
++    });
++
++    /** Runs `script` with `answers` behind the socket: the one line of JSON it prints, and the requests it made. */
++    async function exchange(answers: Answers, script: string) {
++      await using proc = Bun.spawn({
++        cmd: [
++          bunExe(),
++          join(import.meta.dir, "mdnsresponder-fixture.ts"),
++          join(String(dir), `${sockets++}.sock`),
++          JSON.stringify(answers),
++          script,
++        ],
++        env: { ...bunEnv, DYLD_INSERT_LIBRARIES: join(String(dir), "redirect.dylib"), NO_PROXY: "*", no_proxy: "*" },
++        stdout: "pipe",
++        stderr: "inherit",
++      });
++      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
++      const [printed, requests] = stdout
++        .trim()
++        .split("\n")
++        .map(line => JSON.parse(line));
++      return {
++        printed,
++        // TLV 4 is IPC_TLV_TYPE_SERVICE_ATTR_FAILOVER_POLICY; 1 is kDNSServiceFailoverPolicyAllow.
++        requests: requests.map(({ tlvs, ...request }) => ({ ...request, failoverPolicy: tlvs?.[4]?.at(-1) })),
++        exitCode,
++      };
++    }
++
++    const lookup = (name: string, options: object = {}) =>
++      `console.log(JSON.stringify(await Bun.dns.lookup(${JSON.stringify(name)}, ${JSON.stringify(options)}).catch(e => e.code)))`;
++
++    const queries = (name: string, flags: number, rrtypes = [A, AAAA]) =>
++      rrtypes.map(rrtype => ({ op: "query", name, rrtype, flags, ifindex: 0, failoverPolicy: 1 }));
++
++    const both = {
++      "host.corp.example 1": [alias, a(10, 0, 0, 10)],
++      "host.corp.example 28": [alias, aaaa(0xfd00, 0x10)],
++    };
++
++    // https://github.com/oven-sh/bun/issues/44075
++    test.concurrent("lookup() queries each family and allows failover to another resolver", async () => {
++      expect(await exchange(both, lookup("host.corp.example"))).toEqual({
++        printed: [
++          { address: "fd00::10", family: 6, ttl: 60 },
++          { address: "10.0.0.10", family: 4, ttl: 60 },
++        ],
++        requests: queries("host.corp.example", baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() makes the same requests as getaddrinfo()", async () => {
++      const [system, libc] = await Promise.all(
++        ["system", "libc"].map(backend => exchange(both, lookup("host.corp.example", { backend }))),
++      );
++      expect(libc.requests).toHaveLength(2);
++      expect(system.requests).toEqual(libc.requests);
++    });
++
++    test.concurrent("fetch() queries each family and allows failover to another resolver", async () => {
++      const script = `
++        using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("reached") });
++        const response = await fetch("http://host.corp.example:" + server.port + "/");
++        console.log(JSON.stringify(await response.text()));
++      `;
++      expect(await exchange({ "host.corp.example 1": [alias, a(127, 0, 0, 1)] }, script)).toEqual({
++        printed: "reached",
++        requests: queries("host.corp.example", baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent.each([
++      { family: 4, rrtype: A, address: "10.0.0.10" },
++      { family: 6, rrtype: AAAA, address: "fd00::10" },
++    ])("lookup() with family: $family queries that family alone", async ({ family, rrtype, address }) => {
++      expect(await exchange(both, lookup("host.corp.example", { family }))).toEqual({
++        printed: [{ address, family, ttl: 60 }],
++        requests: queries("host.corp.example", baseFlags, [rrtype]),
++        exitCode: 0,
++      });
++    });
++
++    // mDNSResponder tries the search domains for a single label only when the name has no trailing dot.
++    test.concurrent.each(["intranet", "host.corp.example."])("lookup(%j) sends the name as written", async name => {
++      expect(await exchange({ [`${name} 1`]: [a(10, 0, 0, 10)] }, lookup(name))).toEqual({
++        printed: [{ address: "10.0.0.10", family: 4, ttl: 60 }],
++        requests: queries(name, baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() scopes a link-local address to the interface it was seen on", async () => {
++      const answers = { "printer.local 28": [aaaa(0xfe80, 1, { ifindex: 7 }), aaaa(0xfd00, 1, { ifindex: 7 })] };
++      expect(await exchange(answers, lookup("printer.local"))).toEqual({
++        printed: [
++          { address: "fe80::1%7", family: 6, ttl: 60 },
++          { address: "fd00::1", family: 6, ttl: 60 },
++        ],
++        requests: queries("printer.local", baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() keeps only well-formed records that were added", async () => {
++      const removed = { ...a(10, 0, 0, 9), flags: 0 };
++      const answers = { "host.corp.example 1": [a(10, 0, 0, 10), removed, a(10, 0, 0)] };
++      expect(await exchange(answers, lookup("host.corp.example"))).toEqual({
++        printed: [{ address: "10.0.0.10", family: 4, ttl: 60 }],
++        requests: queries("host.corp.example", baseFlags | suppressUnusable),
++        exitCode: 0,
++      });
++    });
++
++    // kDNSServiceErr_NoAuth. The daemon reports a question it refuses to start with no record type.
++    const refused: Answer = { rrtype: 0, error: -65555 };
++
++    test.concurrent("lookup() waits for the other family when the daemon refuses one question", async () => {
++      const answers = {
++        "host.corp.example 1": [refused],
++        "host.corp.example 28": [aaaa(0xfd00, 0x10, { after: "second.test" })],
++        "first.test 1": [a(10, 0, 0, 1)],
++        "second.test 1": [a(10, 0, 0, 2)],
++      };
++      // The answer for first.test is behind the refusal on the socket, so the refusal has been read once it resolves.
++      const script = `
++        const host = Bun.dns.lookup("host.corp.example").catch(e => e.code);
++        await Bun.dns.lookup("first.test");
++        await Bun.dns.lookup("second.test");
++        console.log(JSON.stringify(await host));
++      `;
++      expect(await exchange(answers, script)).toEqual({
++        printed: [{ address: "fd00::10", family: 6, ttl: 60 }],
++        requests: ["host.corp.example", "first.test", "second.test"].flatMap(name =>
++          queries(name, baseFlags | suppressUnusable),
++        ),
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() reports ENOTFOUND when the daemon refuses both questions", async () => {
++      const answers = { "host.corp.example 1": [refused], "host.corp.example 28": [refused] };
++      expect(await exchange(answers, lookup("host.corp.example"))).toEqual({
++        printed: "DNS_ENOTFOUND",
++        requests: [
++          ...queries("host.corp.example", baseFlags | suppressUnusable),
++          ...queries("host.corp.example", baseFlags),
++        ],
++        exitCode: 0,
++      });
++    });
++
++    test.concurrent("lookup() asks once more without SuppressUnusable before it reports ENOTFOUND", async () => {
++      expect(await exchange({}, lookup("host.corp.example"))).toEqual({
++        printed: "DNS_ENOTFOUND",
++        requests: [
++          ...queries("host.corp.example", baseFlags | suppressUnusable),
++          ...queries("host.corp.example", baseFlags),
++        ],
++        exitCode: 0,
++      });
++    });
++  });
+ });
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dylan Conway <dylan.conway567@gmail.com>
+Date: Wed, 21 Oct 2026 17:28:46 -0700
+Subject: [PATCH] fetch, RedisClient: a TLS session that breaks after its
+ handshake is a lost connection, not a failed handshake (#46409)
+
+Restores two recoveries that 1.4.3 has and `main` lost: `fetch` sending
+a request again after a reused https connection breaks, and
+`Bun.RedisClient` reconnecting after a `rediss://` connection breaks.
+
+When a TLS session that is already up gets bytes it cannot accept (bytes
+that are not a TLS record, a record that does not authenticate) and the
+peer closes:
+
+| | 1.4.3 | `main` |
+|---|---|---|
+| `fetch`, GET on a reused https connection | sent again on a new
+connection, resolves | rejects with `EPROTO: The TLS handshake failed` |
+| `fetch`, GET through a reused CONNECT tunnel, the session with the
+**https proxy** breaks | sent again, resolves | rejects with `EPROTO` |
+| `RedisClient` over `rediss://`, a command in flight or the connection
+idle | reconnects | never reconnects, every later command rejects with
+`Connection has failed` |
+
+A FIN, an RST and a close_notify at the same moment are recovered from
+on both builds.
+
+Since #44618, `ssl_fail_established_session`
+(`packages/bun-usockets/src/crypto/openssl.c`) reports a fatal error on
+an established session to the socket's owner through
+`on_handshake(success = 0)`, and then closes the socket itself. An owner
+that takes every such report for a refused handshake fails for good,
+before the close event that carries its recovery policy arrives:
+
+- `HTTPContext::Handler::on_handshake` called `close_and_fail`, so
+`HTTPClient::on_close`, which holds the resend rule, found a client that
+had already failed.
+- `JSValkeyClient`'s `on_handshake` called `fail_with_js_value`, which
+sets `flags.failed`, and `ValkeyClient::on_close` skips the retry policy
+for a failed client.
+
+The WebSocket client got its guard for this in #45720.
+
+**fetch** (`src/http/HTTPContext.rs`, the fixing lines): a failed report
+for a request that `on_close` would send again returns without failing
+the client. uSockets closes the socket right after the report, and
+`on_close` does what it does for a FIN. `allow_retry` is only ever set
+on a reused connection, which is past its handshake, so a real handshake
+failure never takes this path. To ask the same question in both places,
+the condition moves out of `on_close` into
+`HTTPClient::retries_on_close()` unchanged (`src/http/lib.rs`).
+
+Everything that is not sent again keeps `main`'s behavior and its
+`EPROTO`: a POST, a stream body, a response whose body has started,
+`keepalive: false`.
+
+**RedisClient** (`src/runtime/valkey_jsc/`): a failed report on a
+connection that is `Connected` (its `HELLO` was answered), with
+`autoReconnect` on, is a lost connection. The commands in flight are
+rejected with the TLS reason, as on `main`, `failed` stays unset, and
+the close that follows runs the usual retry policy. The rejections are
+made without entering an event loop scope, so they are observed after
+`on_close` has run: a command issued from a `catch` waits for the new
+connection, as it does after a FIN, instead of going out on the dead
+socket.
+
+Two cases keep `main`'s behavior, the client fails and every pending
+command is rejected with the TLS reason:
+
+- **Before the reply to `HELLO`.** That is where a TLS 1.3 server
+refuses the client's certificate, after the client's side of the
+handshake is over, so a failure there is a refusal and not a lost
+connection. A client with no certificate gets `EPROTO:
+...TLSV1_ALERT_CERTIFICATE_REQUIRED` from its first dial. (1.4.3 keeps
+dialing here: 9 connections in 8 s, with the command still pending.)
+- **`autoReconnect: false`.** There is no policy to hand the close to,
+and failing the client tells the commands that are still queued why, not
+only the ones in flight.
+
+- **The session inside a CONNECT tunnel** (origin side, `ProxyTunnel`).
+A request on a reused tunnel whose inner session ends is not sent again
+on `main`, but it is not on 1.4.3 either, and not for a FIN or a
+close_notify either. It is a different cause (`ProxyTunnel::on_close`
+never consults the resend rule) and older than #44618, so it is not part
+of this PR.
+- **HTTP/2 sessions**: `fail_streams` sends nothing again for any kind
+of close, so only the error code depends on the report.
+- **`Bun.SQL`**: the pool does not retry the close of an established
+connection whatever the error is, and dials again for the next query.
+- A finished TLS 1.2 renegotiation makes `RedisClient` send `HELLO`
+again. That is #45413.
+
+Reproduced first on a debug build of `main` and on the 1.4.3 release
+binary with the same scripts (the table above), then on this branch.
+
+New tests, in the existing files for each area:
+
+`test/js/web/fetch/fetch-keepalive.test.ts`
+- a GET that a reused https connection answers with: bytes that are not
+a TLS record, a record that does not authenticate, half a response head
+and then such bytes, close_notify, FIN, RST. Each is sent again, and the
+origin sees exactly `connection 1 request 1`, `connection 1 request 2`,
+`connection 2 request 1`.
+- a POST, and a GET whose response body has started, are **not** sent
+again and reject with `EPROTO`.
+- a GET through a reused tunnel when the session with the https proxy
+breaks is sent again over a second tunnel.
+
+`test/js/valkey/reliability/connection-failures.test.ts`
+- the client reconnects when the session breaks in place of a reply
+(with the next command issued straight from the rejection) and while
+idle. `onclose` never fires, and the command in flight still rejects
+with `EPROTO: ...WRONG_VERSION_NUMBER`.
+- with `autoReconnect: false`, a `GET` in flight and an `INFO` queued
+behind it both reject with the TLS reason, and `onclose` fires once.
+- a TLS 1.3 server that requires a client certificate fails a client
+that has none at its first dial, with
+`TLSV1_ALERT_CERTIFICATE_REQUIRED`.
+
+| | without the `src/` change | with it |
+|---|---|---|
+| `fetch-keepalive.test.ts` | 4 fail (the three TLS breaks, the https
+proxy) | 58 pass |
+| `connection-failures.test.ts`, the 4 new tests | 2 fail (the two
+reconnects) | 4 pass |
+
+The existing tests that pin the errors of a broken session pass with the
+change: `test/js/bun/net/tls-fatal-error-closes.test.ts` (every owner
+still closes, same errors) 38 pass,
+`test/js/node/tls/renegotiation.test.ts` (a refused renegotiation,
+`fetch` and `RedisClient`) 57 pass.
+
+The close_notify / FIN / RST rows, the two "not sent again" rows and the
+last two Redis tests pass on both builds on purpose: they pin what must
+not change.
+
+The bug is newer than the latest release, so `USE_SYSTEM_BUN=1` passes
+these tests. "Fails without the fix" was shown by building `main`'s
+`src/` with the new tests.
+
+Each condition on the Redis side was removed in turn to see a test fail:
+without `status == Connected` the server that refuses the certificate is
+dialed again, without the `autoReconnect` condition the queued `INFO`
+gets `Connection closed`, and with an event loop scope around the
+rejections the command issued from the rejection goes out on the dead
+socket. The new Redis tests also pass under
+`BUN_JSC_validateExceptionChecks=1`.
+
+The files next to these that go through the same two `on_handshake`
+handlers, for real handshake failures (wrong name, untrusted chain,
+`checkServerIdentity`), also pass:
+`test/js/valkey/valkey-tls-verify.test.ts` 14 pass,
+`test/js/web/fetch/fetch.tls.test.ts` 64 pass. My machine has no IPv6,
+so for that run their servers listened on `127.0.0.1`. The one failure
+there, `trusts a self-issued certificate without keyCertSign only when
+ca holds that very certificate` (`CERT_SIGNATURE_FAILURE` where
+`UNABLE_TO_VERIFY_LEAF_SIGNATURE` is expected), is the same on `main`
+without this change.
+
+`connection-failures.test.ts` has one failure on my machine that is not
+from this PR: `close() over rediss:// while the peer has stopped reading
+closes the socket at once` fails the same way on `main` without this
+change. The tests there that need a Redis server were skipped (no
+Docker).
+
+---
+_Generated by [Claude Code](https://claude.ai/code)_
+
+---------
+
+Co-authored-by: Claude <noreply@anthropic.com>
+(cherry picked from commit 4a9c3418a271fcf7beb5e545228c797c4ba1484a)
+---
+ src/http/HTTPContext.rs                       |   5 +
+ src/http/lib.rs                               |  43 ++++---
+ src/runtime/valkey_jsc/js_valkey.rs           |   7 +
+ src/runtime/valkey_jsc/valkey.rs              |  16 +++
+ .../reliability/connection-failures.test.ts   | 120 ++++++++++++++++++
+ 5 files changed, 174 insertions(+), 17 deletions(-)
+
+diff --git a/src/http/HTTPContext.rs b/src/http/HTTPContext.rs
+index 30b1f27a81..2a74e6e877 100644
+--- a/src/http/HTTPContext.rs
++++ b/src/http/HTTPContext.rs
+@@ -1420,6 +1420,11 @@ impl<const SSL: bool> Handler<SSL> {
+ 
+         let active = HTTPContext::<SSL>::get_tagged(ptr);
+         if let Some(client) = active.client_mut() {
++            // A reused connection is past its handshake: uSockets reports a fatal error on an
++            // established session as a failed one, then closes the socket, and `on_close` resends.
++            if !handshake_success && client.retries_on_close() {
++                return;
++            }
+             // handshake completed but we may have ssl errors
+             client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
+             if handshake_success {
+diff --git a/src/http/lib.rs b/src/http/lib.rs
+index f1df19c401..658ca8fd4c 100644
+--- a/src/http/lib.rs
++++ b/src/http/lib.rs
+@@ -2163,6 +2163,30 @@ impl<'a> HTTPClient<'a> {
+         }
+     }
+ 
++    fn is_in_progress(&self) -> bool {
++        self.state.stage != Stage::Done
++            && self.state.stage != Stage::Fail
++            && !self.state.flags.is_redirect_pending
++    }
++
++    /// Whether `on_close` sends the request again: it went out on a reused
++    /// keep-alive connection, and that one ended before the response body.
++    pub(crate) fn retries_on_close(&self) -> bool {
++        // `is_in_progress` also keeps a client whose final result was already
++        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
++        // that embeds it is freed once that result is dispatched, so a late
++        // close event must not re-enter `start()`.
++        self.is_in_progress()
++            && self.allow_retry
++            && self.method.is_idempotent()
++            // Only a Bytes body can be rebuilt from `original_request_body`.
++            // Stream/Sendfile bodies are consumed as they are written, so a
++            // retry would silently replay a truncated request.
++            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
++            && self.state.response_stage != ResponseStage::Body
++            && self.state.response_stage != ResponseStage::BodyChunk
++    }
++
+     pub(crate) fn on_close<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
+         // the socket is closed, we need to unregister the abort tracker
+@@ -2173,9 +2197,7 @@ impl<'a> HTTPClient<'a> {
+             return;
+         }
+         self.close_proxy_tunnel(true);
+-        let in_progress = self.state.stage != Stage::Done
+-            && self.state.stage != Stage::Fail
+-            && !self.state.flags.is_redirect_pending;
++        let in_progress = self.is_in_progress();
+         if self.state.flags.is_redirect_pending {
+             // if the connection is closed and we are pending redirect just do the redirect
+             // in this case we will re-connect or go to a different socket if needed
+@@ -2193,20 +2215,7 @@ impl<'a> HTTPClient<'a> {
+             return;
+         }
+ 
+-        // `in_progress` also keeps a client whose final result was already
+-        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
+-        // that embeds it is freed once that result is dispatched, so a late
+-        // close event must not re-enter `start()`.
+-        if in_progress
+-            && self.allow_retry
+-            && self.method.is_idempotent()
+-            // Only a Bytes body can be rebuilt from `original_request_body`.
+-            // Stream/Sendfile bodies are consumed as they are written, so a
+-            // retry would silently replay a truncated request.
+-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+-            && self.state.response_stage != ResponseStage::Body
+-            && self.state.response_stage != ResponseStage::BodyChunk
+-        {
++        if self.retries_on_close() {
+             self.allow_retry = false;
+             // we need to retry the request, clean up the response message buffer and start again
+             self.state.response_message_buffer = MutableString::default();
+diff --git a/src/runtime/valkey_jsc/js_valkey.rs b/src/runtime/valkey_jsc/js_valkey.rs
+index 3f863f0a88..522cf955d0 100644
+--- a/src/runtime/valkey_jsc/js_valkey.rs
++++ b/src/runtime/valkey_jsc/js_valkey.rs
+@@ -1862,6 +1862,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
+                 }
+             }
+             this.client_mut().start()?;
++        } else if this.client.get().status == valkey::Status::Connected
++            && this.client.get().flags.enable_auto_reconnect
++        {
++            // uSockets reports a fatal error on an established session as a failed handshake. Before
++            // the reply to HELLO it is one: a TLS 1.3 server refuses a client certificate after our
++            // Finished. With no reconnect to follow, failing tells the queued commands why too.
++            return this.client_mut().on_tls_session_error(&ssl_error);
+         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
+             // The same check, made inside the handshake (`server_identity`).
+             let hostname = Self::identity_hostname(this, ssl_ptr);
+diff --git a/src/runtime/valkey_jsc/valkey.rs b/src/runtime/valkey_jsc/valkey.rs
+index 0562b03f1a..da4983a27e 100644
+--- a/src/runtime/valkey_jsc/valkey.rs
++++ b/src/runtime/valkey_jsc/valkey.rs
+@@ -533,6 +533,22 @@ impl ValkeyClient {
+         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+     }
+ 
++    /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
++    /// hears why, and the rest is `on_close`'s, like any lost connection. The caller enters no
++    /// event loop scope, so the rejections are only observed once `on_close` has run.
++    pub(crate) fn on_tls_session_error(
++        &mut self,
++        ssl_error: &uws::us_bun_verify_error_t,
++    ) -> JsResult<()> {
++        if self.in_flight.is_empty() {
++            return Ok(());
++        }
++        let global_this = self.global_object();
++        let jsvalue = crate::socket::uws_jsc::verify_error_to_js(ssl_error, &global_this);
++        let mut entries = command::entry::Queue::new();
++        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
++    }
++
+     /// Flush pending data to the socket
+     pub(crate) fn flush_data(&mut self) -> bool {
+         let chunk = self.write_buffer.remaining();
+diff --git a/test/js/valkey/reliability/connection-failures.test.ts b/test/js/valkey/reliability/connection-failures.test.ts
+index c9f70240d8..6334509772 100644
+--- a/test/js/valkey/reliability/connection-failures.test.ts
++++ b/test/js/valkey/reliability/connection-failures.test.ts
+@@ -448,6 +448,126 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
+       }
+     }
+   });
++
++  const WRONG_VERSION_NUMBER = "EPROTO: error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER";
++  const codeAndMessage = (e: any) => `${e.code}: ${e.message}`;
++
++  // A rediss:// server whose connections answer a command with their own number. `breakSession` sends bytes that are
++  // not a TLS record and closes, which is also the answer to `GET lost`.
++  async function serverThatBreaksTls() {
++    const secureContext = tls.createSecureContext({ key: tlsCert.key, cert: tlsCert.cert });
++    const raws: net.Socket[] = [];
++    const breakSession = (raw: net.Socket) => raw.end("not a tls record at all\r\n");
++    const server = net.createServer(raw => {
++      const connection = raws.push(raw);
++      const socket = new tls.TLSSocket(raw, { isServer: true, secureContext });
++      for (const each of [raw, socket]) each.on("error", () => {});
++      const state = { buffer: Buffer.alloc(0) };
++      socket.on("data", chunk => {
++        state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
++        for (const [name, key] of readCommands(state)) {
++          if (key === "lost") breakSession(raw);
++          else socket.write(name.toUpperCase() === "HELLO" ? "+OK\r\n" : `$1\r\n${connection}\r\n`);
++        }
++      });
++    });
++    server.listen(0, "127.0.0.1");
++    await once(server, "listening");
++    return {
++      url: `rediss://localhost:${(server.address() as net.AddressInfo).port}`,
++      raws,
++      breakSession,
++      async [Symbol.asyncDispose]() {
++        for (const raw of raws) raw.destroy();
++        await new Promise(closed => server.close(closed));
++      },
++    };
++  }
++
++  test.each(["in place of a reply", "while the connection is idle"] as const)(
++    "reconnects when the TLS session of a rediss:// connection breaks %s",
++    async when => {
++      await using server = await serverThatBreaksTls();
++      const client = new RedisClient(server.url, { tls: { ca: tlsCert.cert } });
++      try {
++        const events: string[] = [];
++        const reconnected = Promise.withResolvers<void>();
++        // Only the idle row awaits it.
++        reconnected.promise.catch(() => {});
++        client.onconnect = () => void (events.push("connect") === 2 && reconnected.resolve());
++        client.onclose = error => void (events.push("close"), reconnected.reject(error));
++        const get = (key: string) => client.get(key).catch(codeAndMessage);
++        const replies = [await get("key")];
++        if (when === "in place of a reply") {
++          // The next GET follows at once: it waits for the new connection, as it does after a FIN.
++          replies.push(await get("lost"));
++        } else {
++          server.breakSession(server.raws[0]);
++          await reconnected.promise;
++        }
++        replies.push(await get("key"));
++        expect({ replies, events, connections: server.raws.length }).toEqual({
++          replies: ["1", ...(when === "in place of a reply" ? [WRONG_VERSION_NUMBER] : []), "2"],
++          events: ["connect", "connect"],
++          connections: 2,
++        });
++      } finally {
++        client.close();
++      }
++    },
++  );
++
++  test("with autoReconnect off, a TLS session that breaks fails the queued commands with the TLS reason too", async () => {
++    await using server = await serverThatBreaksTls();
++    const client = new RedisClient(server.url, { tls: { ca: tlsCert.cert }, autoReconnect: false });
++    try {
++      const onclose = mock();
++      client.onclose = onclose;
++      await client.connect();
++      // INFO is never pipelined: it waits in the queue for the reply to GET.
++      const pending = [client.get("lost"), client.send("INFO", [])];
++      expect({
++        outcomes: await Promise.all(pending.map(command => command.catch(codeAndMessage))),
++        closes: onclose.mock.calls.length,
++        connections: server.raws.length,
++      }).toEqual({ outcomes: [WRONG_VERSION_NUMBER, WRONG_VERSION_NUMBER], closes: 1, connections: 1 });
++    } finally {
++      client.close();
++    }
++  });
++
++  // A TLS 1.3 server answers the client's certificate after the client's side of the handshake is over.
++  test("a TLS 1.3 server that refuses the client's certificate fails the client instead of being dialed again", async () => {
++    let connections = 0;
++    const dialedAgain = Promise.withResolvers<string>();
++    const server = tls.createServer(
++      {
++        key: tlsCert.key,
++        cert: tlsCert.cert,
++        ca: tlsCert.cert,
++        requestCert: true,
++        rejectUnauthorized: true,
++        minVersion: "TLSv1.3",
++      },
++      socket => void socket.on("error", () => {}),
++    );
++    server.on("connection", () => void (++connections === 2 && dialedAgain.resolve("dialed again")));
++    server.on("tlsClientError", () => {});
++    server.listen(0, "127.0.0.1");
++    await once(server, "listening");
++    const { port } = server.address() as net.AddressInfo;
++    const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca: tlsCert.cert } });
++    try {
++      const outcome = await Promise.race([client.get("key").catch(codeAndMessage), dialedAgain.promise]);
++      expect({ outcome, connections }).toEqual({
++        outcome: "EPROTO: error:1000045c:SSL routines:OPENSSL_internal:TLSV1_ALERT_CERTIFICATE_REQUIRED",
++        connections: 1,
++      });
++    } finally {
++      client.close();
++      await new Promise(closed => server.close(closed));
++    }
++  });
+ });
+ 
+ describe("Valkey: Recovering After fail()", () => {
+-- 
+2.54.0 (Apple Git-157)
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kushal khemka <kushalkhemka@Kushals-MacBook-Air.local>
+Date: Fri, 23 Oct 2026 01:04:10 +0530
+Subject: [PATCH] GC timer: no collection when nothing was allocated since the
+ last one; parked while the program waits
+
+The repeating timer collected every 5 s (30 s after half a minute of quiet) whether or not anything had been
+allocated, and kept doing so for as long as the process lived: Pi at its prompt was woken for an eden
+collection that found nothing (0.2-0.9 ms of CPU each). A tick now collects only when the program allocated
+since the last collection ended (its own or one JSC's activity timers ran), and when there is nothing to
+collect it parks: until the program allocates again (seen where the event loop arms the timer), or until the
+next idle full collection is due, for which it is armed directly. It keeps ticking while a collection is
+unfinished, since a JS thread parked with heap access is what finishes one.
+---
+ src/jsc/GarbageCollectionController.rs | 79 ++++++++++++++++++++------
+ src/jsc/VM.rs                          | 13 +++++
+ src/jsc/bindings/bindings.cpp          | 13 +++++
+ 3 files changed, 87 insertions(+), 18 deletions(-)
+
+diff --git a/src/jsc/GarbageCollectionController.rs b/src/jsc/GarbageCollectionController.rs
+index ca2efdf45b..32956feba8 100644
+--- a/src/jsc/GarbageCollectionController.rs
++++ b/src/jsc/GarbageCollectionController.rs
+@@ -1,4 +1,4 @@
+-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,110,480": 10 s, 2 min and 10 min of quiet; 0 = off) full collections so JSC can age out code that no longer runs, the last of which also drops the bytecode JSC can decode again; each with a forced allocator collect then and at the next tick. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
++//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,110,480": 10 s, 2 min and 10 min of quiet; 0 = off) full collections so JSC can age out code that no longer runs, the last of which also drops the bytecode JSC can decode again; each with a forced allocator collect then and at the next tick. A tick that finds nothing allocated since the last collection parks the timer until the program allocates again or the next idle full collection is due, so a program left waiting is not woken. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+ 
+ use core::cell::Cell;
+ use core::ffi::c_int;
+@@ -26,6 +26,11 @@ pub struct GarbageCollectionController {
+     idle_quiet_ms: Cell<u32>,
+     /// Set when an idle full collection is requested; the next fire runs the forced allocator collect again.
+     idle_release_pending: Cell<bool>,
++    /// Nothing to do until the program allocates (or the next idle full collection is due, if the timer is armed for it):
++    /// `process_gc_timer` arms the timer again when it sees allocation.
++    parked: Cell<bool>,
++    /// What the timer was last armed for (ms): the quiet that its fire stands for.
++    armed_ms: Cell<i32>,
+ }
+ 
+ bun_event_loop::impl_timer_owner!(
+@@ -45,6 +50,8 @@ impl Default for GarbageCollectionController {
+             idle_gc_at_ms: Cell::new([0; 3]),
+             idle_quiet_ms: Cell::new(0),
+             idle_release_pending: Cell::new(false),
++            parked: Cell::new(false),
++            armed_ms: Cell::new(0),
+         }
+     }
+ }
+@@ -136,11 +143,12 @@ impl GarbageCollectionController {
+         self.idle_quiet_ms.set(quiet);
+         let dues = dues.into_iter().filter(|&due| due != 0);
+         let crossed = |due: u32| before < due && quiet >= due;
+-        let mut full = dues.clone().any(crossed);
++        let full = dues.clone().any(crossed);
+         let next = dues.clone().find(|&due| quiet < due);
+         if full && next.is_none() && !vm.jsc_vm().shrink_footprint_now() {
+             self.idle_quiet_ms.set(before);
+-            full = false;
++            // (Still due: at the next tick, whether or not the timer parks.)
++            return (false, Some(interval_ms.max(0) as u32));
+         }
+         (full, next.map(|due| due - quiet))
+     }
+@@ -162,20 +170,40 @@ impl GarbageCollectionController {
+         }
+     }
+ 
+-    /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
++    /// Arms the idle timer on first call, and again once the program allocates while the timer is parked; kept at the
++    /// event-loop call sites so the deadline is in the poll that follows.
+     #[inline]
+     pub(crate) fn process_gc_timer(&self) {
+-        if self.disabled.get() || self.gc_repeating_timer.get().state != TimerState::PENDING {
++        if self.disabled.get() {
++            return;
++        }
++        if self.gc_repeating_timer.get().state == TimerState::PENDING {
++            self.arm_self(VirtualMachine::get_mut_ptr(), self.repeat_interval());
++        } else if self.parked.get() {
++            self.unpark_if_allocated();
++        }
++    }
++
++    #[cold]
++    fn unpark_if_allocated(&self) {
++        let vm = VirtualMachine::get_mut_ptr();
++        // SAFETY: JS thread; the per-thread VM is live while its event loop runs.
++        if unsafe { &*vm }.jsc_vm().bytes_allocated_since_last_collection() == 0 {
+             return;
+         }
+-        let interval = self.repeat_interval();
++        self.parked.set(false);
++        self.arm_self(vm, self.repeat_interval());
++    }
++
++    fn arm_self(&self, vm: *mut VirtualMachine, ms: i32) {
++        self.armed_ms.set(ms);
+         Self::arm(
+-            VirtualMachine::get_mut_ptr(),
++            vm,
+             // whole-struct provenance: from_field_ptr recovers the container on fire
+             core::ptr::addr_of!(self.gc_repeating_timer)
+                 .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                 .cast_mut(),
+-            interval,
++            ms,
+         );
+     }
+ 
+@@ -196,6 +224,8 @@ impl GarbageCollectionController {
+     }
+ 
+     /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires without heap growth beyond the chatter slack, back to fast when it grows.
++    /// A fire that finds nothing allocated since the last collection (its own or JSC's) collects nothing and parks the
++    /// timer until the program allocates again, or until the next idle full collection is due.
+     ///
+     /// # Safety
+     /// `this` is the live per-VM controller; `vm` is the per-thread VM.
+@@ -207,6 +237,7 @@ impl GarbageCollectionController {
+         if this.disabled.get() {
+             return;
+         }
++        this.parked.set(false);
+         if this.idle_release_pending.replace(false) {
+             // ..and once more for what that collection has freed since.
+             bun_core::Global::mimalloc_cleanup(true);
+@@ -222,8 +253,17 @@ impl GarbageCollectionController {
+         // SAFETY: per fn contract.
+         let vm_ref = unsafe { &*vm };
+         let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
+-        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, interval);
+-        this.perform_gc(full);
++        let armed = match this.armed_ms.get() {
++            0 => interval,
++            ms => ms,
++        };
++        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, armed);
++        // Nothing allocated since the last collection ended: another would find nothing new. A program waiting for input
++        // was woken every 5-30 s for one (Pi at its prompt: 0.3-0.9 ms of CPU each, a third to half of its idle CPU).
++        let allocated = vm_ref.jsc_vm().bytes_allocated_since_last_collection() != 0;
++        if full || allocated {
++            this.perform_gc(full);
++        }
+         // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
+         // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
+         // this timer's ticks instead, fast ones for the next 30.
+@@ -243,18 +283,21 @@ impl GarbageCollectionController {
+                 .set(0);
+             this.gc_repeating_timer_fast.set(true);
+         }
++        // Park while there is nothing to collect: until the program allocates (`process_gc_timer`), or the next idle full
++        // collection is due. Not while a collection is unfinished (JSC's own timers start them too): one that needs this
++        // thread at a safepoint, which a thread parked with heap access does not reach, finishes at these ticks.
++        if !full && !allocated && !vm_ref.jsc_vm().collection_unfinished() {
++            this.parked.set(true);
++            if let Some(ms) = idle_gc_due_in {
++                this.arm_self(vm, ms.max(1000).min(i32::MAX as u32) as i32);
++            }
++            return;
++        }
+         let interval = match idle_gc_due_in {
+             Some(ms) => this.repeat_interval().min(ms.max(1000) as i32),
+             None => this.repeat_interval(),
+         };
+-        Self::arm(
+-            vm,
+-            // whole-struct provenance: from_field_ptr recovers the container on fire
+-            core::ptr::addr_of!(this.gc_repeating_timer)
+-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+-                .cast_mut(),
+-            interval,
+-        );
++        this.arm_self(vm, interval);
+     }
+ }
+ 
+diff --git a/src/jsc/VM.rs b/src/jsc/VM.rs
+index ce53cdaeb3..b79536509b 100644
+--- a/src/jsc/VM.rs
++++ b/src/jsc/VM.rs
+@@ -40,6 +40,8 @@ unsafe extern "C" {
+     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
+     safe fn JSC__VM__drainMicrotasks(vm: &VM);
+     safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
++    safe fn JSC__VM__bytesAllocatedSinceLastCollection(vm: &VM) -> usize;
++    safe fn JSC__VM__collectionUnfinished(vm: &VM) -> bool;
+ }
+ 
+ bun_opaque::opaque_ffi! {
+@@ -165,6 +167,17 @@ impl VM {
+     pub(crate) fn block_bytes_allocated(&self) -> usize {
+         JSC__VM__blockBytesAllocated(self)
+     }
++
++    /// Bytes allocated since the last collection (eden or full) ended; 0 when a collection now would find nothing new.
++    /// Counted per free list used up, so a few cells taken from a fresh free list do not show yet. JS thread only.
++    pub(crate) fn bytes_allocated_since_last_collection(&self) -> usize {
++        JSC__VM__bytesAllocatedSinceLastCollection(self)
++    }
++
++    /// A collection (an idle one among them) has been requested and has not finished yet.
++    pub(crate) fn collection_unfinished(&self) -> bool {
++        JSC__VM__collectionUnfinished(self)
++    }
+ }
+ 
+ /// RAII JSLockHolder returned by [`VM::get_api_lock`]. Released on `Drop`.
+diff --git a/src/jsc/bindings/bindings.cpp b/src/jsc/bindings/bindings.cpp
+index edb52d236f..08db3789e4 100644
+--- a/src/jsc/bindings/bindings.cpp
++++ b/src/jsc/bindings/bindings.cpp
+@@ -3182,6 +3182,19 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
+     vm->heap.collectAsync(request);
+ }
+ 
++// What the program has allocated since the last collection ended (GarbageCollectionController: 0 = a collection now would
++// find nothing new).
++size_t JSC__VM__bytesAllocatedSinceLastCollection(JSC::VM* vm)
++{
++    return vm->heap.bytesAllocatedSinceLastCollection();
++}
++
++// Whether a collection (an idle one JSC__VM__collectAsyncIdle requested among them) has not finished yet.
++bool JSC__VM__collectionUnfinished(JSC::VM* vm)
++{
++    return WebCore::clientData(*vm)->idleCollectionsPending.load() != 0 || vm->heap.hasUnfinishedCollection();
++}
++
+ bool JSC__VM__shrinkFootprintNow(JSC::VM* vm)
+ {
+     JSC::JSLockHolder lock(*vm);
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kushal khemka <kushalkhemka@Kushals-MacBook-Air.local>
+Date: Fri, 23 Oct 2026 01:04:10 +0530
+Subject: [PATCH] mimalloc: the scavenger's safety-net wait doubles while
+ nothing interrupts it
+
+With nothing scheduled the scavenger woke every 30 s for good to look over the arenas, the last periodic
+wake-up of an idle process (Pi at its prompt: 0.1-0.6 ms each). The wait now doubles after each one that
+nothing interrupted, up to an hour, and is back to 30 s as soon as anything wakes the scavenger or a purge is
+scheduled.
+---
+ patches/mimalloc/scavenger-idle-backoff.patch | 44 +++++++++++++++++++
+ scripts/build/deps/mimalloc.ts                |  5 ++-
+ 2 files changed, 47 insertions(+), 2 deletions(-)
+ create mode 100644 patches/mimalloc/scavenger-idle-backoff.patch
+
+diff --git a/patches/mimalloc/scavenger-idle-backoff.patch b/patches/mimalloc/scavenger-idle-backoff.patch
+new file mode 100644
+index 0000000000..8af0fbf0ca
+--- /dev/null
++++ b/patches/mimalloc/scavenger-idle-backoff.patch
+@@ -0,0 +1,44 @@
++--- a/src/scavenger.c
+++++ b/src/scavenger.c
++@@ -198,6 +198,10 @@
++   mi_subproc_t* const subproc = _mi_subproc_main();
++   mi_atomic_store_relaxed(&_mi_scavenger_thread_id, _mi_thread_id());
++   mi_msecs_t park_seen_last = 0;
+++  // The safety net's wait when nothing is scheduled: doubles after each one that nothing interrupts, so a process left
+++  // idle is not woken every 30 s for good (a pass over the arenas that finds nothing: 0.1-0.6 ms each, the only thing
+++  // that still woke an idle Pi); back to 30 s as soon as anything wakes us or is scheduled.
+++  mi_msecs_t idle_safety_ms = 30000;
++   while (mi_atomic_load_acquire(&_mi_scavenger_running) != 0) {
++     // Clear with an RMW, not a plain store: it must be totally ordered against the parker's
++     // coalescing `exchange(wake, 1)` in `_mi_scavenger_wake`. With a store, our clear and the later
++@@ -227,7 +231,7 @@
++       // Nothing scheduled: park until woken. The 30s bound is a pure safety
++       // net so stop() is guaranteed to take effect and any per-arena expiry
++       // that did not propagate to subproc is still eventually purged (below).
++-      timeout_ms = 30000;
+++      timeout_ms = idle_safety_ms;
++     }
++     else {
++       const mi_msecs_t now = _mi_clock_now();
++@@ -260,11 +264,19 @@
++       continue;  // stopped polling: look once more for a thread that parked and did not wake us
++     }
++     if (mi_atomic_load_acquire(&_mi_scavenger_running) == 0) break;
+++    const bool safety_wait = (expire == 0 && timeout_ms == idle_safety_ms);
++     mi_scav_wait(&subproc->scavenger_wake, timeout_ms);
++-    // The safety net: nothing was scheduled and nothing woke us. Look at the arenas all the same.
++-    if (expire == 0 && mi_atomic_load_relaxed(&subproc->scavenger_wake) == 0) {
+++    const bool woken = (mi_atomic_load_relaxed(&subproc->scavenger_wake) != 0);
+++    // The safety net: nothing was scheduled and nothing woke us. Look at the arenas all the same.
+++    if (expire == 0 && !woken) {
++       _mi_arenas_try_purge(false /* force */, true /* visit_all */, subproc, 0 /* tseq */);
++     }
+++    if (safety_wait && !woken) {
+++      idle_safety_ms = (idle_safety_ms >= 1800000 ? 3600000 : 2*idle_safety_ms);
+++    }
+++    else if (woken || expire != 0) {
+++      idle_safety_ms = 30000;
+++    }
++   }
++ }
++ 
+diff --git a/scripts/build/deps/mimalloc.ts b/scripts/build/deps/mimalloc.ts
+index fac6b03715..d5fb477744 100644
+--- a/scripts/build/deps/mimalloc.ts
++++ b/scripts/build/deps/mimalloc.ts
+@@ -24,8 +24,9 @@ export const mimalloc: Dependency = {
+     commit: MIMALLOC_COMMIT,
+   }),
+ 
+-  // Pi-Bolt: page_commit_on_demand's default as a define (MI_DEFAULT_PAGE_COMMIT_ON_DEMAND), set for Windows below.
+-  patches: ["patches/mimalloc/page-commit-on-demand-default.patch"],
++  // Pi-Bolt: page_commit_on_demand's default as a define (MI_DEFAULT_PAGE_COMMIT_ON_DEMAND), set for Windows below; the
++  // scavenger's 30 s safety-net wait, when nothing is scheduled, doubles while nothing interrupts it (up to an hour).
++  patches: ["patches/mimalloc/page-commit-on-demand-default.patch", "patches/mimalloc/scavenger-idle-backoff.patch"],
+ 
+   build: cfg => {
+     // ─── Override behavior (global malloc replacement) ───
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kushal khemka <kushalkhemka@Kushals-MacBook-Air.local>
+Date: Fri, 23 Oct 2026 01:39:42 +0530
+Subject: [PATCH] Blob, fetch: a Blob made of other Blobs keeps them as parts,
+ and fetch sends the parts without joining them
+
+new Blob([blob, blob, ...]) copied every part into one new buffer, and a program that builds a request body
+from cached parts (Pi: a 9 MB conversation, one Blob per message) paid that copy, and the page faults of a
+fresh 9 MB allocation, on every request. Blobs cannot change, so a Blob made of in-memory Blobs (256 KiB or
+more in all) now keeps their stores as parts (StoreSlot); whatever reads its store joins them then, once, so
+every other use sees what it saw before. fetch() hands the parts to the HTTP client (HTTPRequestBody::Parts),
+which sends them one after the other over HTTP/1.1 (small parts copied together into a 256 KiB buffer for one
+write, parts of 64 KiB or more written as they are), with the same Content-Length and bytes. Through a proxy,
+with compression or verbose output, or where HTTP/2 or HTTP/3 may be used, the client joins them first.
+---
+ src/http/AsyncHTTP.rs                     |   4 +
+ src/http/HTTPRequestBody.rs               |   5 +
+ src/http/HTTPThread.rs                    |   2 +
+ src/http/InternalState.rs                 |   3 +
+ src/http/h2_client/encode.rs              |   3 +-
+ src/http/lib.rs                           | 169 ++++++++++++++++++----
+ src/jsc/webcore_types.rs                  | 147 ++++++++++++++++++-
+ src/runtime/webcore/Blob.rs               | 101 ++++++++++++-
+ src/runtime/webcore/fetch/FetchTasklet.rs |  32 +++-
+ 9 files changed, 429 insertions(+), 37 deletions(-)
+
+diff --git a/src/http/AsyncHTTP.rs b/src/http/AsyncHTTP.rs
+index 31776836f9..5fd96a5667 100644
+--- a/src/http/AsyncHTTP.rs
++++ b/src/http/AsyncHTTP.rs
+@@ -195,6 +195,8 @@ fn make_client<'a>(
+         compress: None,
+         compressed_request_body: Vec::new(),
+         compressed_body_len: 0,
++        joined_request_body: Vec::new(),
++        request_body_staging: Vec::new(),
+         pool: crate::PoolOptions::default(),
+     }
+ }
+@@ -748,6 +750,8 @@ impl<'a> AsyncHTTP<'a> {
+                     drop(core::mem::take(&mut client.redirect));
+                     drop(core::mem::take(&mut client.prev_redirect));
+                     drop(core::mem::take(&mut client.compressed_request_body));
++                    drop(core::mem::take(&mut client.joined_request_body));
++                    drop(core::mem::take(&mut client.request_body_staging));
+                     drop(core::mem::take(&mut client.proxy_authorization));
+                     client.close_proxy_tunnel(false);
+                     debug_assert!(client.h2.is_none());
+diff --git a/src/http/HTTPRequestBody.rs b/src/http/HTTPRequestBody.rs
+index a9689167e4..a924e3ee0f 100644
+--- a/src/http/HTTPRequestBody.rs
++++ b/src/http/HTTPRequestBody.rs
+@@ -18,6 +18,10 @@ pub enum HTTPRequestBody<'a> {
+     Bytes(&'a [u8]),
+     Sendfile(SendFile),
+     Stream(Stream),
++    /// Borrowed bytes in parts, sent one after the other as one body (a Blob made of other Blobs, never joined).
++    /// Caller guarantees they outlive the request. Over HTTP/1.1 without a proxy, compression or verbose output;
++    /// `HTTPClient::start` joins them into a `Bytes` body for anything else.
++    Parts(&'a [&'a [u8]]),
+ }
+ 
+ pub struct Stream {
+@@ -142,6 +146,7 @@ impl<'a> HTTPRequestBody<'a> {
+     pub(crate) fn len(&self) -> usize {
+         match self {
+             HTTPRequestBody::Bytes(bytes) => bytes.len(),
++            HTTPRequestBody::Parts(parts) => parts.iter().map(|part| part.len()).sum(),
+             HTTPRequestBody::Sendfile(sendfile) => sendfile.content_size,
+             // unknown amounts
+             HTTPRequestBody::Stream(_) => usize::MAX,
+diff --git a/src/http/HTTPThread.rs b/src/http/HTTPThread.rs
+index 4c9a4d3ce4..47292c5591 100644
+--- a/src/http/HTTPThread.rs
++++ b/src/http/HTTPThread.rs
+@@ -1022,6 +1022,8 @@ impl HttpThread {
+                 drop(core::mem::take(&mut client.redirect));
+                 drop(core::mem::take(&mut client.prev_redirect));
+                 drop(core::mem::take(&mut client.compressed_request_body));
++                drop(core::mem::take(&mut client.joined_request_body));
++                drop(core::mem::take(&mut client.request_body_staging));
+                 drop(core::mem::take(&mut client.proxy_authorization));
+                 client.close_proxy_tunnel(false);
+                 drop(core::mem::take(&mut client.custom_ssl_ctx));
+diff --git a/src/http/InternalState.rs b/src/http/InternalState.rs
+index 300b50559c..edfe2e65c1 100644
+--- a/src/http/InternalState.rs
++++ b/src/http/InternalState.rs
+@@ -54,6 +54,8 @@ pub struct InternalState<'a> {
+     // sibling field, so it lives exactly as long as this struct).
+     pub(crate) request_body: bun_ptr::RawSlice<u8>,
+     pub(crate) original_request_body: HTTPRequestBody<'a>,
++    /// For a `Parts` body: the index of the next part to send once `request_body` (the part being sent) is out.
++    pub(crate) request_body_next_part: usize,
+     pub(crate) request_sent_len: usize,
+     pub(crate) fail: Option<Error>,
+     /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
+@@ -140,6 +142,7 @@ impl Default for InternalState<'_> {
+             total_body_received: 0,
+             request_body: bun_ptr::RawSlice::EMPTY,
+             original_request_body: HTTPRequestBody::Bytes(b""),
++            request_body_next_part: 0,
+             request_sent_len: 0,
+             fail: None,
+             connect_errno: 0,
+diff --git a/src/http/h2_client/encode.rs b/src/http/h2_client/encode.rs
+index 89ec1baa18..c13998b98b 100644
+--- a/src/http/h2_client/encode.rs
++++ b/src/http/h2_client/encode.rs
+@@ -359,7 +359,8 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream,
+                 body.detach();
+             }
+         }
+-        HTTPRequestBody::Sendfile(_) => unreachable!(),
++        // (HTTPClient::start joins a body in parts when HTTP/2 is possible.)
++        HTTPRequestBody::Sendfile(_) | HTTPRequestBody::Parts(_) => unreachable!(),
+     }
+ }
+ 
+diff --git a/src/http/lib.rs b/src/http/lib.rs
+index 658ca8fd4c..c52bfdaa85 100644
+--- a/src/http/lib.rs
++++ b/src/http/lib.rs
+@@ -841,6 +841,11 @@ pub struct HTTPClient<'a> {
+     /// Compressed length for `Content-Length`; 0 when `compress` is None or
+     /// the body hasn't been compressed yet.
+     pub(crate) compressed_body_len: usize,
++    /// A `Parts` body joined (`start`) for a request that does not send one as it is: through a proxy, compressed,
++    /// printed (`verbose`), or that may go over HTTP/2 or HTTP/3.
++    pub(crate) joined_request_body: Vec<u8>,
++    /// Small parts of a `Parts` body copied together for one write (`load_request_body_part`).
++    pub(crate) request_body_staging: Vec<u8>,
+     pub(crate) pool: PoolOptions,
+ }
+ 
+@@ -1578,7 +1583,63 @@ impl<'a> HTTPClient<'a> {
+             // More body chunks may still be produced by JS.
+             return true;
+         }
+-        !self.request_body().is_empty()
++        !self.request_body().is_empty() || self.has_unsent_request_body_parts()
++    }
++
++    /// A `Parts` body has parts after the one being sent that are not empty.
++    fn has_unsent_request_body_parts(&self) -> bool {
++        match self.state.original_request_body {
++            HTTPRequestBody::Parts(parts) => parts
++                .get(self.state.request_body_next_part..)
++                .is_some_and(|rest| rest.iter().any(|part| !part.is_empty())),
++            _ => false,
++        }
++    }
++
++    /// For a `Parts` body whose current part is out, loads what goes out next: a large part as it is, or the small parts
++    /// that follow copied together into `request_body_staging` (one write for many: a part per write cost more in
++    /// system calls than joining the whole body). Whether body bytes are left to send (for any other body: whether
++    /// `request_body()` is not empty).
++    fn load_request_body_part(&mut self) -> bool {
++        /// A part at least this large is written from where it is.
++        const WRITTEN_AS_IS: usize = 64 * 1024;
++        const STAGING: usize = 256 * 1024;
++        if !self.state.request_body.is_empty() {
++            return true;
++        }
++        let HTTPRequestBody::Parts(parts) = self.state.original_request_body else {
++            return false;
++        };
++        let mut next = self.state.request_body_next_part;
++        while parts.get(next).is_some_and(|part| part.is_empty()) {
++            next += 1;
++        }
++        let Some(&part) = parts.get(next) else {
++            self.state.request_body_next_part = next;
++            return false;
++        };
++        if part.len() >= WRITTEN_AS_IS {
++            self.state.request_body_next_part = next + 1;
++            self.state.request_body = bun_ptr::RawSlice::new(part);
++            return true;
++        }
++        // Refilled only once the cursor that borrows it is empty.
++        self.request_body_staging.clear();
++        while let Some(&part) = parts.get(next) {
++            if part.len() >= WRITTEN_AS_IS
++                || (!self.request_body_staging.is_empty() && self.request_body_staging.len() + part.len() > STAGING)
++            {
++                break;
++            }
++            self.request_body_staging.extend_from_slice(part);
++            next += 1;
++        }
++        self.state.request_body_next_part = next;
++        // SAFETY: `request_body_staging` lives on `self` and is only written above, when the cursor is empty; same
++        // erasure as `compress_body_for_send`.
++        self.state.request_body =
++            bun_ptr::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(self.request_body_staging.as_slice()) });
++        true
+     }
+ 
+     /// Pooling a socket whose request is still going out would land the next request inside this one's body.
+@@ -1976,6 +2037,18 @@ impl<'a> HTTPClient<'a> {
+         Ok(())
+     }
+ 
++    /// A `Parts` body goes out part after part only over HTTP/1.1 with nothing in between; anything else (a proxy,
++    /// compression, verbose output, HTTP/2 or HTTP/3 being possible) gets it joined, so that those paths only ever
++    /// see one slice.
++    fn joins_request_body_parts(&self) -> bool {
++        self.http_proxy.is_some()
++            || self.compress.is_some()
++            || self.verbose != HTTPVerboseLevel::None
++            || self.flags.forced_protocol.is_some_and(|p| p != Protocol::Http1_1)
++            || self.can_offer_h2()
++            || self.can_try_h3_alt_svc()
++    }
++
+     /// Whether to advertise "h2" in the TLS ALPN list. Restricted to request
+     /// shapes the HTTP/2 path currently handles end-to-end (no proxy/Upgrade,
+     /// no sendfile). Enabled by `--experimental-http2-fetch`, the
+@@ -2179,10 +2252,13 @@ impl<'a> HTTPClient<'a> {
+         self.is_in_progress()
+             && self.allow_retry
+             && self.method.is_idempotent()
+-            // Only a Bytes body can be rebuilt from `original_request_body`.
++            // Only a Bytes (or Parts) body can be rebuilt from `original_request_body`.
+             // Stream/Sendfile bodies are consumed as they are written, so a
+             // retry would silently replay a truncated request.
+-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
++            && matches!(
++                self.state.original_request_body,
++                HTTPRequestBody::Bytes(_) | HTTPRequestBody::Parts(_)
++            )
+             && self.state.response_stage != ResponseStage::Body
+             && self.state.response_stage != ResponseStage::BodyChunk
+     }
+@@ -2666,15 +2742,14 @@ impl<'a> HTTPClient<'a> {
+         }
+ 
+         // TODO: what we do with stream body?
+-        let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
+-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+-        {
+-            match &self.state.original_request_body {
+-                HTTPRequestBody::Bytes(b) => b,
+-                _ => unreachable!(),
++        let request_body: HTTPRequestBody<'a> = match self.state.original_request_body {
++            HTTPRequestBody::Bytes(b) if self.state.flags.resend_request_body_on_redirect => {
++                HTTPRequestBody::Bytes(b)
+             }
+-        } else {
+-            b""
++            HTTPRequestBody::Parts(parts) if self.state.flags.resend_request_body_on_redirect => {
++                HTTPRequestBody::Parts(parts)
++            }
++            _ => HTTPRequestBody::Bytes(b""),
+         };
+ 
+         self.state.response_message_buffer = MutableString::default();
+@@ -2738,7 +2813,7 @@ impl<'a> HTTPClient<'a> {
+         self.flags.protocol = Protocol::Http1_1;
+         self.reevaluate_proxy_for_redirect();
+ 
+-        self.start(HTTPRequestBody::Bytes(request_body));
++        self.start(request_body);
+     }
+ 
+     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
+@@ -2779,6 +2854,20 @@ impl<'a> HTTPClient<'a> {
+ 
+     pub(crate) fn start(&mut self, body: HTTPRequestBody<'a>) {
+         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
++        let body = match body {
++            HTTPRequestBody::Parts(parts) if self.joins_request_body_parts() => {
++                // Built once per client: a retry or redirect starts again with the `Bytes` body this returns.
++                self.joined_request_body.clear();
++                self.joined_request_body.reserve_exact(parts.iter().map(|part| part.len()).sum());
++                for part in parts {
++                    self.joined_request_body.extend_from_slice(part);
++                }
++                // SAFETY: `joined_request_body` lives on `self` and is only written here, for a `Parts` body, which
++                // a client gets once (AsyncHTTP::on_start); same erasure as `compress_body_for_send`.
++                HTTPRequestBody::Bytes(unsafe { &*core::ptr::from_ref::<[u8]>(self.joined_request_body.as_slice()) })
++            }
++            body => body,
++        };
+         self.state = InternalState::init(body);
+         if self.flags.pool_bypass != PoolBypass::Off {
+             self.flags.pool_bypass = if self.url.is_https() {
+@@ -3078,6 +3167,7 @@ impl<'a> HTTPClient<'a> {
+         }
+ 
+         let headers_len = temporary_send_buffer.len();
++        self.load_request_body_part();
+         if !self.request_body().is_empty()
+             && temporary_send_buffer.capacity() - temporary_send_buffer.len() > 0
+             && !self.flags.proxy_tunneling
+@@ -3132,11 +3222,12 @@ impl<'a> HTTPClient<'a> {
+             );
+         }
+ 
+-        let has_sent_body = if matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+-        {
+-            self.request_body().is_empty()
+-        } else {
+-            false
++        let has_sent_body = match self.state.original_request_body {
++            HTTPRequestBody::Bytes(_) => self.request_body().is_empty(),
++            HTTPRequestBody::Parts(_) => {
++                self.request_body().is_empty() && !self.has_unsent_request_body_parts()
++            }
++            _ => false,
+         };
+ 
+         self.spill_compressed_body();
+@@ -3431,6 +3522,9 @@ impl<'a> HTTPClient<'a> {
+                         // we should have leftover data OR we use sendfile/stream
+                         (matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+                             && !self.request_body().is_empty())
++                            || (matches!(self.state.original_request_body, HTTPRequestBody::Parts(_))
++                                && (!self.request_body().is_empty()
++                                    || self.has_unsent_request_body_parts()))
+                             || matches!(
+                                 self.state.original_request_body,
+                                 HTTPRequestBody::Sendfile(_) | HTTPRequestBody::Stream(_)
+@@ -3473,6 +3567,27 @@ impl<'a> HTTPClient<'a> {
+                             return;
+                         }
+                     }
++                    HTTPRequestBody::Parts(_) => {
++                        // Part after part, until the socket takes no more (it says when it can) or all are out.
++                        while self.load_request_body_part() {
++                            let to_send = self.request_body();
++                            let sent = match write_to_socket::<IS_SSL>(socket, to_send) {
++                                Ok(s) => s,
++                                Err(err) => {
++                                    self.close_and_fail::<IS_SSL>(err, socket);
++                                    return;
++                                }
++                            };
++                            self.state.request_sent_len += sent;
++                            self.state.request_body =
++                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
++                            if !self.request_body().is_empty() {
++                                return;
++                            }
++                        }
++                        self.state.request_stage = RequestStage::Done;
++                        return;
++                    }
+                     HTTPRequestBody::Stream(_) => {
+                         // flush without adding any new data
+                         self.flush_stream::<IS_SSL>(socket);
+@@ -3540,6 +3655,9 @@ impl<'a> HTTPClient<'a> {
+                                 "sendfile is only supported without SSL. This code should never have been reached!"
+                             );
+                         }
++                        HTTPRequestBody::Parts(_) => {
++                            panic!("a body in parts is joined before it goes through a proxy (HTTPClient::start)");
++                        }
+                     }
+                 }
+             }
+@@ -4471,15 +4589,14 @@ impl<'a> HTTPClient<'a> {
+             self.flags.is_streaming_request_body = false;
+         }
+         self.unix_socket_path = b"";
+-        let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
+-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+-        {
+-            match &self.state.original_request_body {
+-                HTTPRequestBody::Bytes(b) => b,
+-                _ => unreachable!(),
++        let request_body: HTTPRequestBody<'a> = match self.state.original_request_body {
++            HTTPRequestBody::Bytes(b) if self.state.flags.resend_request_body_on_redirect => {
++                HTTPRequestBody::Bytes(b)
+             }
+-        } else {
+-            b""
++            HTTPRequestBody::Parts(parts) if self.state.flags.resend_request_body_on_redirect => {
++                HTTPRequestBody::Parts(parts)
++            }
++            _ => HTTPRequestBody::Bytes(b""),
+         };
+         self.state.response_message_buffer = MutableString::default();
+         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
+@@ -4496,7 +4613,7 @@ impl<'a> HTTPClient<'a> {
+         self.flags.proxy_tunneling = false;
+         self.flags.protocol = Protocol::Http1_1;
+         self.reevaluate_proxy_for_redirect();
+-        self.start(HTTPRequestBody::Bytes(request_body));
++        self.start(request_body);
+     }
+ 
+     pub(crate) fn progress_update_h3(&mut self) {
+diff --git a/src/jsc/webcore_types.rs b/src/jsc/webcore_types.rs
+index 56a871291a..c57062f091 100644
+--- a/src/jsc/webcore_types.rs
++++ b/src/jsc/webcore_types.rs
+@@ -101,6 +101,131 @@ impl From<MimeType> for BlobContentType {
+     }
+ }
+ 
++// ──────────────────────────────────────────────────────────────────────────
++// StoreSlot: a Blob's store, or the parts it is made of
++// ──────────────────────────────────────────────────────────────────────────
++
++/// One part of a Blob made of other Blobs: `len` bytes at `offset` of an in-memory (`Data::Bytes`) store.
++pub struct BlobPart {
++    pub store: RefPtr<Store>,
++    pub offset: usize,
++    pub len: usize,
++}
++
++impl BlobPart {
++    pub fn bytes(&self) -> &[u8] {
++        let view = self.store.shared_view();
++        let start = self.offset.min(view.len());
++        &view[start..(start + self.len).min(view.len())]
++    }
++}
++
++/// The parts of a Blob made of other Blobs (`new Blob([blob, blob, ...])`), kept as they are instead of joined: the
++/// stores are immutable and shared, so the Blob is the same bytes either way. fetch() sends them one after the other;
++/// anything else that needs the bytes in one piece joins them first (`StoreSlot::get`).
++pub struct BlobParts {
++    pub parts: Box<[BlobPart]>,
++    pub len: usize,
++}
++
++impl BlobParts {
++    fn join(&self) -> Vec<u8> {
++        let mut bytes = Vec::with_capacity(self.len);
++        for part in self.parts.iter() {
++            bytes.extend_from_slice(part.bytes());
++        }
++        bytes
++    }
++}
++
++/// A Blob's backing store. Same interface as the `JsCell<Option<RefPtr<Store>>>` it replaces; a Blob made of other
++/// Blobs holds `parts` and no store until something reads the store, which joins them into one (once). Only
++/// [`StoreSlot::parts`] sees the parts without joining them.
++pub struct StoreSlot {
++    store: JsCell<Option<RefPtr<Store>>>,
++    parts: JsCell<Option<std::sync::Arc<BlobParts>>>,
++}
++
++impl StoreSlot {
++    #[inline]
++    pub const fn new(store: Option<RefPtr<Store>>) -> StoreSlot {
++        StoreSlot { store: JsCell::new(store), parts: JsCell::new(None) }
++    }
++
++    pub fn with_parts(parts: BlobParts) -> StoreSlot {
++        StoreSlot { store: JsCell::new(None), parts: JsCell::new(Some(std::sync::Arc::new(parts))) }
++    }
++
++    /// The parts, if this is a Blob made of other Blobs whose store nothing has needed yet.
++    #[inline]
++    pub fn parts(&self) -> Option<&std::sync::Arc<BlobParts>> {
++        self.parts.get().as_ref()
++    }
++
++    #[cold]
++    fn join_parts(&self) {
++        if let Some(parts) = self.parts.replace(None) {
++            let bytes = parts.join();
++            self.store.set((!bytes.is_empty()).then(|| Store::init(bytes)));
++        }
++    }
++
++    #[inline]
++    fn ensure_store(&self) {
++        if self.parts.get().is_some() {
++            self.join_parts();
++        }
++    }
++
++    #[inline]
++    pub fn get(&self) -> &Option<RefPtr<Store>> {
++        self.ensure_store();
++        self.store.get()
++    }
++
++    /// # Safety
++    /// As [`JsCell::get_mut`].
++    #[inline]
++    pub unsafe fn get_mut(&self) -> &mut Option<RefPtr<Store>> {
++        self.ensure_store();
++        // SAFETY: forwarded to the caller.
++        unsafe { self.store.get_mut() }
++    }
++
++    #[inline]
++    pub fn with_mut<R>(&self, f: impl FnOnce(&mut Option<RefPtr<Store>>) -> R) -> R {
++        self.ensure_store();
++        self.store.with_mut(f)
++    }
++
++    #[inline]
++    pub fn set(&self, value: Option<RefPtr<Store>>) {
++        self.parts.set(None);
++        self.store.set(value);
++    }
++
++    #[inline]
++    pub fn replace(&self, value: Option<RefPtr<Store>>) -> Option<RefPtr<Store>> {
++        self.ensure_store();
++        self.store.replace(value)
++    }
++
++    #[inline]
++    pub fn take(&self) -> Option<RefPtr<Store>> {
++        self.replace(None)
++    }
++
++    /// Moves the store, or the parts, out into a new slot, leaving this one empty.
++    pub fn take_slot(&self) -> StoreSlot {
++        StoreSlot { store: JsCell::new(self.store.replace(None)), parts: JsCell::new(self.parts.replace(None)) }
++    }
++
++    /// Another slot for the same bytes: the store +1 ref, or the same parts, without joining them.
++    pub fn dupe(&self) -> StoreSlot {
++        StoreSlot { store: JsCell::new(self.store.get().clone()), parts: JsCell::new(self.parts.get().clone()) }
++    }
++}
++
+ // ──────────────────────────────────────────────────────────────────────────
+ // Blob
+ // ──────────────────────────────────────────────────────────────────────────
+@@ -118,7 +243,7 @@ pub struct Blob {
+     pub reported_estimated_size: Cell<usize>,
+     pub size: Cell<SizeType>,
+     pub offset: Cell<SizeType>,
+-    pub store: JsCell<Option<RefPtr<Store>>>,
++    pub store: StoreSlot,
+     pub content_type: JsCell<BlobContentType>,
+     pub content_type_was_set: Cell<bool>,
+     /// Cached encoding probe of `shared_view()`.
+@@ -156,7 +281,7 @@ impl Default for Blob {
+             reported_estimated_size: Cell::new(0),
+             size: Cell::new(0),
+             offset: Cell::new(0),
+-            store: JsCell::new(None),
++            store: StoreSlot::new(None),
+             content_type: JsCell::new(BlobContentType::default()),
+             content_type_was_set: Cell::new(false),
+             charset: Cell::new(AsciiStatus::Unknown),
+@@ -362,7 +487,7 @@ impl Blob {
+             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
+             size: Cell::new(self.size.get()),
+             offset: Cell::new(self.offset.get()),
+-            store: JsCell::new(self.store.get().clone()),
++            store: self.store.dupe(),
+             content_type: JsCell::new(self.content_type.get().clone()),
+             content_type_was_set: Cell::new(self.content_type_was_set.get()),
+             charset: Cell::new(self.charset.get()),
+@@ -387,7 +512,8 @@ impl Blob {
+     #[inline]
+     pub fn has_content_type_from_user(&self) -> bool {
+         self.content_type_was_set.get()
+-            || self
++            || self.store.parts().is_none()
++                && self
+                 .store()
+                 .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                 .unwrap_or(false)
+@@ -400,6 +526,10 @@ impl Blob {
+         if !ct.is_empty() {
+             return Some(ct);
+         }
++        // (A Blob in parts is bytes.)
++        if self.store.parts().is_some() {
++            return None;
++        }
+         match &self.store()?.data {
+             store::Data::File(file) => Some(&file.mime_type.value),
+             store::Data::S3(s3) => Some(&s3.mime_type.value),
+@@ -410,7 +540,8 @@ impl Blob {
+     /// `Blob.isS3()` — backed by an S3 `Store::S3`.
+     #[inline]
+     pub fn is_s3(&self) -> bool {
+-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
++        self.store.parts().is_none()
++            && matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
+     }
+ 
+     /// `Blob.needsToReadFile()` — backed by a filesystem `Store::File` (a
+@@ -418,7 +549,8 @@ impl Blob {
+     /// in-memory consumer can see them.
+     #[inline]
+     pub fn needs_to_read_file(&self) -> bool {
+-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
++        self.store.parts().is_none()
++            && matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+     }
+ 
+     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
+@@ -436,6 +568,9 @@ impl Blob {
+     /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
+     /// `None` for fd-backed or unnamed stores.
+     pub fn store_path(&self) -> Option<&[u8]> {
++        if self.store.parts().is_some() {
++            return None;
++        }
+         match &self.store.get().as_deref()?.data {
+             store::Data::Bytes(bytes) => {
+                 let n = &bytes.stored_name[..];
+diff --git a/src/runtime/webcore/Blob.rs b/src/runtime/webcore/Blob.rs
+index 7461551910..d73735c08b 100644
+--- a/src/runtime/webcore/Blob.rs
++++ b/src/runtime/webcore/Blob.rs
+@@ -9,6 +9,7 @@ use core::ffi::{c_char, c_void};
+ use core::ptr::NonNull;
+ 
+ use bun_jsc::JsCell;
++use bun_jsc::webcore_types;
+ 
+ use crate::webcore::jsc::{
+     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
+@@ -3084,7 +3085,7 @@ impl BlobExt for Blob {
+                                     ),
+                                     size: Cell::new(blob.size.get()),
+                                     offset: Cell::new(blob.offset.get()),
+-                                    store: JsCell::new(blob.take_store()), // ← the move
++                                    store: blob.store.take_slot(), // ← the move (of the parts too, unjoined)
+                                     content_type: JsCell::new(blob.content_type.get().clone()),
+                                     content_type_was_set: Cell::new(
+                                         blob.content_type_was_set.get(),
+@@ -3133,6 +3134,12 @@ impl BlobExt for Blob {
+             }
+         }
+ 
++        if !might_only_be_one_thing {
++            if let Some(blob) = blob_from_parts(global, arg)? {
++                return Ok(blob);
++            }
++        }
++
+         // Every value pushed here is
+         // reachable from `arg` (rooted by `_keep: EnsureStillAlive` above) via the
+         // JS object graph, so a heap `Vec<JSValue>` is GC-safe with
+@@ -3308,11 +3315,18 @@ impl BlobExt for Blob {
+ 
+     // is_detached: defined once above; duplicate removed to fix E0034.
+ 
++
+     fn calculate_estimated_byte_size(&self) {
+         // in-memory size. not the size on disk.
+         let mut size: usize = core::mem::size_of::<Blob>();
+ 
+-        if let Some(store) = self.store.get() {
++        if let Some(parts) = self.store.parts() {
++            // What the same Blob joined would report: the collector is paced by it (reported as allocated when the
++            // Blob is made), and it must not run less often because the bytes were not copied.
++            size += core::mem::size_of::<Store>()
++                + parts.parts.len() * core::mem::size_of::<webcore_types::BlobPart>()
++                + self.size.get() as usize;
++        } else if let Some(store) = self.store.get() {
+             size += core::mem::size_of::<Store>();
+             match &store.data {
+                 store::Data::Bytes(bytes) => {
+@@ -3456,6 +3470,87 @@ impl BlobExt for Blob {
+ // JSC-integration methods (host fns, to_js/from_js, S3/file I/O state machines)
+ // ──────────────────────────────────────────────────────────────────────────
+ 
++/// `new Blob([blob, blob, ...])` of in-memory Blobs, 256 KiB or more: a Blob whose bytes are those Blobs' stores, kept
++/// as parts instead of copied into one (`StoreSlot`). Blobs cannot change, so it is the same bytes either way;
++/// fetch() sends the parts one after the other, and whatever else needs the bytes joins them then, once. `None`
++/// when any item is something else (a string, a typed array, a file or S3 Blob), or the array is not a plain one
++/// (reading it could run JS): the caller joins the items as before.
++fn blob_from_parts(global: &JSGlobalObject, array: JSValue) -> JsResult<Option<Blob>> {
++    const MIN_LEN: usize = 256 * 1024;
++    if !matches!(array.js_type_loose(), jsc::JSType::Array | jsc::JSType::DerivedArray) {
++        return Ok(None);
++    }
++    let mut iter = jsc::JSArrayIterator::init(array, global)?;
++    if !iter.is_fast() || iter.len < 2 {
++        return Ok(None);
++    }
++    let mut parts: Vec<webcore_types::BlobPart> = Vec::with_capacity(iter.len as usize);
++    let mut len: usize = 0;
++    let mut all_ascii = true;
++    while let Some(item) = iter.next()? {
++        // (Skipped, as the join below does.)
++        if item.is_undefined_or_null() {
++            continue;
++        }
++        let Some(blob) = item.as_class_ref::<Blob>() else {
++            return Ok(None);
++        };
++        if let Some(inner) = blob.store.parts() {
++            if blob.offset.get() != 0 || blob.size.get() as usize != inner.len {
++                return Ok(None);
++            }
++            for part in inner.parts.iter() {
++                parts.push(webcore_types::BlobPart {
++                    store: part.store.clone(),
++                    offset: part.offset,
++                    len: part.len,
++                });
++            }
++            len += inner.len;
++        } else {
++            match blob.store.get() {
++                None => {
++                    if blob.size.get() != 0 {
++                        return Ok(None);
++                    }
++                    continue;
++                }
++                Some(store) => {
++                    if !matches!(store.data, store::Data::Bytes(_)) {
++                        return Ok(None);
++                    }
++                    // The bytes `blob.shared_view()` reads.
++                    let view = store.shared_view();
++                    let offset = (blob.offset.get() as usize).min(view.len());
++                    let n = (view.len() - offset).min(blob.size.get() as usize);
++                    if n == 0 {
++                        continue;
++                    }
++                    parts.push(webcore_types::BlobPart { store: store.clone(), offset, len: n });
++                    len += n;
++                }
++            }
++        }
++        all_ascii = all_ascii && blob.charset.get() == strings::AsciiStatus::AllAscii;
++    }
++    if len < MIN_LEN || parts.len() < 2 {
++        return Ok(None);
++    }
++    let mut blob = Blob::default();
++    blob.size.set(len as SizeType);
++    blob.store = webcore_types::StoreSlot::with_parts(webcore_types::BlobParts {
++        parts: parts.into_boxed_slice(),
++        len,
++    });
++    blob.global_this.set(global);
++    blob.charset.set(if all_ascii {
++        strings::AsciiStatus::AllAscii
++    } else {
++        strings::AsciiStatus::Unknown
++    });
++    Ok(Some(blob))
++}
++
+ use crate::api::archive::Archive;
+ use crate::image::Image;
+ use crate::node;
+@@ -6003,6 +6098,8 @@ impl Any {
+     /// Assumed that AnyBlob itself is covered by the caller.
+     pub(crate) fn memory_cost(&self) -> usize {
+         match self {
++            // (A Blob in parts: what it would cost joined, without joining it.)
++            Any::Blob(blob) if blob.store.parts().is_some() => blob.size.get() as usize,
+             Any::Blob(blob) => blob.store().map(|s| s.memory_cost()).unwrap_or(0),
+             Any::WTFStringImpl(s) => {
+                 if s.ref_count() == 1 {
+diff --git a/src/runtime/webcore/fetch/FetchTasklet.rs b/src/runtime/webcore/fetch/FetchTasklet.rs
+index a43dea07cf..3def9847ce 100644
+--- a/src/runtime/webcore/fetch/FetchTasklet.rs
++++ b/src/runtime/webcore/fetch/FetchTasklet.rs
+@@ -132,6 +132,9 @@ pub struct FetchTasklet {
+     pub(crate) http_ticket: Option<jsc::Ticket>,
+     pub global_this: GlobalRef,
+     pub(crate) request_body: HTTPRequestBody,
++    /// A body that is a Blob made of other Blobs (`BlobParts`): its parts' bytes, which the HTTP client sends one
++    /// after the other (`http::HTTPRequestBody::Parts`). Borrow from the parts that `request_body` holds.
++    pub(crate) request_body_parts: Vec<&'static [u8]>,
+     /// This side's ref; the HTTP thread holds the other of the two initial refs.
+     pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
+ 
+@@ -508,6 +511,8 @@ impl FetchTasklet {
+         bun_output::scoped_log!(FetchTasklet, "clearData ");
+         // `http.client` borrows `url_proxy_buffer` / `unix_socket_path` / `request_headers`.
+         self.http = None;
++        // (and `request_body_parts`, which borrows from `request_body`).
++        self.request_body_parts = Vec::new();
+         if !self.url_proxy_buffer.is_empty() {
+             self.url_proxy_buffer = Box::default();
+         }
+@@ -2000,6 +2005,7 @@ impl FetchTasklet {
+             http_ticket: None,
+             global_this: GlobalRef::from(cx.global()),
+             request_body: fetch_options.body,
++            request_body_parts: Vec::new(),
+             request_body_streaming_buffer: None,
+             scheduled_response_buffer: MutableString::default(),
+             response: jsc::Weak::default(),
+@@ -2115,9 +2121,24 @@ impl FetchTasklet {
+         let headers_buf: &'static [u8] =
+             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
+                 .as_bytes();
++        // A Blob made of other Blobs goes out as its parts, not joined (the client joins them where it must).
++        if let HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob)) = &fetch_tasklet.request_body
++            && let Some(parts) = blob.store.parts()
++        {
++            fetch_tasklet.request_body_parts = parts
++                .parts
++                .iter()
++                // SAFETY: the part stores are kept alive by `parts`, which `request_body` holds until the tasklet
++                // is freed, after the owned `AsyncHTTP`; Blob stores do not change.
++                .map(|part| unsafe { &*core::ptr::from_ref::<[u8]>(part.bytes()) })
++                .collect();
++        }
+         // SAFETY: see `Interned::assume` note above — same heap-pinned `FetchTasklet` owner.
+-        let request_body_slice: &'static [u8] =
+-            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
++        let request_body_slice: &'static [u8] = if fetch_tasklet.request_body_parts.is_empty() {
++            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes()
++        } else {
++            b""
++        };
+         // SAFETY: see block note above — same `FetchTasklet` owner.
+         let unix_socket_path: &'static [u8] =
+             unsafe { bun_ptr::Interned::assume(&fetch_tasklet.unix_socket_path) }.as_bytes();
+@@ -2215,6 +2236,13 @@ impl FetchTasklet {
+             .header_progress
+             .store(true, Ordering::Relaxed);
+ 
++        if !fetch_tasklet.request_body_parts.is_empty() {
++            // SAFETY: `request_body_parts` is not changed again while the request is out, and outlives `http`.
++            let parts: &'static [&'static [u8]] =
++                unsafe { &*core::ptr::from_ref::<[&'static [u8]]>(fetch_tasklet.request_body_parts.as_slice()) };
++            fetch_tasklet.http.as_mut().unwrap().request_body = http::HTTPRequestBody::Parts(parts);
++        }
++
+         if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
+             debug_assert!(url_is_http);
+             debug_assert!(!matches!(fetch_options.proxy, ProxyPolicy::Explicit { .. }));
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenSec <contactus@opensec.in>
+Date: Fri, 23 Oct 2026 02:25:52 +0530
+Subject: [PATCH] Static heap: the executables of the functions the order
+ file's run ran go to the second tier of the first blocks
+
+What BytecodeLinkEncoder::Result::namesOfFunctionsRun names is appended to
+BUN_STATIC_HEAP_FUNCTIONS_FIRST's list as its second tier (a name the list has keeps its
+own tier). The list's names are positions in the program's text and go stale with every
+edit of it; these come from the order file's F lines, which do not. See the WebKit
+commit of the same name for the measurements.
+---
+ src/jsc/bindings/ZigSourceProvider.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/jsc/bindings/ZigSourceProvider.cpp b/src/jsc/bindings/ZigSourceProvider.cpp
+index 5198ef8b28..549b47109c 100644
+--- a/src/jsc/bindings/ZigSourceProvider.cpp
++++ b/src/jsc/bindings/ZigSourceProvider.cpp
+@@ -1519,6 +1519,11 @@ extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encod
+                 return false;
+             }
+         }
++        // And after those, in the second tier, the executables of the functions that the order file's run ran: what its F lines say
++        // holds when the program's text has moved (the names above are of where functions start in it, which an edit of the
++        // program shifts; the order file's names are of the functions' text).
++        for (uint64_t name : result.namesOfFunctionsRun)
++            functionsUsedFirst.append(1ull << 56 | name);
+         const char* cellsOut = getenv("BUN_STATIC_HEAP_FUNCTION_CELLS_OUT");
+         Vector<JSC::StaticHeap::FunctionCell> cellsOfFunctions;
+         s_builtStaticHeap = JSC::StaticHeap::build(encoder->vm(), strings.span(), result.payload->span(), result.entryOffsetsOfModules.span(), result.aotImage.span(), 0, nullptr, result.reportableSites.span(), result.variablesExportedByModules.span(), result.regionEnds, functionsUsedFirst.span(), cellsOut && *cellsOut ? &cellsOfFunctions : nullptr);
+-- 
+2.54.0 (Apple Git-157)
+

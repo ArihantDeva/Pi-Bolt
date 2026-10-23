@@ -3,7 +3,8 @@ import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadRadiusOAuth } from "../auth/oauth/load.ts";
 import type { Provider } from "../models.ts";
 import type { Model } from "../types.ts";
-import { RADIUS_MODELS } from "./radius.models.ts";
+import { namedModelListing, setModelListing } from "./model-listing.ts";
+import { RADIUS_MODEL_CATALOG } from "./radius.catalog.generated.ts";
 import {
 	DEFAULT_RADIUS_GATEWAY,
 	getRadiusModels,
@@ -23,23 +24,28 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 	const id = options.id ?? "radius";
 	const name = options.name ?? "Radius";
 	const gateway = normalizeRadiusGatewayUrl(options.gateway ?? DEFAULT_RADIUS_GATEWAY);
-	const baselineModels: Model<"pi-messages">[] =
-		gateway === normalizeRadiusGatewayUrl(DEFAULT_RADIUS_GATEWAY)
-			? Object.values(RADIUS_MODELS).map((model) => ({ ...model, provider: id }))
+	const defaultGateway = gateway === normalizeRadiusGatewayUrl(DEFAULT_RADIUS_GATEWAY);
+	// (Made when first asked for.)
+	let baselineModels: Model<"pi-messages">[] | undefined;
+	const baseline = (): Model<"pi-messages">[] => {
+		baselineModels ??= defaultGateway
+			? Object.values(RADIUS_MODEL_CATALOG.chat()).map((model) => ({ ...model, provider: id }))
 			: [];
+		return baselineModels;
+	};
 	// Gateway catalog for this account. Radius org owners can disable models, so once known it replaces
 	// the shipped baseline instead of overlaying it. The baseline only covers the time before any catalog exists.
 	let dynamicModels: Model<"pi-messages">[] | undefined;
 	const streams = piMessagesApi();
 
-	return {
+	const provider: Provider<"pi-messages"> = {
 		id,
 		name,
 		auth: {
 			apiKey: envApiKeyAuth("Radius API key", ["RADIUS_API_KEY"]),
 			oauth: lazyOAuth({ name, load: () => loadRadiusOAuth({ name, gateway }) }),
 		},
-		getModels: () => dynamicModels ?? baselineModels,
+		getModels: () => dynamicModels ?? baseline(),
 		refreshModels: async (context) => {
 			const stored = context.stored;
 			if (stored) {
@@ -87,4 +93,7 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 		stream: (model, context, streamOptions) => streams.stream(model, context, streamOptions),
 		streamSimple: (model, context, streamOptions) => streams.streamSimple(model, context, streamOptions),
 	};
+	// The shipped baseline can be named without building it until a gateway catalog replaces it.
+	const listing = namedModelListing(id, defaultGateway ? RADIUS_MODEL_CATALOG.chatNames : () => [], baseline);
+	return setModelListing(provider, () => (dynamicModels === undefined ? listing : undefined));
 }
