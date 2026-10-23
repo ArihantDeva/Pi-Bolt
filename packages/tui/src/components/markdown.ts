@@ -1306,7 +1306,7 @@ export class Markdown implements Component {
 					if (token.lang) lines.push(shade(this.theme.codeBlockBorder(token.lang)));
 					const codeWidth = Math.max(1, width - visibleWidth(indent));
 					for (const codeLine of codeLines) {
-						for (const wrapped of wrapTextWithAnsi(codeLine, codeWidth)) {
+						for (const wrapped of this.wrapLine(codeLine, codeWidth)) {
 							lines.push(shade(`${indent}${wrapped}`));
 						}
 					}
