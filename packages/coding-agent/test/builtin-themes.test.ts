@@ -78,9 +78,14 @@ const READABLE_PAIRS: [string, string][] = [
 	["text", "selectedBg"],
 	["accent", "selectedBg"],
 	["searchMatchText", "searchMatchBg"],
-	// Markdown is drawn on the page and in user and custom messages.
+	// Markdown is drawn on the page and in user and custom messages; quote borders and rules in tool output too.
 	...["mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdQuote", "mdCodeBlockBorder", "mdListBullet"].flatMap((fg) =>
 		["bg", "userMessageBg", "customMessageBg"].map((bg): [string, string] => [fg, bg]),
+	),
+	...["mdQuoteBorder", "mdHr"].flatMap((fg) =>
+		["bg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg"].map(
+			(bg): [string, string] => [fg, bg],
+		),
 	),
 	// Code is drawn on the page, in tool output and in user and custom messages (a code block in a summary or a skill).
 	...["mdCodeBlock", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxString", "syntaxNumber", "syntaxType"]
