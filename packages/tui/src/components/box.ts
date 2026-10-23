@@ -12,7 +12,7 @@ import {
 	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
 } from "../tui.ts";
-import { flattenLines, visibleWidth } from "../utils.ts";
+import { applyBackgroundAround, flattenLines, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
 	childLines: string[];
@@ -226,7 +226,7 @@ export class Box implements Component {
 		const padNeeded = Math.max(0, width - visLen);
 		const padded = line + " ".repeat(padNeeded);
 		// Already padded to width, so apply the background directly instead of measuring the line again.
-		return this.bgFn ? this.bgFn(padded) : padded;
+		return this.bgFn ? applyBackgroundAround(padded, this.bgFn) : padded;
 	}
 }
 

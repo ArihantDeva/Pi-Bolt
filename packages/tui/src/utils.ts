@@ -1122,7 +1122,25 @@ export function applyBackgroundToLine(line: string, width: number, bgFn: (text: 
 
 	// Apply background to content + padding
 	const withPadding = line + padding;
-	return bgFn(withPadding);
+	return applyBackgroundAround(withPadding, bgFn);
+}
+
+/**
+ * bgFn(line), with the background opened again after each background reset (SGR 49) inside `line`. A part of the line on
+ * a background of its own (a shaded code block line) ends with one, and the rest of the line keeps this background instead
+ * of showing the terminal's.
+ */
+export function applyBackgroundAround(line: string, bgFn: (text: string) => string): string {
+	const styled = bgFn(line);
+	if (!line.includes("\x1b[49m")) {
+		return styled;
+	}
+	const start = styled.indexOf(line);
+	const open = start > 0 ? getActiveBackgroundAnsi(styled.slice(0, start)) : "";
+	if (!open) {
+		return styled;
+	}
+	return styled.slice(0, start) + line.replaceAll("\x1b[49m", open) + styled.slice(start + line.length);
 }
 
 /**
