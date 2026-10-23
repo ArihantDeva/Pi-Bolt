@@ -1303,7 +1303,12 @@ export class Markdown implements Component {
 				if (shade) {
 					// Each line is shaded up to the end of its text only, so copied code has no trailing spaces. Wrapped here,
 					// not by renderBlock(), so continuation lines keep the block's indent.
-					if (token.lang) lines.push(shade(this.theme.codeBlockBorder(token.lang)));
+					if (token.lang) {
+						// (Wrapped before it is shaded, as the code lines are: the padding after a short fragment stays unshaded.)
+						for (const label of this.wrapLine(this.theme.codeBlockBorder(token.lang), width)) {
+							lines.push(shade(label));
+						}
+					}
 					const codeWidth = Math.max(1, width - visibleWidth(indent));
 					for (const codeLine of codeLines) {
 						for (const wrapped of this.wrapLine(codeLine, codeWidth)) {

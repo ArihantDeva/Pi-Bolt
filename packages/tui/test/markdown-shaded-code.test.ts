@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { Box } from "../src/components/box.ts";
 import { Markdown, type MarkdownTheme, setMarkdownCachingForTest } from "../src/components/markdown.ts";
 import { type LiveLines, renderLiveLines } from "../src/tui.ts";
-import { getActiveBackgroundAnsi, visibleWidth } from "../src/utils.ts";
+import { applyBackgroundAround, getActiveBackgroundAnsi, visibleWidth } from "../src/utils.ts";
 import { defaultMarkdownTheme } from "./test-themes.ts";
 
 // Shaded code blocks (MarkdownTheme.codeBlockBg): each code line is drawn on the code block's background up to the end of its
@@ -176,6 +176,45 @@ describe("Shaded code blocks", () => {
 			assert.strictEqual(getActiveBackgroundAnsi(line.slice(0, afterText)), palette.bg);
 			assert.strictEqual(getActiveBackgroundAnsi(line.slice(0, line.lastIndexOf("\x1b[49m"))), palette.outer);
 			assert.strictEqual(visibleWidth(line), 30);
+		}
+	});
+
+	it("keeps a code block on the terminal's own background inside a panel", () => {
+		// (A theme that sets the code block background to "": the terminal's default, SGR 49, opens and closes it.)
+		const terminalBg: MarkdownTheme = { ...shadedTheme, codeBlockBg: (text) => `\x1b[49m${text}\x1b[49m` };
+		const source = "```\nshort\n```";
+		const own = new Markdown(source, 1, 0, terminalBg, { bgColor: outerBg }).render(30);
+		const box = new Box(1, 0, outerBg);
+		box.addChild(new Markdown(source, 0, 0, terminalBg));
+		for (const lines of [own, box.render(30)]) {
+			const line = lines.find((candidate) => candidate.includes("short"))!;
+			const afterText = line.indexOf("short") + "short".length;
+			assert.strictEqual(getActiveBackgroundAnsi(line.slice(0, afterText)), "");
+			assert.strictEqual(getActiveBackgroundAnsi(line.slice(0, line.lastIndexOf("\x1b[49m"))), palette.outer);
+		}
+	});
+
+	it("tells foreground colors from background codes", () => {
+		// 38;5;48 and 38;2;40;41;100 are foreground colors: the reset after them opens a part on the terminal's background.
+		for (const fg of ["\x1b[38;5;48m", "\x1b[38;2;40;41;100m"]) {
+			const line = applyBackgroundAround(`${fg}g\x1b[39m\x1b[49mcode\x1b[49m tail`, outerBg);
+			assert.strictEqual(getActiveBackgroundAnsi(line.slice(0, line.indexOf("code") + 4)), "");
+			assert.strictEqual(getActiveBackgroundAnsi(line.slice(0, line.indexOf("tail"))), palette.outer);
+		}
+	});
+
+	it("wraps a long language label before shading it", () => {
+		Object.assign(palette, PALETTES[0]);
+		const lines = new Markdown("```ts title=a-long-title\ncode\n```", 0, 0, shadedTheme).render(12);
+		const labels = lines.slice(
+			0,
+			lines.findIndex((line) => line.includes("code")),
+		);
+		assert.ok(labels.length > 1);
+		for (const line of labels) {
+			const end = line.lastIndexOf("\x1b[49m");
+			assert.match(line.slice(end + "\x1b[49m".length), /^ *$/);
+			assert.ok(!/ $/.test(line.slice(0, end).replace(/\x1b\[[0-9;]*m/g, "")), JSON.stringify(line));
 		}
 	});
 
