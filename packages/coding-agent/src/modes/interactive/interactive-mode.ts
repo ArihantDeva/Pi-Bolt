@@ -209,6 +209,7 @@ import {
 	getThemeByName,
 	liveTheme,
 	onThemeChange,
+	parseAutoThemeSetting,
 	SYSTEM_THEME_NAME,
 	setRegisteredThemes,
 	stopThemeWatcher,
@@ -5252,13 +5253,20 @@ export class InteractiveMode {
 	}
 
 	private showThemeSelector(): void {
-		const original = this.themeController.getThemeSelection() || SYSTEM_THEME_NAME;
+		const setting = this.themeController.getThemeSelection() || SYSTEM_THEME_NAME;
+		// The theme in use is the one selected: of a light/dark pair, the one the terminal's appearance picked.
+		const current = this.themeController.getActiveThemeName() ?? setting;
 		const restore = this.themeController.previewRestorer();
 		this.showSelector((done) => {
 			const selector = new ThemeSelectorComponent(
-				original,
+				current,
 				(themeName) => {
 					done();
+					// Enter on the theme in use keeps a light/dark pair setting as it is.
+					if (themeName === current && parseAutoThemeSetting(setting)) {
+						restore();
+						return;
+					}
 					this.selectTheme(themeName);
 				},
 				() => {

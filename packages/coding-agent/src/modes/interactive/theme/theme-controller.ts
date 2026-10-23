@@ -161,15 +161,23 @@ export class InteractiveThemeController {
 	preview(themeSettingOrName: string): void {
 		const themeName = resolveThemeSetting(themeSettingOrName, getTerminalTheme()) ?? this.activeThemeName;
 		if (!themeName) return;
-		if (setTheme(themeName, true).success) {
-			this.ui.invalidate();
-			this.ui.requestRender();
-		}
+		// (A theme that fails to load falls back to the system theme, which has to be drawn as well.)
+		setTheme(themeName, true);
+		this.ui.invalidate();
+		this.ui.requestRender();
+	}
+
+	/**
+	 * The theme in use: the member of a light/dark pair the terminal's appearance picked, the system theme when the
+	 * setting failed to load, or `undefined` for a theme an extension set (setThemeInstance()).
+	 */
+	getActiveThemeName(): string | undefined {
+		return this.activeThemeName === "<in-memory>" ? undefined : this.activeThemeName;
 	}
 
 	/**
 	 * What gives back the theme in use now after previews (a theme selector closed without a choice): the theme an extension
-	 * set (setThemeInstance()), or else the theme setting.
+	 * set, or else the theme that is in use.
 	 */
 	previewRestorer(): () => void {
 		const instance = this.activeThemeName === "<in-memory>" ? getThemeInstance() : undefined;
@@ -180,8 +188,8 @@ export class InteractiveThemeController {
 				this.ui.requestRender();
 			};
 		}
-		const selection = this.getThemeSelection() || SYSTEM_THEME_NAME;
-		return () => this.preview(selection);
+		const themeName = this.activeThemeName ?? this.resolveThemeName();
+		return () => this.preview(themeName);
 	}
 
 	disableAutoSync(): void {
