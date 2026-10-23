@@ -147,36 +147,51 @@ and [docs/BENCHMARKS.md](docs/BENCHMARKS.md#097-against-pi-as-released).
 
 ### Against PiG
 
-Pi-Bolt 0.9.6 against [PiG](https://github.com/MichaelKinsy/PiG) 0.5.1 (Pi ported to Go) and Pi 1.3.0 on Node 24, doing the
-same work against the same local model; lower is better.
+Pi-Bolt 1.0.0 against [PiG](https://github.com/MichaelKinsy/PiG) 0.5.1 (Pi ported to Go) and Pi-Bolt 0.9.9, doing the same
+work against the same local model (`bench/pig_verify.py` checks it); lower is better.
 
 On GitHub's Linux x86-64 runner, one CPU each:
 
-| Benchmark | Pi-Bolt 0.9.6 | PiG 0.5.1 | Pi on Node 24 |
+| Benchmark | Pi-Bolt 1.0.0 | PiG 0.5.1 | Pi-Bolt 0.9.9 |
 |---|---:|---:|---:|
-| Ready to type | 42 ms | **15 ms** | 362 ms |
-| CPU, one prompt (`pi -p`) | 56 ms | **25 ms** | 506 ms |
-| CPU, interactive session | 164 ms | **141 ms** | 1,026 ms |
-| CPU, streaming a 60,000-character answer | 2.6 s | **1.5 s** | 34.7 s |
-| CPU, writing files in a terminal (tmux) | **1.1 s** | 2.7 s | 13.5 s |
-| Bytes sent to the terminal for a 20,000-character answer | **528 KB** | 3,573 KB | 3,562 KB |
-| Peak memory, one prompt | 133 MB | **55 MB** | 148 MB |
-| Memory after 40 prompts | 173 MB | **87 MB** | 574 MB |
+| CPU per prompt, 40 prompts into a session | **46.9 ms** | 49.5 ms | 69.5 ms |
+| Own memory after 40 prompts | **39 MB** | 42 MB | 70 MB |
+| CPU, an answer streaming into a 4,000-entry session | **0.48 s** | 0.54 s | 4.46 s |
+| CPU, writing files in a terminal (tmux) | **0.99 s** | 3.22 s | 1.08 s |
+| Longest pause while writing files | **84 ms** | 610 ms | 82 ms |
+| Ready to type | 43 ms | **16 ms** | 48 ms |
+| CPU, one prompt (`pi -p`) | 58 ms | **24 ms** | 63 ms |
+| CPU, interactive session | 176 ms | **165 ms** | 187 ms |
+| CPU, streaming a 60,000-character answer | 2.31 s | **1.33 s** | 2.61 s |
+| Peak own memory, interactive session | 33 MB | **20 MB** | 42 MB |
+
+On GitHub's Windows x64 runner, two cores:
+
+| Benchmark | Pi-Bolt 1.0.0 | PiG 0.5.1 | Pi-Bolt 0.9.9 |
+|---|---:|---:|---:|
+| Ready to type | **93 ms** | 106 ms | 107 ms |
+| CPU, interactive session | **274 ms** | 378 ms | 285 ms |
+| CPU per prompt, 40 prompts into a session | **61 ms** | 69 ms | 70 ms |
+| Idle CPU, two minutes after an answer | **0.20 ms/s** | 1.64 ms/s | 0.41 ms/s |
+| CPU, one prompt (`pi -p`) | 97 ms | **93 ms** | 106 ms |
+| CPU, streaming a 60,000-character answer | 3.25 s | **3.08 s** | 3.87 s |
 
 On an Apple M5 Mac:
 
-| Benchmark | Pi-Bolt 0.9.6 | PiG 0.5.1 |
-|---|---:|---:|
-| Ready to type | 31 ms | **22 ms** |
-| CPU, one prompt (`pi -p`) | 27 ms | **18 ms** |
-| CPU, interactive session | **91 ms** | 125 ms |
-| CPU per prompt, 40 prompts into a session | **19 ms** | 27 ms |
-| CPU, streaming a 60,000-character answer | 3.4 s | **2.3 s** |
-| CPU, writing files in a terminal (tmux) | **1.9 s** | 4.4 s |
-| Peak memory, interactive session | 41 MB | **26 MB** |
+| Benchmark | Pi-Bolt 1.0.0 | PiG 0.5.1 | Pi-Bolt 0.9.9 |
+|---|---:|---:|---:|
+| CPU, interactive session | **78 ms** | 118 ms | 80 ms |
+| CPU per prompt, 40 prompts into a session | **19-26 ms** | 31-53 ms | 21-51 ms |
+| CPU, an answer streaming into a 4,000-entry session | **0.21 s** | 0.23 s | 1.36 s |
+| CPU, writing files in a terminal (tmux) | **0.61 s** | 2.13 s | 1.16 s |
+| Ready to type | 25 ms | **17 ms** | 26 ms |
+| CPU, one prompt (`pi -p`) | 34 ms | **24 ms** | 37 ms |
+| CPU, streaming a 60,000-character answer | 1.58 s | **1.11 s** | 1.91 s |
+| Peak memory, interactive session (footprint) | 31 MB | **26 MB** | 40 MB |
 
-PiG starts sooner and uses less memory; Pi-Bolt runs Pi's own code, so every Pi extension works unchanged. Linux ARM64,
-Windows, the raw data and the method: [docs/BENCHMARKS.md](docs/BENCHMARKS.md#096-against-pig-051).
+PiG starts sooner, streams with less CPU and is a third of the size: it is a native Go program. Pi-Bolt runs Pi's own code, so
+every Pi extension works unchanged, and over a long session it now uses less CPU than PiG. Linux ARM64, the raw data and the
+method: [docs/BENCHMARKS.md](docs/BENCHMARKS.md#100-against-pig-051-and-099).
 
 ## Plugins
 
