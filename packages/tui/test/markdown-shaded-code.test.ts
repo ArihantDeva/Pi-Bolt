@@ -153,6 +153,20 @@ describe("Shaded code blocks", () => {
 		assert.strictEqual(visibleWidth(code[2]!.slice(0, code[2]!.indexOf("\x1b[49m"))), 2); // the empty line: the indent
 	});
 
+	it("keeps the shading after a full reset from the highlighter", () => {
+		Object.assign(palette, PALETTES[0]);
+		const theme: MarkdownTheme = {
+			...shadedTheme,
+			highlightCode: (code) => code.split("\n").map((line) => line.replace("const", "\x1b[1mconst\x1b[0m")),
+		};
+		const [line] = new Markdown("```\nconst a = 1;\n```", 0, 0, theme)
+			.render(30)
+			.filter((rendered) => rendered.includes("const"));
+		// After the reset, the code block's background is open again until the end of the code.
+		const afterReset = line!.slice(line!.indexOf("\x1b[0m") + "\x1b[0m".length);
+		assert.strictEqual(getActiveBackgroundAnsi(afterReset.slice(0, afterReset.indexOf(" a = 1;"))), palette.bg);
+	});
+
 	it("keeps the indent on wrapped lines", () => {
 		Object.assign(palette, PALETTES[0]);
 		const lines = new Markdown("```\nconst value = compute(first, second);\n```", 0, 0, shadedTheme)

@@ -324,7 +324,7 @@
           "description": "Editor border color in bash mode"
         }
       },
-      "description": "Theme color definitions (scrollbar, thinkingMax, and search highlight colors are optional and use compatible fallbacks)",
+      "description": "Theme color definitions (scrollbar, thinkingMax, search highlight, and mdCodeBlockBg colors are optional and use compatible fallbacks)",
       "additionalProperties": false
     },
     "export": {

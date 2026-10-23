@@ -14,6 +14,9 @@ import {
 } from "../tui.ts";
 import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
+// A full SGR reset (SGR 0, or no parameters): in a shaded code block it would end the shading.
+const FULL_RESET = /\x1b\[0?m/;
+const FULL_RESET_ALL = /\x1b\[0?m/g;
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
 class StrictStrikethroughTokenizer extends Tokenizer {
@@ -1312,9 +1315,17 @@ export class Markdown implements Component {
 						}
 					}
 					const codeWidth = Math.max(1, width - visibleWidth(indent));
+					// (A full reset inside a line, from the highlighter or the code itself, would end the shading there: the
+					// background is opened again after it.)
+					let shadeOpen: string | undefined;
 					for (const codeLine of codeLines) {
 						for (const wrapped of this.wrapLine(codeLine, codeWidth)) {
-							lines.push(shade(`${indent}${wrapped}`));
+							let line = `${indent}${wrapped}`;
+							if (FULL_RESET.test(line)) {
+								shadeOpen ??= shade("\0").split("\0")[0];
+								line = line.replace(FULL_RESET_ALL, (reset) => reset + shadeOpen);
+							}
+							lines.push(shade(line));
 						}
 					}
 				} else {

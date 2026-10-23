@@ -117,7 +117,7 @@ Theme colors describe interface roles rather than individual components. Use the
 
 The schema is the format reference. The built-in themes provide complete values that you can copy and adjust.
 
-Five colors are optional and inherit another color when omitted:
+Six colors are optional and inherit another color when omitted:
 
 | Optional color | Fallback |
 |---|---|
@@ -126,6 +126,7 @@ Five colors are optional and inherit another color when omitted:
 | `searchMatchBg` | `selectedBg` |
 | `searchMatchText` | `text` |
 | `thinkingMax` | `thinkingXhigh` |
+| `mdCodeBlockBg` | `toolPendingBg` (the background of code blocks with the `shadedCodeBlocks` setting on) |
 
 If `export` colors are omitted, Pi derives HTML page and panel backgrounds from `userMessageBg`.
 
