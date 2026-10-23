@@ -577,7 +577,9 @@ function replaceTabs(text: string): {
 			if (text.length === entry.text.length) {
 				replaced = entry.replaced;
 			} else {
-				const added = text.slice(entry.text.length).replace(/\t/g, "   ");
+				// (The added text as a string of its own: a part of `text` keeps all of `text` in memory, and the result keeps
+				// the part, as the next result keeps this one: every chunk of a reply would keep the whole reply as it was.)
+				const added = ownString(text.slice(entry.text.length)).replace(/\t/g, "   ");
 				replaced = entry.replaced + added;
 				// (What the last result was lexed to was kept with it: its source is that result.)
 				if (entry.lexed !== undefined) extended = { from: entry.lexed, added };
