@@ -1,4 +1,4 @@
-import { readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /*
@@ -122,6 +122,20 @@ export function renderAggregatorModule(providerIds: readonly string[]): string {
 }
 
 /**
+ * Writes `text` to `path` unless the file already holds it: an unchanged module keeps its time, so `npm run check` (which
+ * writes the catalog modules first) does not make a build look stale to scripts/build-pi.sh.
+ */
+function writeIfChanged(path: string, text: string): void {
+	let current: string | undefined;
+	try {
+		current = readFileSync(path, "utf8");
+	} catch {
+		current = undefined;
+	}
+	if (current !== text) writeFileSync(path, text);
+}
+
+/**
  * Writes every provider's catalog module from its data file text (removing those of providers no longer listed), and unless
  * `catalogsOnly` the shards and the aggregator for exactly these providers.
  */
@@ -133,7 +147,7 @@ export function writeModelCatalogModules(
 	const providersDir = join(packageRoot, "src", "providers");
 	const providerIds = Object.keys(dataTexts).sort();
 	for (const providerId of providerIds) {
-		writeFileSync(join(providersDir, `${providerId}.catalog.generated.ts`), renderCatalogModule(providerId, dataTexts[providerId]));
+		writeIfChanged(join(providersDir, `${providerId}.catalog.generated.ts`), renderCatalogModule(providerId, dataTexts[providerId]));
 	}
 	const keep = new Set(providerIds.flatMap((providerId) => [`${providerId}.catalog.generated.ts`, `${providerId}.models.ts`]));
 	for (const entry of readdirSync(providersDir)) {
@@ -142,7 +156,7 @@ export function writeModelCatalogModules(
 	}
 	if (options.catalogsOnly) return;
 	for (const providerId of providerIds) {
-		writeFileSync(join(providersDir, `${providerId}.models.ts`), renderShardModule(providerId));
+		writeIfChanged(join(providersDir, `${providerId}.models.ts`), renderShardModule(providerId));
 	}
-	writeFileSync(join(packageRoot, "src", "models.generated.ts"), renderAggregatorModule(providerIds));
+	writeIfChanged(join(packageRoot, "src", "models.generated.ts"), renderAggregatorModule(providerIds));
 }
