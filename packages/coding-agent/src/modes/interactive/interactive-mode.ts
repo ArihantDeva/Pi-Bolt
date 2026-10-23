@@ -2159,6 +2159,7 @@ export class InteractiveMode {
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.outputPad = this.settingsManager.getOutputPad();
+		setShadedCodeBlocks(this.settingsManager.getShadedCodeBlocks());
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		const clearOnShrink = this.settingsManager.getClearOnShrink();
 		this.ui.setClearOnShrink(clearOnShrink);
@@ -6566,6 +6567,7 @@ export class InteractiveMode {
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 			this.outputPad = this.settingsManager.getOutputPad();
+			setShadedCodeBlocks(this.settingsManager.getShadedCodeBlocks());
 			this.rebuildChatFromMessages();
 			chatRestoredBeforeSessionStart = true;
 		};
