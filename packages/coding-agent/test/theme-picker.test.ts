@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
+	getThemeByName,
+	loadThemeFromPath,
 	setRegisteredThemes,
 } from "../src/modes/interactive/theme/theme.ts";
 
@@ -47,5 +49,20 @@ describe("theme picker", () => {
 		expect(getAvailableThemes()).not.toContain("foo");
 		expect(getAvailableThemesWithPaths()).toContainEqual({ name: "bar", path: themePath });
 		expect(getAvailableThemesWithPaths().some((theme) => theme.name === "foo")).toBe(false);
+	});
+
+	it("lets a custom theme replace a built-in theme of the same name", () => {
+		const builtinPath = new URL("../src/modes/interactive/theme/nord.json", import.meta.url).pathname;
+		const builtin = JSON.parse(readFileSync(builtinPath, "utf-8")) as ThemeFile;
+		const customTheme: ThemeFile = { ...builtin, colors: { ...builtin.colors, accent: "#123456" } };
+		const customPath = join(process.env.PI_CODING_AGENT_DIR!, "themes", "nord.json");
+		writeFileSync(customPath, JSON.stringify(customTheme, null, 2));
+
+		const listed = getAvailableThemesWithPaths().filter((theme) => theme.name === "nord");
+		expect(listed).toEqual([{ name: "nord", path: customPath }]);
+
+		const accent = (theme: { fg(color: "accent", text: string): string } | undefined) => theme?.fg("accent", "x");
+		expect(accent(getThemeByName("nord"))).toBe(accent(loadThemeFromPath(customPath)));
+		expect(accent(getThemeByName("nord"))).not.toBe(accent(loadThemeFromPath(builtinPath)));
 	});
 });

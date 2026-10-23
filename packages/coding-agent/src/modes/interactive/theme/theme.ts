@@ -418,19 +418,20 @@ export function getAvailableThemesWithPaths(): ThemeInfo[] {
 		result.push(themeInfo);
 	};
 
-	// Built-in themes. The system theme is generated, so it has no file.
+	// The system theme is generated, so it has no file.
 	addTheme({ name: SYSTEM_THEME_NAME, path: undefined });
-	for (const name of getBuiltinThemeNames()) {
-		addTheme({ name, path: path.join(themesDir, `${name}.json`) });
-	}
 
-	// Custom themes
+	// Custom and registered themes come before the built-ins: one with a built-in's name replaces it, listed once.
 	for (const themeInfo of getCustomThemeInfos()) {
 		addTheme(themeInfo);
 	}
 
 	for (const [name, theme] of registeredThemes.entries()) {
 		addTheme({ name, path: theme.sourcePath });
+	}
+
+	for (const name of getBuiltinThemeNames()) {
+		addTheme({ name, path: path.join(themesDir, `${name}.json`) });
 	}
 
 	// The system theme comes first: it is the default and adapts to every terminal.
@@ -491,10 +492,7 @@ function parseThemeJsonContent(label: string, content: string): ThemeJson {
 }
 
 function loadThemeJson(name: string): ThemeJson {
-	const builtinTheme = getBuiltinTheme(name);
-	if (builtinTheme) {
-		return builtinTheme;
-	}
+	// A registered or custom theme wins over a built-in of the same name, so a user's own `nord.json` is not replaced.
 	const registeredTheme = registeredThemes.get(name);
 	if (registeredTheme?.sourcePath) {
 		const content = fs.readFileSync(registeredTheme.sourcePath, "utf-8");
@@ -503,13 +501,15 @@ function loadThemeJson(name: string): ThemeJson {
 	if (registeredTheme) {
 		throw new Error(`Theme "${name}" does not have a source path for export`);
 	}
-	const customThemesDir = getCustomThemesDir();
-	const themePath = path.join(customThemesDir, `${name}.json`);
-	if (!fs.existsSync(themePath)) {
+	const customThemePath = path.join(getCustomThemesDir(), `${name}.json`);
+	if (fs.existsSync(customThemePath)) {
+		return parseThemeJsonContent(name, fs.readFileSync(customThemePath, "utf-8"));
+	}
+	const builtinTheme = getBuiltinTheme(name);
+	if (!builtinTheme) {
 		throw new Error(`Theme not found: ${name}`);
 	}
-	const content = fs.readFileSync(themePath, "utf-8");
-	return parseThemeJsonContent(name, content);
+	return builtinTheme;
 }
 
 function splitThemeColors(colors: ResolvedThemeColorValues<string | number>): {
