@@ -11,6 +11,7 @@ Example: bench/long_transcript.py --build pi-bolt=./out/pi-bolt/pi --entries 0,5
 import argparse
 import json
 import random
+import re
 import statistics
 import sys
 import time
@@ -102,7 +103,11 @@ def run(build, entries, mode, a):
         args = [*build.argv, *MODEL_ARGS]
         real = str(Path(cwd).resolve())
         if entries:
-            write_session(home / "sessions" / ("--" + real[1:].replace("/", "-") + "--") / "2026-01-01T00-00-00-000Z_t.jsonl", real, entries)
+            # (The folder Pi derives from its working directory, as getDefaultSessionDirPath() does; on Windows the temporary
+            # folder may reach Pi in its short form, so both forms get the session.)
+            for folder in {str(cwd), real}:
+                safe = "--" + re.sub(r"[/\\:]", "-", re.sub(r"^[/\\]", "", folder)) + "--"
+                write_session(home / "sessions" / safe / "2026-01-01T00-00-00-000Z_t.jsonl", real, entries)
             args.append("-c")
         else:
             args.append("--no-session")
