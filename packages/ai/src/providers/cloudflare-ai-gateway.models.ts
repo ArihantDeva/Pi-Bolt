@@ -3,7 +3,7 @@
 
 import type values from "./data/cloudflare-ai-gateway.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG } from "./cloudflare-ai-gateway.catalog.ts";
+import { CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG } from "./cloudflare-ai-gateway.catalog.generated.ts";
 
 export const CLOUDFLARE_AI_GATEWAY_MODELS: ChatModelCatalog<typeof values, "cloudflare-ai-gateway"> =
 	CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG.chat();

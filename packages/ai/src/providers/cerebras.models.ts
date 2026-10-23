@@ -3,7 +3,7 @@
 
 import type values from "./data/cerebras.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { CEREBRAS_MODEL_CATALOG } from "./cerebras.catalog.ts";
+import { CEREBRAS_MODEL_CATALOG } from "./cerebras.catalog.generated.ts";
 
 export const CEREBRAS_MODELS: ChatModelCatalog<typeof values, "cerebras"> =
 	CEREBRAS_MODEL_CATALOG.chat();

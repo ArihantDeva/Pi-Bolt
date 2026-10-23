@@ -3,7 +3,7 @@ import { typesafeSystemOneApi } from "../api/typesafe-system-one.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { VERCEL_AI_GATEWAY_MODEL_CATALOG } from "./vercel-ai-gateway.catalog.ts";
+import { VERCEL_AI_GATEWAY_MODEL_CATALOG } from "./vercel-ai-gateway.catalog.generated.ts";
 
 export function vercelAIGatewayProvider(): Provider<"anthropic-messages"> {
 	return withCatalogListing(

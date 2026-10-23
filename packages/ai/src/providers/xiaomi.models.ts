@@ -3,7 +3,7 @@
 
 import type values from "./data/xiaomi.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { XIAOMI_MODEL_CATALOG } from "./xiaomi.catalog.ts";
+import { XIAOMI_MODEL_CATALOG } from "./xiaomi.catalog.generated.ts";
 
 export const XIAOMI_MODELS: ChatModelCatalog<typeof values, "xiaomi"> =
 	XIAOMI_MODEL_CATALOG.chat();

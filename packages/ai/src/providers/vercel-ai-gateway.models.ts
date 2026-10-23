@@ -3,7 +3,7 @@
 
 import type values from "./data/vercel-ai-gateway.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { VERCEL_AI_GATEWAY_MODEL_CATALOG } from "./vercel-ai-gateway.catalog.ts";
+import { VERCEL_AI_GATEWAY_MODEL_CATALOG } from "./vercel-ai-gateway.catalog.generated.ts";
 
 export const VERCEL_AI_GATEWAY_MODELS: ChatModelCatalog<typeof values, "vercel-ai-gateway"> =
 	VERCEL_AI_GATEWAY_MODEL_CATALOG.chat();

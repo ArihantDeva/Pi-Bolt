@@ -2,7 +2,7 @@ import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { MOONSHOTAI_CN_MODEL_CATALOG } from "./moonshotai-cn.catalog.ts";
+import { MOONSHOTAI_CN_MODEL_CATALOG } from "./moonshotai-cn.catalog.generated.ts";
 
 export function moonshotaiCnProvider(): Provider<"openai-completions"> {
 	return withCatalogListing(

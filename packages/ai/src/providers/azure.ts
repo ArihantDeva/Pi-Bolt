@@ -5,7 +5,7 @@ import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { Api, Model, ProviderStreams, StreamOptions } from "../types.ts";
-import { AZURE_MODEL_CATALOG } from "./azure.catalog.ts";
+import { AZURE_MODEL_CATALOG } from "./azure.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 function resolveAzureModel(model: Model<Api>, options: StreamOptions | undefined): Model<Api> {

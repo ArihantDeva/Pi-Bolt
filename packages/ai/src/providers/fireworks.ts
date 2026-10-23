@@ -2,7 +2,7 @@ import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { FIREWORKS_MODEL_CATALOG } from "./fireworks.catalog.ts";
+import { FIREWORKS_MODEL_CATALOG } from "./fireworks.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function fireworksProvider(): Provider<"anthropic-messages" | "openai-completions"> {

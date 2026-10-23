@@ -3494,14 +3494,14 @@ async function generateModels() {
 			// The TypeScript modules repeat the data (scripts/model-catalog-modules.ts): saved first, restored on failure.
 			const previousModules = new Map(
 				readdirSync(providersDir)
-					.filter((entry) => entry.endsWith(".models.ts") || entry.endsWith(".catalog.ts"))
+					.filter((entry) => entry.endsWith(".models.ts") || entry.endsWith(".catalog.generated.ts"))
 					.map((entry) => [entry, readFileSync(join(providersDir, entry), "utf8")] as const),
 			);
 			const aggregatorPath = join(packageRoot, "src/models.generated.ts");
 			const previousAggregator = readFileSync(aggregatorPath, "utf8");
 			restoreGeneratedCatalog = () => {
 				for (const entry of readdirSync(providersDir)) {
-					if (entry.endsWith(".models.ts") || entry.endsWith(".catalog.ts")) rmSync(join(providersDir, entry));
+					if (entry.endsWith(".models.ts") || entry.endsWith(".catalog.generated.ts")) rmSync(join(providersDir, entry));
 				}
 				for (const [entry, content] of previousModules) {
 					writeFileSync(join(providersDir, entry), content);

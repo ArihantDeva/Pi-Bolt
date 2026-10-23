@@ -6,7 +6,7 @@ import { typesafeSystemOneApi } from "../api/typesafe-system-one.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { OPENCODE_MODEL_CATALOG } from "./opencode.catalog.ts";
+import { OPENCODE_MODEL_CATALOG } from "./opencode.catalog.generated.ts";
 import { withOpenCodeSessionHeader } from "./opencode-headers.ts";
 
 type OpenCodeApi = "anthropic-messages" | "google-generative-ai" | "openai-completions" | "openai-responses";

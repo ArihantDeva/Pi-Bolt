@@ -3,7 +3,7 @@
 
 import type values from "./data/zai-coding-cn.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { ZAI_CODING_CN_MODEL_CATALOG } from "./zai-coding-cn.catalog.ts";
+import { ZAI_CODING_CN_MODEL_CATALOG } from "./zai-coding-cn.catalog.generated.ts";
 
 export const ZAI_CODING_CN_MODELS: ChatModelCatalog<typeof values, "zai-coding-cn"> =
 	ZAI_CODING_CN_MODEL_CATALOG.chat();

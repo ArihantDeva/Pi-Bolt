@@ -103,10 +103,10 @@ export function readModelDataStructure(packageRoot: string): ModelDataStructure 
 	const dataDir = join(providersDir, "data");
 	const providerIds = readModelDataProviderIds(packageRoot);
 	const expectedShards = providerIds
-		.flatMap((providerId) => [`${providerId}.models.ts`, `${providerId}.catalog.ts`])
+		.flatMap((providerId) => [`${providerId}.models.ts`, `${providerId}.catalog.generated.ts`])
 		.sort();
 	const actualShards = readdirSync(providersDir)
-		.filter((entry) => entry.endsWith(".models.ts") || entry.endsWith(".catalog.ts"))
+		.filter((entry) => entry.endsWith(".models.ts") || entry.endsWith(".catalog.generated.ts"))
 		.sort();
 	if (!sameStrings(expectedShards, actualShards)) {
 		throw new Error(
@@ -310,17 +310,21 @@ export function validateGeneratedModelData(packageRoot: string): void {
 	validateCatalogModules(Object.keys(structure), join(packageRoot, "src", "providers"), dataDir);
 }
 
-/** Each providers/<provider>.catalog.ts must hold its data file's text, and the chat ids and names that text lists. */
+/** Each providers/<provider>.catalog.generated.ts must hold its data file's text, and the chat ids and names that text lists. */
 function validateCatalogModules(providerIds: readonly string[], providersDir: string, dataDir: string): void {
 	const errors: string[] = [];
 	for (const providerId of providerIds) {
 		const dataText = readFileSync(join(dataDir, `${providerId}.json`), "utf8");
-		const modulePath = join(providersDir, `${providerId}.catalog.ts`);
+		const modulePath = join(providersDir, `${providerId}.catalog.generated.ts`);
+		if (!existsSync(modulePath)) {
+			errors.push(`${providerId}.catalog.generated.ts is missing`);
+			continue;
+		}
 		const source = readFileSync(modulePath, "utf8");
 		if (catalogModuleData(source) !== dataText.replace(/\n$/, "")) {
-			errors.push(`${providerId}.catalog.ts does not hold data/${providerId}.json`);
+			errors.push(`${providerId}.catalog.generated.ts does not hold data/${providerId}.json`);
 		} else if (source !== renderCatalogModule(providerId, dataText)) {
-			errors.push(`${providerId}.catalog.ts is not what the generator writes for data/${providerId}.json`);
+			errors.push(`${providerId}.catalog.generated.ts is not what the generator writes for data/${providerId}.json`);
 		}
 	}
 	if (errors.length > 0) {

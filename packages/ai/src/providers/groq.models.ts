@@ -3,7 +3,7 @@
 
 import type values from "./data/groq.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { GROQ_MODEL_CATALOG } from "./groq.catalog.ts";
+import { GROQ_MODEL_CATALOG } from "./groq.catalog.generated.ts";
 
 export const GROQ_MODELS: ChatModelCatalog<typeof values, "groq"> =
 	GROQ_MODEL_CATALOG.chat();

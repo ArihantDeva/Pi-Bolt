@@ -28,6 +28,8 @@ out/pi-bolt/pi --version
 Apart from downloading the runtime and npm packages, the build is offline: Pi's model catalog
 (`packages/ai/src/providers/data`) is in the repository. `scripts/prepare-pi.sh --refresh-models` fetches it again from the
 model providers; every provider has to answer, so it is for updating the catalog (commit what changes), not for building.
+The build writes each provider's catalog module (`packages/ai/src/providers/<provider>.catalog.generated.ts`, which builds its models on
+first use) from that data; they are not in git (`npm run generate:catalog-modules` writes them alone).
 When a step fails, the script prints the end of its output, and the whole of it is in `.work/prepare-pi.log`.
 
 ## Building the runtime

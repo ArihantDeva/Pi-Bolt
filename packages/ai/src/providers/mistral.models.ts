@@ -3,7 +3,7 @@
 
 import type values from "./data/mistral.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { MISTRAL_MODEL_CATALOG } from "./mistral.catalog.ts";
+import { MISTRAL_MODEL_CATALOG } from "./mistral.catalog.generated.ts";
 
 export const MISTRAL_MODELS: ChatModelCatalog<typeof values, "mistral"> =
 	MISTRAL_MODEL_CATALOG.chat();

@@ -3,7 +3,7 @@
 
 import type values from "./data/fireworks.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { FIREWORKS_MODEL_CATALOG } from "./fireworks.catalog.ts";
+import { FIREWORKS_MODEL_CATALOG } from "./fireworks.catalog.generated.ts";
 
 export const FIREWORKS_MODELS: ChatModelCatalog<typeof values, "fireworks"> =
 	FIREWORKS_MODEL_CATALOG.chat();

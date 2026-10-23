@@ -3,7 +3,7 @@
 
 import type values from "./data/moonshotai-cn.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { MOONSHOTAI_CN_MODEL_CATALOG } from "./moonshotai-cn.catalog.ts";
+import { MOONSHOTAI_CN_MODEL_CATALOG } from "./moonshotai-cn.catalog.generated.ts";
 
 export const MOONSHOTAI_CN_MODELS: ChatModelCatalog<typeof values, "moonshotai-cn"> =
 	MOONSHOTAI_CN_MODEL_CATALOG.chat();

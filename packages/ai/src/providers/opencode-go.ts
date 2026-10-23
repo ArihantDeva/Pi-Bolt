@@ -5,7 +5,7 @@ import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { OPENCODE_GO_MODEL_CATALOG } from "./opencode-go.catalog.ts";
+import { OPENCODE_GO_MODEL_CATALOG } from "./opencode-go.catalog.generated.ts";
 import { withOpenCodeSessionHeader } from "./opencode-headers.ts";
 
 type OpenCodeGoApi = "anthropic-messages" | "google-generative-ai" | "openai-completions" | "openai-responses";

@@ -2,7 +2,7 @@ import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { XIAOMI_MODEL_CATALOG } from "./xiaomi.catalog.ts";
+import { XIAOMI_MODEL_CATALOG } from "./xiaomi.catalog.generated.ts";
 
 export function xiaomiProvider(): Provider<"openai-completions"> {
 	return withCatalogListing(

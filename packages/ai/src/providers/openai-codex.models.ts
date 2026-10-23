@@ -3,7 +3,7 @@
 
 import type values from "./data/openai-codex.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { OPENAI_CODEX_MODEL_CATALOG } from "./openai-codex.catalog.ts";
+import { OPENAI_CODEX_MODEL_CATALOG } from "./openai-codex.catalog.generated.ts";
 
 export const OPENAI_CODEX_MODELS: ChatModelCatalog<typeof values, "openai-codex"> =
 	OPENAI_CODEX_MODEL_CATALOG.chat();

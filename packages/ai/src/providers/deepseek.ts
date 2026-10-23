@@ -1,7 +1,7 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { DEEPSEEK_MODEL_CATALOG } from "./deepseek.catalog.ts";
+import { DEEPSEEK_MODEL_CATALOG } from "./deepseek.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function deepseekProvider(): Provider<"openai-completions"> {

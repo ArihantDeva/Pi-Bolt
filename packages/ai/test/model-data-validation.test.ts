@@ -42,7 +42,7 @@ function createFixture(): {
 		'import type values from "./data/test-provider.json";\n',
 	);
 	writeFileSync(
-		join(providersDir, "test-provider.catalog.ts"),
+		join(providersDir, "test-provider.catalog.generated.ts"),
 		'import type values from "./data/test-provider.json";\n',
 	);
 
@@ -109,7 +109,10 @@ describe("published model catalog hydration", () => {
 		expect(readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8")).toBe(manifest);
 		expect(readFileSync(join(dataDir, "test-provider.json"), "utf8")).toBe(provider);
 		// The catalog module, which repeats the data, is written with it.
-		const catalogModule = readFileSync(join(packageRoot, "src", "providers", "test-provider.catalog.ts"), "utf8");
+		const catalogModule = readFileSync(
+			join(packageRoot, "src", "providers", "test-provider.catalog.generated.ts"),
+			"utf8",
+		);
 		expect(catalogModuleData(catalogModule)).toBe(provider.replace(/\n$/, ""));
 		expect(() => validateGeneratedModelData(packageRoot)).not.toThrow();
 	});
@@ -119,9 +122,11 @@ describe("published model catalog hydration", () => {
 		const catalogPath = join(packageRoot, "catalog.json");
 		writeFileSync(catalogPath, JSON.stringify({ "test-provider": [chatModel(values)] }));
 		hydrateModelCatalog(packageRoot, catalogPath);
-		const modulePath = join(packageRoot, "src", "providers", "test-provider.catalog.ts");
+		const modulePath = join(packageRoot, "src", "providers", "test-provider.catalog.generated.ts");
 		writeFileSync(modulePath, readFileSync(modulePath, "utf8").replace('"name":"Model A"', '"name":"Model Z"'));
-		expect(() => validateGeneratedModelData(packageRoot)).toThrow("test-provider.catalog.ts does not hold");
+		expect(() => validateGeneratedModelData(packageRoot)).toThrow("test-provider.catalog.generated.ts does not hold");
+		rmSync(modulePath);
+		expect(() => validateGeneratedModelData(packageRoot)).toThrow("missing: test-provider.catalog.generated.ts");
 	});
 
 	it("groups models by API and keys them by type and id", () => {

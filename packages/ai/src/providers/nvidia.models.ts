@@ -3,7 +3,7 @@
 
 import type values from "./data/nvidia.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { NVIDIA_MODEL_CATALOG } from "./nvidia.catalog.ts";
+import { NVIDIA_MODEL_CATALOG } from "./nvidia.catalog.generated.ts";
 
 export const NVIDIA_MODELS: ChatModelCatalog<typeof values, "nvidia"> =
 	NVIDIA_MODEL_CATALOG.chat();

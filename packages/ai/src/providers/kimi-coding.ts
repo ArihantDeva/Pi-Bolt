@@ -2,7 +2,7 @@ import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadKimiCodingOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { KIMI_CODING_MODEL_CATALOG } from "./kimi-coding.catalog.ts";
+import { KIMI_CODING_MODEL_CATALOG } from "./kimi-coding.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function kimiCodingProvider(): Provider<"openai-completions"> {

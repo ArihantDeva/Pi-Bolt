@@ -3,7 +3,7 @@
 
 import type values from "./data/opencode.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { OPENCODE_MODEL_CATALOG } from "./opencode.catalog.ts";
+import { OPENCODE_MODEL_CATALOG } from "./opencode.catalog.generated.ts";
 
 export const OPENCODE_MODELS: ChatModelCatalog<typeof values, "opencode"> =
 	OPENCODE_MODEL_CATALOG.chat();

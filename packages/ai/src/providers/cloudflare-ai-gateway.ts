@@ -2,7 +2,7 @@ import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG } from "./cloudflare-ai-gateway.catalog.ts";
+import { CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG } from "./cloudflare-ai-gateway.catalog.generated.ts";
 import { cloudflareAIGatewayAuth } from "./cloudflare-auth.ts";
 import { cloudflareStreams } from "./cloudflare-stream.ts";
 import { withCatalogListing } from "./model-listing.ts";

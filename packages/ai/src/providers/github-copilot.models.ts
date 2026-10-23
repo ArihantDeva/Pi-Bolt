@@ -3,7 +3,7 @@
 
 import type values from "./data/github-copilot.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { GITHUB_COPILOT_MODEL_CATALOG } from "./github-copilot.catalog.ts";
+import { GITHUB_COPILOT_MODEL_CATALOG } from "./github-copilot.catalog.generated.ts";
 
 export const GITHUB_COPILOT_MODELS: ChatModelCatalog<typeof values, "github-copilot"> =
 	GITHUB_COPILOT_MODEL_CATALOG.chat();

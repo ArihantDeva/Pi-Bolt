@@ -3,7 +3,7 @@
 
 import type values from "./data/qwen-token-plan.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { QWEN_TOKEN_PLAN_MODEL_CATALOG } from "./qwen-token-plan.catalog.ts";
+import { QWEN_TOKEN_PLAN_MODEL_CATALOG } from "./qwen-token-plan.catalog.generated.ts";
 
 export const QWEN_TOKEN_PLAN_MODELS: ChatModelCatalog<typeof values, "qwen-token-plan"> =
 	QWEN_TOKEN_PLAN_MODEL_CATALOG.chat();

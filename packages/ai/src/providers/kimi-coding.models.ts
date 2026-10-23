@@ -3,7 +3,7 @@
 
 import type values from "./data/kimi-coding.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { KIMI_CODING_MODEL_CATALOG } from "./kimi-coding.catalog.ts";
+import { KIMI_CODING_MODEL_CATALOG } from "./kimi-coding.catalog.generated.ts";
 
 export const KIMI_CODING_MODELS: ChatModelCatalog<typeof values, "kimi-coding"> =
 	KIMI_CODING_MODEL_CATALOG.chat();

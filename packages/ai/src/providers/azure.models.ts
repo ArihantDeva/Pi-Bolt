@@ -3,7 +3,7 @@
 
 import type values from "./data/azure.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { AZURE_MODEL_CATALOG } from "./azure.catalog.ts";
+import { AZURE_MODEL_CATALOG } from "./azure.catalog.generated.ts";
 
 export const AZURE_MODELS: ChatModelCatalog<typeof values, "azure"> =
 	AZURE_MODEL_CATALOG.chat();

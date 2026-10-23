@@ -2,7 +2,7 @@ import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadMetaOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { META_MODEL_CATALOG } from "./meta.catalog.ts";
+import { META_MODEL_CATALOG } from "./meta.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function metaProvider(): Provider<"openai-responses"> {

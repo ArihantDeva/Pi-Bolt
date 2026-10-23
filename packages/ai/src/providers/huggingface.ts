@@ -1,7 +1,7 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { HUGGINGFACE_MODEL_CATALOG } from "./huggingface.catalog.ts";
+import { HUGGINGFACE_MODEL_CATALOG } from "./huggingface.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function huggingfaceProvider(): Provider<"openai-completions"> {

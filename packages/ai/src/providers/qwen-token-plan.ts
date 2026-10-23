@@ -2,7 +2,7 @@ import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { QWEN_TOKEN_PLAN_MODEL_CATALOG } from "./qwen-token-plan.catalog.ts";
+import { QWEN_TOKEN_PLAN_MODEL_CATALOG } from "./qwen-token-plan.catalog.generated.ts";
 
 export function qwenTokenPlanProvider(): Provider<"openai-completions"> {
 	return withCatalogListing(

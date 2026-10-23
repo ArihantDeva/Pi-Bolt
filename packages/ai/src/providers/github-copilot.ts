@@ -4,7 +4,7 @@ import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadGitHubCopilotOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { GITHUB_COPILOT_MODEL_CATALOG } from "./github-copilot.catalog.ts";
+import { GITHUB_COPILOT_MODEL_CATALOG } from "./github-copilot.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function githubCopilotProvider(): Provider<"anthropic-messages" | "openai-completions" | "openai-responses"> {

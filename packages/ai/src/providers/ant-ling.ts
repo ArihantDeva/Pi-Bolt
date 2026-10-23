@@ -1,7 +1,7 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { ANT_LING_MODEL_CATALOG } from "./ant-ling.catalog.ts";
+import { ANT_LING_MODEL_CATALOG } from "./ant-ling.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function antLingProvider(): Provider<"openai-completions"> {

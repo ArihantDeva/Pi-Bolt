@@ -3,7 +3,7 @@
 
 import type values from "./data/ant-ling.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { ANT_LING_MODEL_CATALOG } from "./ant-ling.catalog.ts";
+import { ANT_LING_MODEL_CATALOG } from "./ant-ling.catalog.generated.ts";
 
 export const ANT_LING_MODELS: ChatModelCatalog<typeof values, "ant-ling"> =
 	ANT_LING_MODEL_CATALOG.chat();

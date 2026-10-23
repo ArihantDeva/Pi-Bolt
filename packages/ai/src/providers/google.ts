@@ -1,7 +1,7 @@
 import { googleGenerativeAIApi } from "../api/google-generative-ai.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { GOOGLE_MODEL_CATALOG } from "./google.catalog.ts";
+import { GOOGLE_MODEL_CATALOG } from "./google.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function googleProvider(): Provider<"google-generative-ai"> {

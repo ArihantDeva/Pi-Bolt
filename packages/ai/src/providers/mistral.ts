@@ -1,7 +1,7 @@
 import { mistralConversationsApi } from "../api/mistral-conversations.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { MISTRAL_MODEL_CATALOG } from "./mistral.catalog.ts";
+import { MISTRAL_MODEL_CATALOG } from "./mistral.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function mistralProvider(): Provider<"mistral-conversations"> {

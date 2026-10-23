@@ -3,7 +3,7 @@
 
 import type values from "./data/meta.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { META_MODEL_CATALOG } from "./meta.catalog.ts";
+import { META_MODEL_CATALOG } from "./meta.catalog.generated.ts";
 
 export const META_MODELS: ChatModelCatalog<typeof values, "meta"> =
 	META_MODEL_CATALOG.chat();

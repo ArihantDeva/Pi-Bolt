@@ -3,7 +3,7 @@
 
 import type values from "./data/xai.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { XAI_MODEL_CATALOG } from "./xai.catalog.ts";
+import { XAI_MODEL_CATALOG } from "./xai.catalog.generated.ts";
 
 export const XAI_MODELS: ChatModelCatalog<typeof values, "xai"> =
 	XAI_MODEL_CATALOG.chat();

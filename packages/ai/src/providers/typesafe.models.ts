@@ -3,7 +3,7 @@
 
 import type values from "./data/typesafe.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { TYPESAFE_MODEL_CATALOG } from "./typesafe.catalog.ts";
+import { TYPESAFE_MODEL_CATALOG } from "./typesafe.catalog.generated.ts";
 
 export const TYPESAFE_MODELS: ChatModelCatalog<typeof values, "typesafe"> =
 	TYPESAFE_MODEL_CATALOG.chat();

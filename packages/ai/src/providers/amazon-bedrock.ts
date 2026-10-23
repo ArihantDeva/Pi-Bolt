@@ -1,7 +1,7 @@
 import { bedrockConverseStreamApi } from "../api/bedrock-converse-stream.lazy.ts";
 import type { ApiKeyAuth } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { AMAZON_BEDROCK_MODEL_CATALOG } from "./amazon-bedrock.catalog.ts";
+import { AMAZON_BEDROCK_MODEL_CATALOG } from "./amazon-bedrock.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 /**

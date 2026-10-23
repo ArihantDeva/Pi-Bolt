@@ -3,7 +3,7 @@
 
 import type values from "./data/google-vertex.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { GOOGLE_VERTEX_MODEL_CATALOG } from "./google-vertex.catalog.ts";
+import { GOOGLE_VERTEX_MODEL_CATALOG } from "./google-vertex.catalog.generated.ts";
 
 export const GOOGLE_VERTEX_MODELS: ChatModelCatalog<typeof values, "google-vertex"> =
 	GOOGLE_VERTEX_MODEL_CATALOG.chat();

@@ -3,7 +3,7 @@
 
 import type values from "./data/xiaomi-token-plan-cn.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { XIAOMI_TOKEN_PLAN_CN_MODEL_CATALOG } from "./xiaomi-token-plan-cn.catalog.ts";
+import { XIAOMI_TOKEN_PLAN_CN_MODEL_CATALOG } from "./xiaomi-token-plan-cn.catalog.generated.ts";
 
 export const XIAOMI_TOKEN_PLAN_CN_MODELS: ChatModelCatalog<typeof values, "xiaomi-token-plan-cn"> =
 	XIAOMI_TOKEN_PLAN_CN_MODEL_CATALOG.chat();

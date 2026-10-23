@@ -1,7 +1,7 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { BASETEN_MODEL_CATALOG } from "./baseten.catalog.ts";
+import { BASETEN_MODEL_CATALOG } from "./baseten.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function basetenProvider(): Provider<"openai-completions"> {

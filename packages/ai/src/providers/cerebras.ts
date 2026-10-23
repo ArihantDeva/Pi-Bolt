@@ -1,7 +1,7 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { CEREBRAS_MODEL_CATALOG } from "./cerebras.catalog.ts";
+import { CEREBRAS_MODEL_CATALOG } from "./cerebras.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function cerebrasProvider(): Provider<"openai-completions"> {

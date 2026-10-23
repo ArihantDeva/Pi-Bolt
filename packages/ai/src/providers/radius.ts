@@ -4,7 +4,7 @@ import { loadRadiusOAuth } from "../auth/oauth/load.ts";
 import type { Provider } from "../models.ts";
 import type { Model } from "../types.ts";
 import { namedModelListing, setModelListing } from "./model-listing.ts";
-import { RADIUS_MODEL_CATALOG } from "./radius.catalog.ts";
+import { RADIUS_MODEL_CATALOG } from "./radius.catalog.generated.ts";
 import {
 	DEFAULT_RADIUS_GATEWAY,
 	getRadiusModels,

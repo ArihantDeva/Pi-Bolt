@@ -3,7 +3,7 @@
 
 import type values from "./data/huggingface.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { HUGGINGFACE_MODEL_CATALOG } from "./huggingface.catalog.ts";
+import { HUGGINGFACE_MODEL_CATALOG } from "./huggingface.catalog.generated.ts";
 
 export const HUGGINGFACE_MODELS: ChatModelCatalog<typeof values, "huggingface"> =
 	HUGGINGFACE_MODEL_CATALOG.chat();

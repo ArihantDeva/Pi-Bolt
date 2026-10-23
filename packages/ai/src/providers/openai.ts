@@ -5,7 +5,7 @@ import { loadOpenAIChatGPTOAuth } from "../auth/oauth/load.ts";
 import { createProvider, isModelType, type Provider } from "../models.ts";
 import type { ClassifierModel } from "../types.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { OPENAI_MODEL_CATALOG } from "./openai.catalog.ts";
+import { OPENAI_MODEL_CATALOG } from "./openai.catalog.generated.ts";
 
 export function openaiProvider(): Provider<"openai-responses"> {
 	return withCatalogListing(

@@ -3,7 +3,7 @@
 
 import type values from "./data/xiaomi-token-plan-sgp.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { XIAOMI_TOKEN_PLAN_SGP_MODEL_CATALOG } from "./xiaomi-token-plan-sgp.catalog.ts";
+import { XIAOMI_TOKEN_PLAN_SGP_MODEL_CATALOG } from "./xiaomi-token-plan-sgp.catalog.generated.ts";
 
 export const XIAOMI_TOKEN_PLAN_SGP_MODELS: ChatModelCatalog<typeof values, "xiaomi-token-plan-sgp"> =
 	XIAOMI_TOKEN_PLAN_SGP_MODEL_CATALOG.chat();

@@ -2,7 +2,7 @@ import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { ZAI_CODING_CN_MODEL_CATALOG } from "./zai-coding-cn.catalog.ts";
+import { ZAI_CODING_CN_MODEL_CATALOG } from "./zai-coding-cn.catalog.generated.ts";
 
 export function zaiCodingCnProvider(): Provider<"openai-completions"> {
 	return withCatalogListing(

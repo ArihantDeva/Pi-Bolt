@@ -3,7 +3,7 @@
 
 import type values from "./data/radius.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { RADIUS_MODEL_CATALOG } from "./radius.catalog.ts";
+import { RADIUS_MODEL_CATALOG } from "./radius.catalog.generated.ts";
 
 export const RADIUS_MODELS: ChatModelCatalog<typeof values, "radius"> =
 	RADIUS_MODEL_CATALOG.chat();

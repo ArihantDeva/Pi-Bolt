@@ -1,7 +1,7 @@
 import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { MINIMAX_MODEL_CATALOG } from "./minimax.catalog.ts";
+import { MINIMAX_MODEL_CATALOG } from "./minimax.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 export function minimaxProvider(): Provider<"anthropic-messages"> {

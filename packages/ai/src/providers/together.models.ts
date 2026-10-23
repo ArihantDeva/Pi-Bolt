@@ -3,7 +3,7 @@
 
 import type values from "./data/together.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { TOGETHER_MODEL_CATALOG } from "./together.catalog.ts";
+import { TOGETHER_MODEL_CATALOG } from "./together.catalog.generated.ts";
 
 export const TOGETHER_MODELS: ChatModelCatalog<typeof values, "together"> =
 	TOGETHER_MODEL_CATALOG.chat();

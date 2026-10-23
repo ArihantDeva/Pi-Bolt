@@ -3,7 +3,7 @@
 
 import type values from "./data/google.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { GOOGLE_MODEL_CATALOG } from "./google.catalog.ts";
+import { GOOGLE_MODEL_CATALOG } from "./google.catalog.generated.ts";
 
 export const GOOGLE_MODELS: ChatModelCatalog<typeof values, "google"> =
 	GOOGLE_MODEL_CATALOG.chat();

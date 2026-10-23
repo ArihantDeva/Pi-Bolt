@@ -3,7 +3,7 @@
 
 import type values from "./data/openrouter.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { OPENROUTER_MODEL_CATALOG } from "./openrouter.catalog.ts";
+import { OPENROUTER_MODEL_CATALOG } from "./openrouter.catalog.generated.ts";
 
 export const OPENROUTER_MODELS: ChatModelCatalog<typeof values, "openrouter"> =
 	OPENROUTER_MODEL_CATALOG.chat();

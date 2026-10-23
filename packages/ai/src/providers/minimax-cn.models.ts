@@ -3,7 +3,7 @@
 
 import type values from "./data/minimax-cn.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { MINIMAX_CN_MODEL_CATALOG } from "./minimax-cn.catalog.ts";
+import { MINIMAX_CN_MODEL_CATALOG } from "./minimax-cn.catalog.generated.ts";
 
 export const MINIMAX_CN_MODELS: ChatModelCatalog<typeof values, "minimax-cn"> =
 	MINIMAX_CN_MODEL_CATALOG.chat();

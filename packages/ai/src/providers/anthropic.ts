@@ -14,7 +14,7 @@ import {
 } from "../env-api-keys.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { ProviderEnv } from "../types.ts";
-import { ANTHROPIC_MODEL_CATALOG } from "./anthropic.catalog.ts";
+import { ANTHROPIC_MODEL_CATALOG } from "./anthropic.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 function anthropicApiKeyAuth(): ApiKeyAuth {

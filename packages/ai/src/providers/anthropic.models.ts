@@ -3,7 +3,7 @@
 
 import type values from "./data/anthropic.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { ANTHROPIC_MODEL_CATALOG } from "./anthropic.catalog.ts";
+import { ANTHROPIC_MODEL_CATALOG } from "./anthropic.catalog.generated.ts";
 
 export const ANTHROPIC_MODELS: ChatModelCatalog<typeof values, "anthropic"> =
 	ANTHROPIC_MODEL_CATALOG.chat();

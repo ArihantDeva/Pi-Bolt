@@ -3,7 +3,7 @@
 
 import type values from "./data/amazon-bedrock.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { AMAZON_BEDROCK_MODEL_CATALOG } from "./amazon-bedrock.catalog.ts";
+import { AMAZON_BEDROCK_MODEL_CATALOG } from "./amazon-bedrock.catalog.generated.ts";
 
 export const AMAZON_BEDROCK_MODELS: ChatModelCatalog<typeof values, "amazon-bedrock"> =
 	AMAZON_BEDROCK_MODEL_CATALOG.chat();

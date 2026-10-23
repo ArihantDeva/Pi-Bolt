@@ -8,7 +8,7 @@ import { createProvider, type Provider, type RefreshModelsContext } from "../mod
 import type { AnyModel } from "../types.ts";
 import { isModelType } from "../utils/model-operations.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { OPENROUTER_MODEL_CATALOG } from "./openrouter.catalog.ts";
+import { OPENROUTER_MODEL_CATALOG } from "./openrouter.catalog.generated.ts";
 import { type OpenRouterModel, openRouterCost } from "./openrouter-api.ts";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";

@@ -3,7 +3,7 @@
 
 import type values from "./data/baseten.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { BASETEN_MODEL_CATALOG } from "./baseten.catalog.ts";
+import { BASETEN_MODEL_CATALOG } from "./baseten.catalog.generated.ts";
 
 export const BASETEN_MODELS: ChatModelCatalog<typeof values, "baseten"> =
 	BASETEN_MODEL_CATALOG.chat();

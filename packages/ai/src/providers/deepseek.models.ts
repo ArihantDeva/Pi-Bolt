@@ -3,7 +3,7 @@
 
 import type values from "./data/deepseek.json";
 import type { ChatModelCatalog, ClassifierModelCatalog, ImageModelCatalog } from "../model-catalog.ts";
-import { DEEPSEEK_MODEL_CATALOG } from "./deepseek.catalog.ts";
+import { DEEPSEEK_MODEL_CATALOG } from "./deepseek.catalog.generated.ts";
 
 export const DEEPSEEK_MODELS: ChatModelCatalog<typeof values, "deepseek"> =
 	DEEPSEEK_MODEL_CATALOG.chat();

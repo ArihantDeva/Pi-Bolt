@@ -2,7 +2,7 @@ import { typesafeSystemOneApi } from "../api/typesafe-system-one.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { withCatalogListing } from "./model-listing.ts";
-import { TYPESAFE_MODEL_CATALOG } from "./typesafe.catalog.ts";
+import { TYPESAFE_MODEL_CATALOG } from "./typesafe.catalog.generated.ts";
 
 export function typesafeProvider(): Provider {
 	return withCatalogListing(

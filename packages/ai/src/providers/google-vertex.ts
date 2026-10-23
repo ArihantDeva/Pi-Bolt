@@ -1,7 +1,7 @@
 import { googleVertexApi } from "../api/google-vertex.lazy.ts";
 import type { ApiKeyAuth } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { GOOGLE_VERTEX_MODEL_CATALOG } from "./google-vertex.catalog.ts";
+import { GOOGLE_VERTEX_MODEL_CATALOG } from "./google-vertex.catalog.generated.ts";
 import { withCatalogListing } from "./model-listing.ts";
 
 const VERTEX_ADC_PATH = "~/.config/gcloud/application_default_credentials.json";
