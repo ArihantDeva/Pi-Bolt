@@ -1316,14 +1316,17 @@ export class Markdown implements Component {
 					}
 					const codeWidth = Math.max(1, width - visibleWidth(indent));
 					// (A reset inside a line, from the highlighter or the code itself, would end the shading there: the
-					// background is opened again after it.)
+					// background is opened again after it. Not a block on the terminal's own background, SGR 49: that is what a
+					// reset leaves in effect, and an SGR 49 more would read as the end of the block in a panel.)
 					let shadeOpen: string | undefined;
 					for (const codeLine of codeLines) {
 						for (const wrapped of this.wrapLine(codeLine, codeWidth)) {
 							let line = `${indent}${wrapped}`;
 							if (BACKGROUND_END.test(line)) {
-								shadeOpen ??= shade("\0").split("\0")[0];
-								line = line.replace(BACKGROUND_END_ALL, (reset) => reset + shadeOpen);
+								shadeOpen ??= shade("\0").split("\0")[0]!;
+								if (shadeOpen !== "\x1b[49m") {
+									line = line.replace(BACKGROUND_END_ALL, (reset) => reset + shadeOpen);
+								}
 							}
 							lines.push(shade(line));
 						}

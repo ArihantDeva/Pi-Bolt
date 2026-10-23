@@ -222,6 +222,21 @@ describe("Shaded code blocks", () => {
 		}
 	});
 
+	it("keeps a code block on the terminal's own background inside a panel after a reset from the highlighter", () => {
+		const terminalBg: MarkdownTheme = {
+			...shadedTheme,
+			codeBlockBg: (text) => `\x1b[49m${text}\x1b[49m`,
+			highlightCode: (code) => code.split("\n").map((line) => line.replace("short", "\x1b[1mshort\x1b[0m")),
+		};
+		const source = "```\nshort and long\n```";
+		const box = new Box(1, 0, outerBg);
+		box.addChild(new Markdown(source, 0, 0, terminalBg));
+		const line = box.render(30).find((candidate) => candidate.includes("short"))!;
+		const afterText = line.indexOf(" and long") + " and long".length;
+		assert.strictEqual(getActiveBackgroundAnsi(line.slice(0, afterText)), "");
+		assert.strictEqual(getActiveBackgroundAnsi(line.slice(0, line.lastIndexOf("\x1b[49m"))), palette.outer);
+	});
+
 	it("tells foreground colors from background codes", () => {
 		// 38;5;48 and 38;2;40;41;100 are foreground colors: the reset after them opens a part on the terminal's background.
 		for (const fg of ["\x1b[38;5;48m", "\x1b[38;2;40;41;100m"]) {
