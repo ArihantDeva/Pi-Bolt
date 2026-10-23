@@ -47,6 +47,8 @@ def done(prompt: int) -> str:
     are on the screen too, and are written again when the screen is redrawn."""
     return f"{DONE} (prompt {prompt})."
 MODEL_ARGS = ["--model", "fake/fake-model"]
+# What Pi shows for a prompt submitted while it is still starting (the prompt stays in the editor).
+STARTUP_IN_PROGRESS = b"Startup is still in progress"
 ANSI = re.compile(rb"\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[=>78]|\x1b[()][A-Z0-9]")
 
 
@@ -375,12 +377,26 @@ class Tty:
         os.write(self.fd, data)
 
     def wait_for(self, text, since, deadline):
+        """Until `text` is on the screen (written after `since`). A prompt submitted before Pi has finished starting is
+        kept in the editor with the status "Startup is still in progress" (a tool may see Pi's screen before startup ends,
+        and type at once): Enter is pressed again then, as a person would, until Pi takes it."""
         needle = text.encode()
         scan = since
+        startup_scan = since
+        # (When Pi said so last, and when Enter was pressed again. The status may stay on the screen without being drawn
+        # again, so Enter is pressed every 0.3 s for a while: on an empty editor it does nothing.)
+        startup_seen = sent = -1.0
         while time.perf_counter() < deadline:
             self.pump(0.01)
             if needle in ANSI.sub(b"", self.buf[scan:]):
                 return True
+            now = time.perf_counter()
+            if STARTUP_IN_PROGRESS in ANSI.sub(b"", self.buf[startup_scan:]):
+                startup_scan = len(self.buf)
+                startup_seen = now
+            if startup_seen >= 0 and now - startup_seen < 10 and now - sent > 0.3:
+                self.send(b"\r")
+                sent = now
             scan = max(since, len(self.buf) - 8192)
         return False
 
