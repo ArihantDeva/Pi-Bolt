@@ -35,6 +35,23 @@ https://github.com/user-attachments/assets/a9531e80-9e94-4b9c-8223-650a9fb8dc7a
 > [!NOTE]
 > Pi-Bolt is an independent fork of [Pi](https://github.com/earendil-works/pi), not affiliated with Pi's authors or with Oven.
 
+## Why Pi-Bolt
+
+| | Pi on Node 24 | Pi-Bolt |
+|---|---:|---:|
+| Ready to type | 423 ms | **41 ms** · 10× sooner |
+| Writing a 400 KB file through a tool call | 143.7 s | **1.2 s** · 120× faster |
+| CPU while a long answer streams | 18.6 s | **2.3 s** · 8× less |
+| CPU per prompt, 40 prompts into a session | 352 ms | **46 ms** · 7.7× less |
+| Memory after 40 prompts | 521 MB | **117 MB** · 4.5× less |
+
+<sub>Pi-Bolt 1.0.0 against Pi 1.4.0 as released, Linux x86-64, one CPU. Every platform: [Benchmarks](#benchmarks).</sub>
+
+- **Nothing to install first:** one executable, no Node.js, Bun or npm to run it.
+- **The same Pi:** same commands, sessions, settings and providers; every Pi extension works unchanged.
+- **Long sessions stay fast:** a frame costs about the same with 4,000 messages as with none, and typing stays responsive.
+- **Everywhere:** Linux x86-64 and ARM64 (Android too, in Termux), macOS on Apple silicon, Windows x64.
+
 ## Install
 
 ```bash
