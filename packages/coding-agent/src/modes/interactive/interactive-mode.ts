@@ -187,6 +187,7 @@ import {
 	type StatusIndicator,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { ThemeSelectorComponent } from "./components/theme-selector.ts";
 import { ThemedText } from "./components/themed-text.ts";
 import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
@@ -3272,6 +3273,12 @@ export class InteractiveMode {
 				this.handleThinkingCommand(searchTerm);
 				return;
 			}
+			if (text === "/theme" || text.startsWith("/theme ")) {
+				const themeName = text.startsWith("/theme ") ? text.slice(7).trim() : undefined;
+				this.editor.setText("");
+				this.handleThemeCommand(themeName);
+				return;
+			}
 			if (text === "/export" || text.startsWith("/export ")) {
 				await this.handleExportCommand(text);
 				this.editor.setText("");
@@ -5222,6 +5229,44 @@ export class InteractiveMode {
 				},
 			);
 			return { component: selector, focus: selector.getSettingsList() };
+		});
+	}
+
+	private handleThemeCommand(themeName?: string): void {
+		if (!themeName) {
+			this.showThemeSelector();
+			return;
+		}
+		const available = getAvailableThemes();
+		if (!available.includes(themeName)) {
+			this.showError(`Unknown theme "${themeName}". Available themes: ${available.join(", ")}.`);
+			return;
+		}
+		this.selectTheme(themeName);
+	}
+
+	private selectTheme(themeName: string): void {
+		this.settingsManager.setTheme(themeName);
+		this.themeController.setThemeSetting(themeName);
+		this.showStatus(`Theme: ${themeName}`);
+	}
+
+	private showThemeSelector(): void {
+		const original = this.themeController.getThemeSelection() || SYSTEM_THEME_NAME;
+		this.showSelector((done) => {
+			const selector = new ThemeSelectorComponent(
+				original,
+				(themeName) => {
+					done();
+					this.selectTheme(themeName);
+				},
+				() => {
+					done();
+					this.themeController.preview(original);
+				},
+				(themeName) => this.themeController.preview(themeName),
+			);
+			return { component: selector, focus: selector.getSelectList() };
 		});
 	}
 

@@ -376,19 +376,25 @@ export class Theme {
 // Theme Loading
 // ============================================================================
 
-let BUILTIN_THEMES: Record<string, ThemeJson> | undefined;
+let BUILTIN_THEME_NAMES: string[] | undefined;
+const builtinThemeCache = new Map<string, ThemeJson>();
 
-function getBuiltinThemes(): Record<string, ThemeJson> {
-	if (!BUILTIN_THEMES) {
-		const themesDir = getThemesDir();
-		const darkPath = path.join(themesDir, "dark.json");
-		const lightPath = path.join(themesDir, "light.json");
-		BUILTIN_THEMES = {
-			dark: JSON.parse(stripBom(fs.readFileSync(darkPath, "utf-8"))) as ThemeJson,
-			light: JSON.parse(stripBom(fs.readFileSync(lightPath, "utf-8"))) as ThemeJson,
-		};
+/** Every `*.json` file in the themes directory is a built-in theme named after its file. */
+function getBuiltinThemeNames(): string[] {
+	BUILTIN_THEME_NAMES ??= fs
+		.readdirSync(getThemesDir())
+		.filter((file) => file.endsWith(".json"))
+		.map((file) => file.slice(0, -".json".length));
+	return BUILTIN_THEME_NAMES;
+}
+
+function getBuiltinTheme(name: string): ThemeJson | undefined {
+	let theme = builtinThemeCache.get(name);
+	if (!theme && getBuiltinThemeNames().includes(name)) {
+		theme = JSON.parse(stripBom(fs.readFileSync(path.join(getThemesDir(), `${name}.json`), "utf-8"))) as ThemeJson;
+		builtinThemeCache.set(name, theme);
 	}
-	return BUILTIN_THEMES;
+	return theme;
 }
 
 export function getAvailableThemes(): string[] {
@@ -414,7 +420,7 @@ export function getAvailableThemesWithPaths(): ThemeInfo[] {
 
 	// Built-in themes. The system theme is generated, so it has no file.
 	addTheme({ name: SYSTEM_THEME_NAME, path: undefined });
-	for (const name of Object.keys(getBuiltinThemes())) {
+	for (const name of getBuiltinThemeNames()) {
 		addTheme({ name, path: path.join(themesDir, `${name}.json`) });
 	}
 
@@ -485,9 +491,9 @@ function parseThemeJsonContent(label: string, content: string): ThemeJson {
 }
 
 function loadThemeJson(name: string): ThemeJson {
-	const builtinThemes = getBuiltinThemes();
-	if (name in builtinThemes) {
-		return builtinThemes[name];
+	const builtinTheme = getBuiltinTheme(name);
+	if (builtinTheme) {
+		return builtinTheme;
 	}
 	const registeredTheme = registeredThemes.get(name);
 	if (registeredTheme?.sourcePath) {
