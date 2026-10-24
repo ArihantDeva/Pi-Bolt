@@ -10,8 +10,8 @@ name: ci
 on:
   push:
     branches: [pi-bolt]
-    # Documentation and benchmark data build nothing. (A release commit changes VERSION too, so it is built; pull requests
-    # always are, as their checks are required.)
+    # Documentation and benchmark data build nothing. (A release commit changes VERSION too, so it is built. A pull request
+    # always starts this workflow, as its checks are required: the changes job below skips the work instead.)
     paths-ignore: ["**.md", "docs/**", "bench/results/**", "site/**"]
   pull_request:
     branches: [pi-bolt]
@@ -26,8 +26,41 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # A pull request that changes only documentation (the README and the other top-level .md files, docs/, site/, bench/results/)
+  # builds and tests nothing: every job below still reports its check, as passed. Not the three docs/ files build-pi.sh puts in
+  # every build. Only code=false skips: if this job fails, everything runs.
+  changes:
+    name: What changed
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: files
+        run: |
+          code=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # (The merge commit against its first parent, the base: every file the pull request changes, a renamed one by
+            # both names.)
+            files=$(git diff --no-renames --name-only HEAD^1 HEAD)
+            printf '%s\n' "$files"
+            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -Ev '^[^/]+\.md$|^docs/|^site/|^bench/results/' | grep -q . &&
+              ! printf '%s\n' "$files" | grep -Exq 'docs/(PLUGINS|ACP|TROUBLESHOOTING)\.md'; then
+              code=false
+              echo "::notice title=Documentation only::Only documentation changed: nothing is built or tested."
+            fi
+          fi
+          echo "code=$code" >>"$GITHUB_OUTPUT"
+
   lint:
     name: Lint and types
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
@@ -61,6 +94,8 @@ jobs:
 
   unit:
     name: Pi's tests
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 40
     steps:
@@ -90,6 +125,10 @@ jobs:
 
   pi-bolt:
     name: Pi-Bolt on ${{ matrix.name }}
+    needs: changes
+    # (When only documentation changed, its steps are skipped, not the job: a skipped matrix job reports no check under each
+    # of its names.)
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -104,22 +143,26 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code != 'false'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: needs.changes.outputs.code != 'false'
         with:
           node-version: 24
           cache: npm
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: needs.changes.outputs.code != 'false'
         with:
           bun-version: "1.4.2"
       - name: Tools (Linux)
-        if: runner.os == 'Linux'
+        if: needs.changes.outputs.code != 'false' && runner.os == 'Linux'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq tmux
       - name: Tools (macOS)
-        if: runner.os == 'macOS'
+        if: needs.changes.outputs.code != 'false' && runner.os == 'macOS'
         run: brew install bash tmux xz
       - name: Runtime of the latest release
         id: runtime
+        if: needs.changes.outputs.code != 'false'
         run: |
           # (A platform the latest release has no runtime for, Linux ARM64 before its first release, is skipped.)
           if [ "$(uname -s)-$(uname -m)" = Linux-aarch64 ] &&
@@ -216,6 +259,8 @@ jobs:
 
   engine:
     name: Engine patches apply
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
