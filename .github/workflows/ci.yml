@@ -90,6 +90,14 @@ jobs:
           shellcheck -s sh -S warning install.sh npm/bin/pi-bolt
           shellcheck -x -S warning scripts/*.sh scripts/lib/common.sh scripts/toolchain/*.sh \
             tests/aot/run.sh tests/pi/run.sh tests/installer/run.sh tests/runtime/run.sh tests/termux/run.sh bench/run-suite.sh
+      - name: Workflows
+        run: |
+          # actionlint 1.7.12, checked against its release's SHA-256 (.github/actionlint.yaml); it runs shellcheck on each
+          # step's script too.
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c --quiet -
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/actionlint.tar.gz" actionlint
+          "$RUNNER_TEMP/actionlint"
       - name: Python
         run: python3 -m py_compile bench/*.py scripts/lib/*.py
       - name: Versions agree

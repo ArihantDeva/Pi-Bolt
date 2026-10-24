@@ -1,0 +1,17 @@
+# actionlint (the Workflows step of ci.yml's Lint and types job).
+self-hosted-runner:
+  # Blacksmith's runners.
+  labels:
+    - blacksmith-4vcpu-ubuntu-2404
+    - blacksmith-4vcpu-ubuntu-2404-arm
+    - blacksmith-4vcpu-windows-2025
+    - blacksmith-6vcpu-macos-26
+paths:
+  .github/workflows/publish.yml:
+    ignore:
+      # (The unquoted $(...) is meant to split: nothing, or --tag beta.)
+      - "SC2046:"
+  .github/workflows/release.yml:
+    ignore:
+      # (The error message prints scripts\build-runtime.ps1 with its backslash.)
+      - "SC2028:"
