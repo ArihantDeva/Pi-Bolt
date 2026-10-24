@@ -1,8 +1,8 @@
 name: ci
 
-# Every push to pi-bolt and every pull request: lint and types, Pi's own tests, Pi-Bolt built and tested on Linux x86-64 and on
-# macOS on Apple silicon, the installers' checks of what they download (install.sh, and install.ps1 on Windows), and whether
-# the engine patches still apply.
+# Every push to pi-bolt and every pull request: lint and types, Pi's own tests, Pi-Bolt built and tested on Linux x86-64 and
+# ARM64, on macOS on Apple silicon and on Windows x64, the installers' checks of what they download (install.sh, and install.ps1
+# on Windows), and whether the engine patches still apply.
 #
 # The runtime (patched WebKit and Bun) takes about an hour and 40 GB of disk to build, more than GitHub's runners give, so
 # Pi-Bolt is built here with the latest release's runtime (scripts/fetch-runtime.sh checks its signature). A change to the
@@ -10,9 +10,19 @@ name: ci
 on:
   push:
     branches: [pi-bolt]
-    # Documentation and benchmark data build nothing. (A release commit changes VERSION too, so it is built; pull requests
-    # always are, as their checks are required.)
-    paths-ignore: ["**.md", "docs/**", "bench/results/**", "site/**"]
+    # Documentation and benchmark data build nothing: the same files as the changes job below counts as documentation. (A
+    # release commit changes VERSION too, so it is built. A pull request always starts this workflow, as its checks are
+    # required: the changes job skips the work instead.) Other .md files are code: scripts/lib/training.md is what the
+    # screen checks stream, and build-pi.sh puts the packages' READMEs and docs, and three of docs/, in every build.
+    paths:
+      - "**"
+      - "!*.md"
+      - "!docs/**"
+      - "docs/PLUGINS.md"
+      - "docs/ACP.md"
+      - "docs/TROUBLESHOOTING.md"
+      - "!site/**"
+      - "!bench/results/**"
   pull_request:
     branches: [pi-bolt]
   workflow_dispatch:
@@ -26,8 +36,47 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # A pull request that changes only documentation (the README and the other top-level .md files, docs/, site/, bench/results/)
+  # builds and tests nothing: every job below still reports its check, as passed. Not the three docs/ files build-pi.sh puts in
+  # every build. Only code=false skips: if this job fails, everything runs.
+  changes:
+    name: What changed
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+      runtime_older: ${{ steps.engine.outputs.older }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
+          persist-credentials: false
+      - id: files
+        run: |
+          code=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # (The merge commit against its first parent, the base: every file the pull request changes, a renamed one by
+            # both names.)
+            files=$(git diff --no-renames --name-only HEAD^1 HEAD)
+            printf '%s\n' "$files"
+            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -Ev '^[^/]+\.md$|^docs/|^site/|^bench/results/' | grep -q . &&
+              ! printf '%s\n' "$files" | grep -Exq 'docs/(PLUGINS|ACP|TROUBLESHOOTING)\.md'; then
+              code=false
+              echo "::notice title=Documentation only::Only documentation changed: nothing is built or tested."
+            fi
+          fi
+          echo "code=$code" >>"$GITHUB_OUTPUT"
+      - id: engine
+        name: Whether the latest release's runtime is this engine
+        # (For the Windows job, which has no bash to compute it: scripts/runtime-stamp.sh.)
+        run: |
+          released=$(curl -fsSL https://github.com/opensec-git/Pi-Bolt/releases/latest/download/RUNTIME_STAMP || true)
+          if [ "$(scripts/runtime-stamp.sh)" = "$released" ]; then echo "older=false"; else echo "older=true"; fi >>"$GITHUB_OUTPUT"
+
   lint:
     name: Lint and types
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
@@ -41,6 +90,14 @@ jobs:
           shellcheck -s sh -S warning install.sh npm/bin/pi-bolt
           shellcheck -x -S warning scripts/*.sh scripts/lib/common.sh scripts/toolchain/*.sh \
             tests/aot/run.sh tests/pi/run.sh tests/installer/run.sh tests/runtime/run.sh tests/termux/run.sh bench/run-suite.sh
+      - name: Workflows
+        run: |
+          # actionlint 1.7.12, checked against its release's SHA-256 (.github/actionlint.yaml); it runs shellcheck on each
+          # step's script too.
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c --quiet -
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/actionlint.tar.gz" actionlint
+          "$RUNNER_TEMP/actionlint"
       - name: Python
         run: python3 -m py_compile bench/*.py scripts/lib/*.py
       - name: Versions agree
@@ -61,6 +118,8 @@ jobs:
 
   unit:
     name: Pi's tests
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 40
     steps:
@@ -90,36 +149,44 @@ jobs:
 
   pi-bolt:
     name: Pi-Bolt on ${{ matrix.name }}
+    needs: changes
+    # (When only documentation changed, its steps are skipped, not the job: a skipped matrix job reports no check under each
+    # of its names.)
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Linux x86-64
             runner: blacksmith-4vcpu-ubuntu-2404
+            part: all
           - name: Linux ARM64
             runner: blacksmith-4vcpu-ubuntu-2404-arm
-          - name: macOS Apple silicon
-            runner: blacksmith-6vcpu-macos-26
+            part: all
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    steps:
+    steps: &pi-bolt-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code != 'false'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: needs.changes.outputs.code != 'false'
         with:
           node-version: 24
           cache: npm
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: needs.changes.outputs.code != 'false'
         with:
           bun-version: "1.4.2"
       - name: Tools (Linux)
-        if: runner.os == 'Linux'
+        if: needs.changes.outputs.code != 'false' && runner.os == 'Linux'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq tmux
       - name: Tools (macOS)
-        if: runner.os == 'macOS'
+        if: needs.changes.outputs.code != 'false' && runner.os == 'macOS'
         run: brew install bash tmux xz
       - name: Runtime of the latest release
         id: runtime
+        if: needs.changes.outputs.code != 'false'
         run: |
           # (A platform the latest release has no runtime for, Linux ARM64 before its first release, is skipped.)
           if [ "$(uname -s)-$(uname -m)" = Linux-aarch64 ] &&
@@ -139,8 +206,11 @@ jobs:
           scripts/build-pi.sh --out out/pi-bolt
           scripts/build-pi.sh --jit on --out out/pi-bolt-jit
           out/pi-bolt/pi --version | tee /dev/stderr | grep -q "Pi-Bolt $(cat VERSION)"
+      - name: macOS 13 and later
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock' && runner.os == 'macOS'
+        run: scripts/check-macos-floor.sh out/pi-bolt out/pi-bolt-jit
       - name: Pi-Bolt's tests
-        if: steps.runtime.outputs.available == 'true'
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock'
         run: |
           tests/pi/run.sh "$PWD/out/pi-bolt/pi"
           tests/pi/run.sh "$PWD/out/pi-bolt-jit/pi"
@@ -150,10 +220,10 @@ jobs:
             sudo env PATH="$PATH" PIBOLT_TERMUX_TEST=1 tests/termux/run.sh --build "$PWD/out/pi-bolt"
           fi
       - name: Engine tests
-        if: steps.runtime.outputs.available == 'true'
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock'
         run: tests/aot/run.sh
       - name: Runtime tests
-        if: steps.runtime.outputs.available == 'true'
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock'
         # A test of what the engine in this commit does is skipped while the released runtime is an older engine; the
         # release workflow runs it on the runtime built from this engine (docs/RELEASING.md).
         run: |
@@ -161,12 +231,139 @@ jobs:
           [ "$(scripts/runtime-stamp.sh)" = "$released" ] || export PIBOLT_RUNTIME_OLDER=1
           tests/runtime/run.sh
       - name: The same as stock Pi
-        if: steps.runtime.outputs.available == 'true'
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'tests'
         run: |
           scripts/build-pi.sh --stable --out out/pi-stable
           python3 bench/e2e_tools.py --reference bun=out/pi-stable/pi --build pi-bolt=out/pi-bolt/pi --build jit=out/pi-bolt-jit/pi
           python3 bench/e2e_screen.py --reference bun=out/pi-stable/pi --build pi-bolt=out/pi-bolt/pi
           python3 bench/e2e_fullscreen.py --build pi-bolt=out/pi-bolt/pi
+
+  # macOS, the slowest runner, does the same in two jobs side by side: Pi-Bolt's, engine and runtime tests in one, the comparison
+  # with stock Pi in the other (about 14 minutes one after the other, 7 of them the comparison). Pi-Bolt on macOS Apple silicon
+  # passes when both have.
+  pi-bolt-macos-part:
+    name: Pi-Bolt on macOS Apple silicon (${{ matrix.label }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: tests
+            label: tests
+          - part: stock
+            label: the same as stock Pi
+    runs-on: blacksmith-6vcpu-macos-26
+    timeout-minutes: 60
+    steps: *pi-bolt-steps
+
+  pi-bolt-macos:
+    name: Pi-Bolt on macOS Apple silicon
+    needs: pi-bolt-macos-part
+    if: ${{ !cancelled() }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Its tests and the comparison with stock Pi passed
+        run: |
+          echo "Pi-Bolt on macOS Apple silicon (tests, the same as stock Pi): $RESULT"
+          [ "$RESULT" = success ]
+        env:
+          RESULT: ${{ needs.pi-bolt-macos-part.result }}
+
+  # Windows, as the release builds and tests it (release.yml) but once, without the determinism check: Pi-Bolt's tests and
+  # Windows' self-test on the build with the JIT off and on, the engine and the runtime tests.
+  pi-bolt-windows:
+    name: Pi-Bolt on Windows x64
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: blacksmith-4vcpu-windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        # Windows PowerShell 5.1, which the Windows scripts are written for (as Windows 10 has it).
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      # (Stock Bun: the reference tests\aot compares the compiled programs' output with.)
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - name: Tools
+        run: |
+          # The scripts run Python 3 as `py -3`.
+          if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
+            $shim = Join-Path $env:RUNNER_TEMP 'py-shim'
+            New-Item -ItemType Directory -Force $shim | Out-Null
+            Set-Content -Encoding ascii (Join-Path $shim 'py.cmd') "@if `"%~1`"==`"-3`" (python %2 %3 %4 %5 %6 %7 %8 %9) else (python %*)"
+            Add-Content -Encoding utf8 $env:GITHUB_PATH $shim
+          }
+          python --version
+      - name: Runtime of the latest release
+        run: |
+          # As scripts/fetch-runtime.sh: the checksums, signed by the release key, say which runtime and which engine it is.
+          $base = 'https://github.com/opensec-git/Pi-Bolt/releases/latest/download'
+          New-Item -ItemType Directory -Force .work\rt, .work\runtime | Out-Null
+          foreach ($name in 'pi-bolt-runtime-win32-x64.zip', 'SHA256SUMS', 'SHA256SUMS.sig', 'RUNTIME_STAMP') {
+            & curl.exe -fsSL -o ".work\rt\$name" "$base/$name"
+            if ($LASTEXITCODE -ne 0) { Write-Host "could not download $name"; exit 1 }
+          }
+          & 'C:\Program Files\Git\usr\bin\openssl.exe' pkeyutl -verify -pubin -inkey keys\release.pub -rawin -in .work\rt\SHA256SUMS -sigfile .work\rt\SHA256SUMS.sig
+          if ($LASTEXITCODE -ne 0) { Write-Host 'the release''s signature does not verify'; exit 1 }
+          $lines = Get-Content -LiteralPath .work\rt\SHA256SUMS
+          foreach ($name in 'pi-bolt-runtime-win32-x64.zip', 'RUNTIME_STAMP') {
+            $sum = (Get-FileHash ".work\rt\$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($lines -notcontains "$sum  $name") { Write-Host "$name is not the one the release lists"; exit 1 }
+          }
+          Expand-Archive .work\rt\pi-bolt-runtime-win32-x64.zip -DestinationPath .work\rt -Force
+          Copy-Item .work\rt\pi-bolt-runtime-win32-x64\bun.exe .work\runtime\bun.exe
+          Copy-Item .work\rt\RUNTIME_STAMP .work\runtime\RUNTIME_STAMP
+          & .work\runtime\bun.exe --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Pi
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # (Offline: the model catalog is the repository's, as in prepare-pi.sh.)
+          npm run build:offline
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Build
+        run: |
+          & scripts\build-pi.ps1 -Out out\pi-bolt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & scripts\build-pi.ps1 -Jit on -Out out\pi-bolt-jit
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $version = (& out\pi-bolt\pi.exe --version | Out-String)
+          Write-Host $version
+          if ($version -notmatch "Pi-Bolt $([regex]::Escape((Get-Content VERSION).Trim())),") { Write-Host 'not this version'; exit 1 }
+      - name: Pi-Bolt's tests
+        run: |
+          $failed = 0
+          foreach ($build in 'pi-bolt', 'pi-bolt-jit') {
+            $exe = (Resolve-Path "out\$build\pi.exe").Path
+            & tests\pi\run.ps1 $exe
+            if ($LASTEXITCODE -ne 0) { $failed = 1 }
+            & scripts\windows-selftest.ps1 -Pi $exe
+            if ($LASTEXITCODE -ne 0) { $failed = 1 }
+          }
+          exit $failed
+      - name: Engine tests
+        run: |
+          & tests\aot\run.ps1
+          exit $LASTEXITCODE
+      - name: Runtime tests
+        # (Not while the released runtime is an older engine than this commit's: the release workflow runs them on the runtime
+        # built from it, docs/RELEASING.md.)
+        if: needs.changes.outputs.runtime_older != 'true'
+        run: |
+          & tests\runtime\run.ps1
+          exit $LASTEXITCODE
 
   installer:
     name: Installer on ${{ matrix.name }}
@@ -216,6 +413,8 @@ jobs:
 
   engine:
     name: Engine patches apply
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
