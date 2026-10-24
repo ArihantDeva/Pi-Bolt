@@ -135,13 +135,13 @@ jobs:
         include:
           - name: Linux x86-64
             runner: blacksmith-4vcpu-ubuntu-2404
+            part: all
           - name: Linux ARM64
             runner: blacksmith-4vcpu-ubuntu-2404-arm
-          - name: macOS Apple silicon
-            runner: blacksmith-6vcpu-macos-26
+            part: all
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    steps:
+    steps: &pi-bolt-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.code != 'false'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -183,7 +183,7 @@ jobs:
           scripts/build-pi.sh --jit on --out out/pi-bolt-jit
           out/pi-bolt/pi --version | tee /dev/stderr | grep -q "Pi-Bolt $(cat VERSION)"
       - name: Pi-Bolt's tests
-        if: steps.runtime.outputs.available == 'true'
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock'
         run: |
           tests/pi/run.sh "$PWD/out/pi-bolt/pi"
           tests/pi/run.sh "$PWD/out/pi-bolt-jit/pi"
@@ -193,10 +193,10 @@ jobs:
             sudo env PATH="$PATH" PIBOLT_TERMUX_TEST=1 tests/termux/run.sh --build "$PWD/out/pi-bolt"
           fi
       - name: Engine tests
-        if: steps.runtime.outputs.available == 'true'
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock'
         run: tests/aot/run.sh
       - name: Runtime tests
-        if: steps.runtime.outputs.available == 'true'
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock'
         # A test of what the engine in this commit does is skipped while the released runtime is an older engine; the
         # release workflow runs it on the runtime built from this engine (docs/RELEASING.md).
         run: |
@@ -204,12 +204,45 @@ jobs:
           [ "$(scripts/runtime-stamp.sh)" = "$released" ] || export PIBOLT_RUNTIME_OLDER=1
           tests/runtime/run.sh
       - name: The same as stock Pi
-        if: steps.runtime.outputs.available == 'true'
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'tests'
         run: |
           scripts/build-pi.sh --stable --out out/pi-stable
           python3 bench/e2e_tools.py --reference bun=out/pi-stable/pi --build pi-bolt=out/pi-bolt/pi --build jit=out/pi-bolt-jit/pi
           python3 bench/e2e_screen.py --reference bun=out/pi-stable/pi --build pi-bolt=out/pi-bolt/pi
           python3 bench/e2e_fullscreen.py --build pi-bolt=out/pi-bolt/pi
+
+  # macOS, the slowest runner, does the same in two jobs side by side: Pi-Bolt's, engine and runtime tests in one, the comparison
+  # with stock Pi in the other (about 14 minutes one after the other, 7 of them the comparison). Pi-Bolt on macOS Apple silicon
+  # passes when both have.
+  pi-bolt-macos-part:
+    name: Pi-Bolt on macOS Apple silicon (${{ matrix.label }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: tests
+            label: tests
+          - part: stock
+            label: the same as stock Pi
+    runs-on: blacksmith-6vcpu-macos-26
+    timeout-minutes: 60
+    steps: *pi-bolt-steps
+
+  pi-bolt-macos:
+    name: Pi-Bolt on macOS Apple silicon
+    needs: pi-bolt-macos-part
+    if: ${{ !cancelled() }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Its tests and the comparison with stock Pi passed
+        run: |
+          echo "Pi-Bolt on macOS Apple silicon (tests, the same as stock Pi): $RESULT"
+          [ "$RESULT" = success ]
+        env:
+          RESULT: ${{ needs.pi-bolt-macos-part.result }}
 
   installer:
     name: Installer on ${{ matrix.name }}
