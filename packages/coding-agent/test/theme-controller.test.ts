@@ -251,4 +251,78 @@ describe("InteractiveThemeController", () => {
 		controller.applyFromSettings();
 		expect(theme.name).toBe("dark");
 	});
+
+	it("gives back the system theme it fell back to after previews, and draws it", () => {
+		const { ui } = createUi();
+		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "no-such-theme" }));
+		controller.applyFromSettings();
+		expect(controller.getActiveThemeName()).toBe("system");
+		const restore = controller.previewRestorer();
+		controller.preview("nord");
+		expect(theme.name).toBe("nord");
+		vi.mocked(ui.invalidate).mockClear();
+		restore();
+		expect(theme.name).toBe("system");
+		expect(ui.invalidate).toHaveBeenCalled();
+		// (A theme that fails to load in a preview is drawn too: the system theme it falls back to.)
+		controller.preview("nord");
+		vi.mocked(ui.invalidate).mockClear();
+		controller.preview("no-such-theme");
+		expect(theme.name).toBe("system");
+		expect(ui.invalidate).toHaveBeenCalled();
+	});
+
+	it("names the member of a light/dark pair that is in use", () => {
+		const { ui } = createUi();
+		setTerminalColorScheme("light");
+		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "nord/dracula" }));
+		controller.applyFromSettings();
+		expect(controller.getThemeSelection()).toBe("nord/dracula");
+		expect(controller.getActiveThemeName()).toBe("nord");
+		const restore = controller.previewRestorer();
+		controller.preview("tokyo-night");
+		restore();
+		expect(theme.name).toBe("nord");
+	});
+
+	it("gives back the member of a pair the terminal switched to while the selector was open", () => {
+		const { ui, emitTerminalColorScheme } = createUi();
+		setTerminalColorScheme("light");
+		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "nord/dracula" }));
+		controller.applyFromSettings();
+		const restore = controller.previewRestorer();
+		controller.preview("tokyo-night");
+		emitTerminalColorScheme("dark");
+		restore();
+		expect(theme.name).toBe("dracula");
+		expect(controller.getActiveThemeName()).toBe("dracula");
+	});
+
+	it("keeps a pair only for its member that is in use", () => {
+		const { ui, emitTerminalColorScheme } = createUi();
+		setTerminalColorScheme("light");
+		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "nord/dracula" }));
+		controller.applyFromSettings();
+		expect(controller.isPairMemberInUse("nord")).toBe(true);
+		expect(controller.isPairMemberInUse("dracula")).toBe(false);
+		emitTerminalColorScheme("dark");
+		expect(controller.isPairMemberInUse("nord")).toBe(false);
+		expect(controller.isPairMemberInUse("dracula")).toBe(true);
+		// A member that fails to load is not in use: the system theme it fell back to is not the pair's.
+		const broken = createController(ui, () => SettingsManager.inMemory({ theme: "missing/dracula" }));
+		setTerminalColorScheme("light");
+		broken.applyFromSettings();
+		expect(broken.getActiveThemeName()).toBe("system");
+		expect(broken.isPairMemberInUse("system")).toBe(false);
+		expect(broken.isPairMemberInUse("missing")).toBe(false);
+	});
+
+	it("names the setting's theme for preselection while an extension's theme is in use", () => {
+		const { ui } = createUi();
+		setTerminalColorScheme("light");
+		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "nord/dracula" }));
+		controller.applyFromSettings();
+		controller.setThemeInstance(theme);
+		expect(controller.getActiveThemeName()).toBe("nord");
+	});
 });

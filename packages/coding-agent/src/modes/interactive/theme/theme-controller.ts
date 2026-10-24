@@ -2,6 +2,7 @@ import type { RgbColor, TerminalColors, TUI } from "@earendil-works/pi-tui";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import {
 	getTerminalTheme,
+	getThemeInstance,
 	initTheme,
 	markTerminalColorsPending,
 	parseAutoThemeSetting,
@@ -160,10 +161,51 @@ export class InteractiveThemeController {
 	preview(themeSettingOrName: string): void {
 		const themeName = resolveThemeSetting(themeSettingOrName, getTerminalTheme()) ?? this.activeThemeName;
 		if (!themeName) return;
-		if (setTheme(themeName, true).success) {
-			this.ui.invalidate();
-			this.ui.requestRender();
+		// (A theme that fails to load falls back to the system theme, which has to be drawn as well.)
+		setTheme(themeName, true);
+		this.ui.invalidate();
+		this.ui.requestRender();
+	}
+
+	/**
+	 * The theme in use: the member of a light/dark pair the terminal's appearance picked, or the system theme when the
+	 * setting failed to load. For a theme an extension set (setThemeInstance()), which has no name, the theme the setting
+	 * names (of a pair, the member for the terminal's appearance).
+	 */
+	getActiveThemeName(): string {
+		return this.activeThemeName === undefined || this.activeThemeName === "<in-memory>"
+			? this.resolveThemeName()
+			: this.activeThemeName;
+	}
+
+	/**
+	 * Whether this theme is the member of a light/dark pair setting that is in use: the one for the terminal's appearance
+	 * now, and it loaded. Choosing it keeps the pair.
+	 */
+	isPairMemberInUse(themeName: string): boolean {
+		return (
+			parseAutoThemeSetting(this.getThemeSetting()) !== undefined &&
+			this.resolveThemeName() === themeName &&
+			this.getActiveThemeName() === themeName
+		);
+	}
+
+	/**
+	 * What gives back the theme in use now after previews (a theme selector closed without a choice): the theme an extension
+	 * set, or else the theme that is in use.
+	 */
+	previewRestorer(): () => void {
+		const instance = this.activeThemeName === "<in-memory>" ? getThemeInstance() : undefined;
+		if (instance) {
+			return () => {
+				setThemeInstance(instance);
+				this.ui.invalidate();
+				this.ui.requestRender();
+			};
 		}
+		// (The theme in use when the selector closes: the terminal's appearance may have picked the other member of a pair
+		// meanwhile.)
+		return () => this.preview(this.getActiveThemeName());
 	}
 
 	disableAutoSync(): void {
