@@ -70,6 +70,12 @@ export const THEME_TOKENS = defineThemeTokens({
 	mdCode: { slot: "foreground", description: "Markdown inline code" },
 	mdCodeBlock: { slot: "foreground", description: "Markdown code block content" },
 	mdCodeBlockBorder: { slot: "foreground", description: "Markdown code block fences" },
+	mdCodeBlockBg: {
+		slot: "background",
+		description:
+			"Markdown code block background when shaded code blocks are on (falls back to toolPendingBg when omitted)",
+		fallback: "toolPendingBg",
+	},
 	mdQuote: { slot: "foreground", description: "Markdown blockquote text" },
 	mdQuoteBorder: { slot: "foreground", description: "Markdown blockquote border" },
 	mdHr: { slot: "foreground", description: "Markdown horizontal rule" },

@@ -1088,6 +1088,16 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 	return extToLang[ext];
 }
 
+// Shared across module loaders as the theme is: an extension's instance of this module (jiti) draws code blocks the same way.
+const SHADED_CODE_BLOCKS_KEY = Symbol.for("@earendil-works/pi-coding-agent:shadedCodeBlocks");
+
+/** Render code blocks on a background, without fence lines, instead of between literal ``` lines. */
+export function setShadedCodeBlocks(enabled: boolean): void {
+	(globalThis as Record<symbol, boolean>)[SHADED_CODE_BLOCKS_KEY] = enabled;
+}
+
+const shadeCodeBlock = (text: string) => theme.bg("mdCodeBlockBg", text);
+
 export function getMarkdownTheme(): MarkdownTheme {
 	return {
 		heading: (text: string) => theme.fg("mdHeading", text),
@@ -1096,6 +1106,13 @@ export function getMarkdownTheme(): MarkdownTheme {
 		code: (text: string) => theme.fg("mdCode", text),
 		codeBlock: (text: string) => theme.fg("mdCodeBlock", text),
 		codeBlockBorder: (text: string) => theme.fg("mdCodeBlockBorder", text),
+		// (Read when a block is drawn: a change of the setting applies to every Markdown already shown once it is redrawn,
+		// a streaming answer's too.)
+		get codeBlockBg() {
+			return (globalThis as Record<symbol, boolean | undefined>)[SHADED_CODE_BLOCKS_KEY]
+				? shadeCodeBlock
+				: undefined;
+		},
 		quote: (text: string) => theme.fg("mdQuote", text),
 		quoteBorder: (text: string) => theme.fg("mdQuoteBorder", text),
 		hr: (text: string) => theme.fg("mdHr", text),

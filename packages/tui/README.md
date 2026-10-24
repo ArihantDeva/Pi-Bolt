@@ -502,6 +502,8 @@ interface MarkdownTheme {
   strikethrough: (text: string) => string;
   underline: (text: string) => string;
   highlightCode?: (code: string, lang?: string) => string[];
+  // Shaded code blocks: a background for code blocks, ending with SGR 49 (\x1b[49m), not SGR 0.
+  codeBlockBg?: (text: string) => string;
 }
 
 interface DefaultTextStyle {
@@ -527,6 +529,8 @@ md.setText("Updated markdown");
 - Headings, bold, italic, code blocks, lists, links, blockquotes
 - HTML tags rendered as plain text
 - Optional syntax highlighting via `highlightCode`
+- Optional shaded code blocks via `codeBlockBg`: each code line is drawn on that background up to the end of its text
+  (no trailing spaces when copied), with the language above it and no ``` fence lines; wrapped lines keep the indent
 - Padding support
 - Render caching for performance
 

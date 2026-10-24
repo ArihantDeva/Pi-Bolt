@@ -249,6 +249,12 @@ export const SettingsSchema = Type.Object(
 				default: SETTINGS_DEFAULTS.showCacheMissNotices,
 			}),
 		),
+		shadedCodeBlocks: Type.Optional(
+			Type.Boolean({
+				description: "Render code blocks on a background instead of between literal ``` fence lines.",
+				default: SETTINGS_DEFAULTS.shadedCodeBlocks,
+			}),
+		),
 		externalEditor: Type.Optional(
 			Type.String({ description: "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR." }),
 		),

@@ -208,6 +208,11 @@
       "description": "Show cache cost and provider recovery notices.",
       "default": false
     },
+    "shadedCodeBlocks": {
+      "type": "boolean",
+      "description": "Render code blocks on a background instead of between literal ``` fence lines.",
+      "default": false
+    },
     "externalEditor": {
       "type": "string",
       "description": "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR."

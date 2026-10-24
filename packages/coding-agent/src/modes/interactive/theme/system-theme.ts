@@ -71,6 +71,7 @@ const TOKEN_FAMILIES: Record<ThemeToken, FamilyName> = {
 	userMessageBg: "blue",
 	customMessageBg: "violet",
 	toolPendingBg: "neutral",
+	mdCodeBlockBg: "neutral",
 	toolSuccessBg: "green",
 	toolErrorBg: "red",
 
@@ -256,13 +257,14 @@ interface Rule {
 	level: Level;
 }
 
-const TOOL_PANELS: Surface[] = ["toolPendingBg", "toolSuccessBg", "toolErrorBg"];
+const TOOL_PANELS: Surface[] = ["toolPendingBg", "toolSuccessBg", "toolErrorBg", "mdCodeBlockBg"];
 const MESSAGE_PANELS: Surface[] = ["userMessageBg", "customMessageBg"];
 const PANELS: ThemeBg[] = [
 	"userMessageBg",
 	"toolPendingBg",
 	"toolSuccessBg",
 	"toolErrorBg",
+	"mdCodeBlockBg",
 	"selectedBg",
 	"searchMatchBg",
 	"customMessageBg",

@@ -234,6 +234,19 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("shaded code blocks", () => {
+		it("is off by default and persists when turned on", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShadedCodeBlocks()).toBe(false);
+
+			manager.setShadedCodeBlocks(true);
+			await manager.flush();
+
+			expect(manager.getShadedCodeBlocks()).toBe(true);
+			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")).shadedCodeBlocks).toBe(true);
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");

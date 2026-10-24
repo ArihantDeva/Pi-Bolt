@@ -210,6 +210,7 @@ import {
 	onThemeChange,
 	SYSTEM_THEME_NAME,
 	setRegisteredThemes,
+	setShadedCodeBlocks,
 	stopThemeWatcher,
 	Theme,
 	type ThemeColor,
@@ -630,6 +631,7 @@ export class InteractiveMode {
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
 		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
+		setShadedCodeBlocks(this.settingsManager.getShadedCodeBlocks());
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
@@ -1462,10 +1464,10 @@ export class InteractiveMode {
 	}
 
 	private getMarkdownThemeWithSettings(): MarkdownTheme {
-		return {
-			...getMarkdownTheme(),
-			codeBlockIndent: this.settingsManager.getCodeBlockIndent(),
-		};
+		// (Set on the theme itself, not spread into a copy: a copy would take its codeBlockBg getter's value of now.)
+		const markdownTheme = getMarkdownTheme();
+		markdownTheme.codeBlockIndent = this.settingsManager.getCodeBlockIndent();
+		return markdownTheme;
 	}
 
 	// =========================================================================
@@ -2157,6 +2159,7 @@ export class InteractiveMode {
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.outputPad = this.settingsManager.getOutputPad();
+		setShadedCodeBlocks(this.settingsManager.getShadedCodeBlocks());
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		const clearOnShrink = this.settingsManager.getClearOnShrink();
 		this.ui.setClearOnShrink(clearOnShrink);
@@ -5022,6 +5025,7 @@ export class InteractiveMode {
 					treeFilterMode: this.settingsManager.getTreeFilterMode(),
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
+					shadedCodeBlocks: this.settingsManager.getShadedCodeBlocks(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
 					outputPad: this.settingsManager.getOutputPad(),
@@ -5128,6 +5132,13 @@ export class InteractiveMode {
 					onShowCacheMissNoticesChange: (shown) => {
 						this.settingsManager.setShowCacheMissNotices(shown);
 						this.rebuildChatFromMessages();
+					},
+					onShadedCodeBlocksChange: (shaded) => {
+						this.settingsManager.setShadedCodeBlocks(shaded);
+						setShadedCodeBlocks(shaded);
+						// (Redrawn, not rebuilt: an answer that is streaming keeps its component.)
+						this.ui.invalidate();
+						this.ui.requestRender();
 					},
 					onCollapseChangelogChange: (collapsed) => {
 						this.settingsManager.setCollapseChangelog(collapsed);
@@ -6558,6 +6569,7 @@ export class InteractiveMode {
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 			this.outputPad = this.settingsManager.getOutputPad();
+			setShadedCodeBlocks(this.settingsManager.getShadedCodeBlocks());
 			this.rebuildChatFromMessages();
 			chatRestoredBeforeSessionStart = true;
 		};

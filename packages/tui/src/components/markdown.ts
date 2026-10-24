@@ -14,6 +14,28 @@ import {
 } from "../tui.ts";
 import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
+const SGR_SEQUENCE_ALL = /\x1b\[([0-9;:]*)m/g;
+
+/**
+ * Whether an SGR sequence with these parameters leaves the background reset: a full reset (0, or no parameters) or a
+ * background reset (49) that no later background color in the same sequence replaces. In a shaded code block it would end
+ * the shading.
+ */
+function endsBackground(params: string): boolean {
+	const codes = params.split(/[;:]/);
+	let reset = false;
+	for (let i = 0; i < codes.length; i++) {
+		const code = Number(codes[i] || 0);
+		if (code === 0 || code === 49) reset = true;
+		else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) reset = false;
+		// (An extended color's operands are not codes: 38;5;N, 48;2;R;G;B.)
+		if (code === 38 || code === 48 || code === 58) {
+			if (code === 48) reset = false;
+			i += codes[i + 1] === "5" ? 2 : 4;
+		}
+	}
+	return reset;
+}
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
 class StrictStrikethroughTokenizer extends Tokenizer {
@@ -728,6 +750,13 @@ export interface MarkdownTheme {
 	highlightCode?: (code: string, lang?: string) => string[];
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
+	/**
+	 * Background for code blocks. When set, a block renders as shaded lines (language label first) instead of between
+	 * literal ``` fence lines. It must end the background with SGR 49 (`\x1b[49m`), not a full reset (SGR 0): inside a Box
+	 * or a Markdown with a background, the surrounding background is opened again after an SGR 49 only, so the rest of
+	 * the row keeps it.
+	 */
+	codeBlockBg?: (text: string) => string;
 }
 
 export interface MarkdownOptions {
@@ -1291,20 +1320,46 @@ export class Markdown implements Component {
 
 			case "code": {
 				const indent = this.theme.codeBlockIndent ?? "  ";
-				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
-				if (this.theme.highlightCode) {
-					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
-					for (const hlLine of highlightedLines) {
-						lines.push(`${indent}${hlLine}`);
+				const codeLines: string[] = this.theme.highlightCode
+					? this.theme.highlightCode(token.text, token.lang)
+					: token.text.split("\n").map((codeLine: string) => this.theme.codeBlock(codeLine));
+				const shade = this.theme.codeBlockBg;
+				if (shade) {
+					// Each line is shaded up to the end of its text only, so copied code has no trailing spaces. Wrapped here,
+					// not by renderBlock(), so continuation lines keep the block's indent.
+					if (token.lang) {
+						// (Wrapped before it is shaded, as the code lines are: the padding after a short fragment stays unshaded.)
+						for (const label of this.wrapLine(this.theme.codeBlockBorder(token.lang), width)) {
+							lines.push(shade(label));
+						}
+					}
+					const codeWidth = Math.max(1, width - visibleWidth(indent));
+					// (A reset inside a line, from the highlighter or the code itself, would end the shading there: the
+					// background is opened again after it. Not a block on the terminal's own background, SGR 49: that is what a
+					// reset leaves in effect, and an SGR 49 more would read as the end of the block in a panel.)
+					let shadeOpen: string | undefined;
+					for (const codeLine of codeLines) {
+						for (const wrapped of this.wrapLine(codeLine, codeWidth)) {
+							let line = `${indent}${wrapped}`;
+							if (line.includes("\x1b[")) {
+								shadeOpen ??= shade("\0").split("\0")[0]!;
+								if (shadeOpen !== "\x1b[49m") {
+									const open = shadeOpen;
+									line = line.replace(SGR_SEQUENCE_ALL, (sequence: string, params: string) =>
+										endsBackground(params) ? sequence + open : sequence,
+									);
+								}
+							}
+							lines.push(shade(line));
+						}
 					}
 				} else {
-					// Split code by newlines and style each line
-					const codeLines = token.text.split("\n");
+					lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
 					for (const codeLine of codeLines) {
-						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
+						lines.push(`${indent}${codeLine}`);
 					}
+					lines.push(this.theme.codeBlockBorder("```"));
 				}
-				lines.push(this.theme.codeBlockBorder("```"));
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after code blocks (unless space token follows)
 				}

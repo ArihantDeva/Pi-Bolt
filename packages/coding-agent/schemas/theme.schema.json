@@ -223,6 +223,10 @@
           "$ref": "#/$defs/ColorValue",
           "description": "Markdown code block fences"
         },
+        "mdCodeBlockBg": {
+          "$ref": "#/$defs/ColorValue",
+          "description": "Markdown code block background when shaded code blocks are on (falls back to toolPendingBg when omitted)"
+        },
         "mdQuote": {
           "$ref": "#/$defs/ColorValue",
           "description": "Markdown blockquote text"
@@ -320,7 +324,7 @@
           "description": "Editor border color in bash mode"
         }
       },
-      "description": "Theme color definitions (scrollbar, thinkingMax, and search highlight colors are optional and use compatible fallbacks)",
+      "description": "Theme color definitions (scrollbar, thinkingMax, search highlight, and mdCodeBlockBg colors are optional and use compatible fallbacks)",
       "additionalProperties": false
     },
     "export": {

@@ -1122,7 +1122,55 @@ export function applyBackgroundToLine(line: string, width: number, bgFn: (text: 
 
 	// Apply background to content + padding
 	const withPadding = line + padding;
-	return bgFn(withPadding);
+	return applyBackgroundAround(withPadding, bgFn);
+}
+
+const SGR_SEQUENCE = /\x1b\[([0-9;:]*)m/g;
+
+/** Whether an SGR sequence with these parameters sets or resets the background (a full reset does). */
+function setsBackground(params: string): boolean {
+	const codes = params.split(/[;:]/);
+	for (let i = 0; i < codes.length; i++) {
+		const code = Number(codes[i] || 0);
+		if (code === 0 || (code >= 40 && code <= 49) || (code >= 100 && code <= 107)) return true;
+		// (The color of an extended foreground or underline color is not a code: 38;5;N, 38;2;R;G;B.)
+		if (code === 38 || code === 58) i += codes[i + 1] === "5" ? 2 : 4;
+	}
+	return false;
+}
+
+/**
+ * bgFn(line), with the background opened again where a part of `line` on a background of its own (a shaded code block
+ * line) ends with a background reset (SGR 49), so the rest of the line keeps this background instead of showing the
+ * terminal's. A reset that starts such a part (a code block on the terminal's own background) is kept.
+ */
+export function applyBackgroundAround(line: string, bgFn: (text: string) => string): string {
+	const styled = bgFn(line);
+	if (!line.includes("\x1b[49m")) {
+		return styled;
+	}
+	const start = styled.indexOf(line);
+	const open = start > 0 ? getActiveBackgroundAnsi(styled.slice(0, start)) : "";
+	if (!open) {
+		return styled;
+	}
+	// Whether the background in effect is this one; a reset while another is in effect ends that one.
+	let ours = true;
+	const reopened = line.replace(SGR_SEQUENCE, (sequence: string, params: string) => {
+		if (params === "49") {
+			if (ours) {
+				ours = false;
+				return sequence;
+			}
+			ours = true;
+			return open;
+		}
+		if (setsBackground(params)) {
+			ours = false;
+		}
+		return sequence;
+	});
+	return styled.slice(0, start) + reopened + styled.slice(start + line.length);
 }
 
 /**

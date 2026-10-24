@@ -1170,6 +1170,10 @@ export class SettingsManager {
 		return this.settings.showCacheMissNotices ?? SETTINGS_DEFAULTS.showCacheMissNotices;
 	}
 
+	getShadedCodeBlocks(): boolean {
+		return this.settings.shadedCodeBlocks ?? SETTINGS_DEFAULTS.shadedCodeBlocks;
+	}
+
 	getExternalEditorCommand(): string {
 		const configuredEditor = this.settings.externalEditor;
 		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
@@ -1185,6 +1189,12 @@ export class SettingsManager {
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
+		this.save();
+	}
+
+	setShadedCodeBlocks(shaded: boolean): void {
+		this.globalSettings.shadedCodeBlocks = shaded;
+		this.markModified("shadedCodeBlocks");
 		this.save();
 	}
 

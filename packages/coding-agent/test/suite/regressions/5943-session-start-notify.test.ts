@@ -3,7 +3,7 @@ import { Container, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { getMarkdownTheme, initTheme, setShadedCodeBlocks } from "../../../src/modes/interactive/theme/theme.ts";
 import { createHarness, createTestUiContext } from "../harness.ts";
 
 type LoadedResourcesResult<T> = { [K in keyof T]: T[K] } & { diagnostics: [] };
@@ -63,6 +63,7 @@ type ReloadCommandContext = {
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
 		getHideThinkingBlock: () => boolean;
+		getShadedCodeBlocks: () => boolean;
 		getOutputPad: () => 0 | 1;
 		getEditorPaddingX: () => number;
 		getAutocompleteMaxVisible: () => number;
@@ -135,6 +136,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		settingsManager: {
 			getHttpIdleTimeoutMs: () => 0,
 			getHideThinkingBlock: () => false,
+			getShadedCodeBlocks: () => false,
 			getOutputPad: () => 1,
 			getEditorPaddingX: () => 1,
 			getAutocompleteMaxVisible: () => 10,
@@ -413,6 +415,29 @@ describe("regression #5943: session_start transient UI", () => {
 			expect(events).toEqual(["render", "start:reload", "notify:reload"]);
 		} finally {
 			harness.cleanup();
+		}
+	});
+
+	it("refreshes shadedCodeBlocks before rebuilding chat during reload", async () => {
+		initTheme("dark", false);
+		setShadedCodeBlocks(false);
+		const shadedAtRebuild: boolean[] = [];
+		const context = createReloadCommandContext({
+			settingsManager: { getShadedCodeBlocks: () => true },
+			session: {
+				reload: async (options) => {
+					await options?.beforeSessionStart?.();
+				},
+			},
+			rebuildChatFromMessages: () => {
+				shadedAtRebuild.push(getMarkdownTheme().codeBlockBg !== undefined);
+			},
+		});
+		try {
+			await interactiveModePrototype.handleReloadCommand.call(context);
+			expect(shadedAtRebuild).toEqual([true]);
+		} finally {
+			setShadedCodeBlocks(false);
 		}
 	});
 
