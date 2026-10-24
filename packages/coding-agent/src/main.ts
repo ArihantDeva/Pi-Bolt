@@ -5,7 +5,6 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
-import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides, ttiTrace } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -69,9 +68,11 @@ import { builtInExtensions } from "./extensions/index.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
 import { loadMcpMode } from "./extensions/mcp-server/mode.lazy.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
-import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
+import { loadInteractiveMode } from "./modes/interactive/interactive-mode.lazy.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
+import { runPrintMode } from "./modes/print-mode.ts";
+import { runRpcMode } from "./modes/rpc/rpc-mode.ts";
 import {
 	cleanupManagedInstall,
 	getPiBoltPackageFlagError,
@@ -80,6 +81,7 @@ import {
 } from "./package-manager-cli.ts";
 import { PIBOLT } from "./pi-bolt.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
+import { createInterface } from "./utils/readline.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${COMMAND_NAME} -ne".`;
@@ -1048,6 +1050,7 @@ export async function main(args: string[], options?: MainOptions) {
 		printTimings();
 		await runRpcMode(runtime);
 	} else if (appMode === "interactive") {
+		const { InteractiveMode } = await loadInteractiveMode();
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
 			startupDiagnostics,
