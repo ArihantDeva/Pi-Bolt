@@ -5256,9 +5256,13 @@ export class InteractiveMode {
 		const current = this.themeController.getActiveThemeName();
 		const restore = this.themeController.previewRestorer();
 		this.showSelector((done) => {
+			// (Set once a theme is chosen or the list is closed: a selector replaced before that, by an extension's dialog
+			// for one, gives back the theme in use instead of leaving the last preview on the screen.)
+			let settled = false;
 			const selector = new ThemeSelectorComponent(
 				current,
 				(themeName) => {
+					settled = true;
 					done();
 					// Enter on the member of a light/dark pair in use keeps the pair setting as it is.
 					if (this.themeController.isPairMemberInUse(themeName)) {
@@ -5268,12 +5272,19 @@ export class InteractiveMode {
 					this.selectTheme(themeName);
 				},
 				() => {
+					settled = true;
 					done();
 					restore();
 				},
 				(themeName) => this.themeController.preview(themeName),
 			);
-			return { component: selector, focus: selector.getSelectList() };
+			return {
+				component: selector,
+				focus: selector.getSelectList(),
+				dispose: () => {
+					if (!settled) restore();
+				},
+			};
 		});
 	}
 

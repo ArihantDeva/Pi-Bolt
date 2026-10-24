@@ -16,7 +16,9 @@ type ThemeSelectorContext = {
 		previewRestorer: () => () => void;
 		preview: (themeName: string) => void;
 	};
-	showSelector: (create: (done: () => void) => { component: Component; focus: Component }) => void;
+	showSelector: (
+		create: (done: () => void) => { component: Component; focus: Component; dispose?: () => void },
+	) => void;
 	selectTheme: (themeName: string) => void;
 };
 
@@ -61,7 +63,9 @@ describe("InteractiveMode.handleThemeCommand", () => {
 describe("InteractiveMode.showThemeSelector", () => {
 	function open(setting: string, active: string, pairMember?: string) {
 		const restore = vi.fn();
-		const done = vi.fn();
+		let dispose: (() => void) | undefined;
+		// (As showSelector()'s done does: it runs the selector's dispose hook first.)
+		const done = vi.fn(() => dispose?.());
 		let selector: ThemeSelectorComponent | undefined;
 		const context: ThemeSelectorContext = {
 			themeController: {
@@ -72,13 +76,40 @@ describe("InteractiveMode.showThemeSelector", () => {
 				preview: vi.fn(),
 			},
 			showSelector: (create) => {
-				selector = create(done).component as ThemeSelectorComponent;
+				const created = create(done);
+				selector = created.component as ThemeSelectorComponent;
+				dispose = created.dispose;
 			},
 			selectTheme: vi.fn<(themeName: string) => void>(),
 		};
 		interactiveModePrototype.showThemeSelector.call(context);
-		return { list: selector!.getSelectList(), restore, selectTheme: context.selectTheme };
+		// (What disposeActiveSelector() runs when another selector or an extension's dialog replaces this one.)
+		const replace = () => dispose?.();
+		return { list: selector!.getSelectList(), restore, selectTheme: context.selectTheme, replace };
 	}
+
+	test("gives back the theme in use when an extension's dialog replaces the list during a preview", () => {
+		const { list, restore, selectTheme, replace } = open("dark", "dark");
+		list.setSelectedIndex(1);
+		replace();
+		expect(restore).toHaveBeenCalledTimes(1);
+		expect(selectTheme).not.toHaveBeenCalled();
+	});
+
+	test("keeps a chosen theme when the list is disposed after the choice", () => {
+		const { list, restore, selectTheme, replace } = open("dark", "dark");
+		list.onSelect?.({ value: "dracula", label: "dracula" });
+		replace();
+		expect(selectTheme).toHaveBeenCalledWith("dracula");
+		expect(restore).not.toHaveBeenCalled();
+	});
+
+	test("restores once when the list is closed with Esc", () => {
+		const { list, restore, replace } = open("dark", "dark");
+		list.onCancel?.();
+		replace();
+		expect(restore).toHaveBeenCalledTimes(1);
+	});
 
 	test("selects the member of a light/dark pair in use, and Enter on it keeps the pair", () => {
 		const { list, restore, selectTheme } = open("nord/dracula", "nord", "nord");
