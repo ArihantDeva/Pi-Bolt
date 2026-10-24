@@ -592,8 +592,18 @@ export function getSummarizationFailure(response: AssistantMessage, label: strin
 	return undefined;
 }
 
+/** Smallest summary output budget, so a zero or tiny `reserveTokens` still allows a summary. */
+const MIN_SUMMARY_OUTPUT_TOKENS = 4096;
+
+/** Summary output budget: a share of `reserveTokens`, at least the minimum, capped by the model's output limit. */
+function getSummaryMaxTokens(model: Model<any>, reserveTokens: number, share: number): number {
+	const budget = Math.max(Math.floor(share * reserveTokens), MIN_SUMMARY_OUTPUT_TOKENS);
+	return model.maxTokens > 0 ? Math.min(budget, model.maxTokens) : budget;
+}
+
 function createSummarizationOptions(
 	model: Model<any>,
+	maxTokens: number,
 	apiKey: string | undefined,
 	headers: Record<string, string> | undefined,
 	env: Record<string, string> | undefined,
@@ -601,7 +611,7 @@ function createSummarizationOptions(
 	thinkingLevel: ThinkingLevel | undefined,
 	sessionId: string | undefined,
 ): SimpleStreamOptions {
-	const options: SimpleStreamOptions = { signal, apiKey, headers, env, sessionId };
+	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers, env, sessionId };
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		options.reasoning = thinkingLevel;
 	}
@@ -630,11 +640,19 @@ export async function completeSummarization(
 		cacheRetention: "none",
 		sessionId: options.sessionId ?? uuidv7(),
 	};
-	const produce = async (): Promise<AssistantMessage> =>
+	const produce = async (attemptOptions: SimpleStreamOptions): Promise<AssistantMessage> =>
 		streamFn
-			? (await streamFn(model, context, requestOptions)).result()
-			: completeSimple(model, context, requestOptions);
-	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
+			? (await streamFn(model, context, attemptOptions)).result()
+			: completeSimple(model, context, attemptOptions);
+	const response = await retryAssistantCall(() => produce(requestOptions), retry, requestOptions.signal, callbacks);
+	// Reasoning shares the summary's output cap on some providers and can use all of it (#9512).
+	// Summarize once more without reasoning instead of failing the compaction.
+	if (response.stopReason !== "length" || !requestOptions.reasoning) {
+		return response;
+	}
+	const { reasoning: _reasoning, ...withoutReasoning } = requestOptions;
+	const retried = await retryAssistantCall(() => produce(withoutReasoning), retry, requestOptions.signal, callbacks);
+	return { ...retried, usage: combineUsage(response.usage, retried.usage) };
 }
 
 /**
@@ -644,8 +662,7 @@ export async function completeSummarization(
 export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
-	_reserveTokens: number | undefined,
+	reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -662,7 +679,7 @@ export async function generateSummary(
 		await generateSummaryWithUsage(
 			currentMessages,
 			model,
-			_reserveTokens,
+			reserveTokens,
 			apiKey,
 			headers,
 			signal,
@@ -696,8 +713,7 @@ function buildSummarizationContext(promptText: string): TranscriptContext {
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
-	_reserveTokens: number | undefined,
+	reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -710,6 +726,8 @@ export async function generateSummaryWithUsage(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 ): Promise<{ text: string; usage: Usage }> {
+	const maxTokens = getSummaryMaxTokens(model, reserveTokens, 0.8);
+
 	// Use update prompt if we have a previous summary, otherwise initial prompt
 	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
 	if (customInstructions) {
@@ -728,7 +746,16 @@ export async function generateSummaryWithUsage(
 	}
 	promptText += basePrompt;
 
-	const completionOptions = createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId);
+	const completionOptions = createSummarizationOptions(
+		model,
+		maxTokens,
+		apiKey,
+		headers,
+		env,
+		signal,
+		thinkingLevel,
+		sessionId,
+	);
 
 	const response = await completeSummarization(
 		model,
@@ -971,6 +998,7 @@ export async function compact(
 		tokensBefore,
 		previousSummary,
 		fileOps,
+		settings,
 	} = preparation;
 
 	// Generate summaries and merge into one
@@ -984,7 +1012,7 @@ export async function compact(
 			const historyResult = await generateSummaryWithUsage(
 				messagesToSummarize,
 				model,
-				undefined,
+				settings.reserveTokens,
 				apiKey,
 				headers,
 				signal,
@@ -1003,6 +1031,7 @@ export async function compact(
 		const turnPrefixResult = await generateTurnPrefixSummary(
 			turnPrefixMessages,
 			model,
+			settings.reserveTokens,
 			apiKey,
 			headers,
 			env,
@@ -1022,7 +1051,7 @@ export async function compact(
 		const result = await generateSummaryWithUsage(
 			messagesToSummarize,
 			model,
-			undefined,
+			settings.reserveTokens,
 			apiKey,
 			headers,
 			signal,
@@ -1062,6 +1091,7 @@ export async function compact(
 async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	model: Model<any>,
+	reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	env?: Record<string, string>,
@@ -1073,6 +1103,7 @@ async function generateTurnPrefixSummary(
 	sessionId?: string,
 	customInstructions?: string,
 ): Promise<{ text: string; usage: Usage }> {
+	const maxTokens = getSummaryMaxTokens(model, reserveTokens, 0.5); // Smaller budget for turn prefix
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
 	let promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
@@ -1083,7 +1114,7 @@ async function generateTurnPrefixSummary(
 	const response = await completeSummarization(
 		model,
 		buildSummarizationContext(promptText),
-		createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
+		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, sessionId),
 		streamFn,
 		retry,
 		callbacks,
