@@ -10,13 +10,25 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import ignore from "ignore";
 import {
 	defaultAgentDir,
+	expandPackageEntry,
+	ignoreRulesOf,
 	pinImportMeta,
 	planPlugins,
 	renderManifest,
@@ -274,6 +286,56 @@ describe("packages installed with pi install", () => {
 		for (const [, path] of imports) assert.ok(readFileSync(join(out, path), "utf8"));
 	});
 
+	it("leaves out of a folder in pi.extensions what its ignore files leave out, as Pi does", () => {
+		// A named-export-only helper.js listed in .ignore: imported as an extension, the build would stop (PR #110 review).
+		const agentDir = agent({ packages: ["npm:ignoring"] });
+		const dir = installPackage(agentDir, "ignoring", { pi: { extensions: ["./extensions"] } }, [
+			"extensions/extension.js",
+			"extensions/helper.js",
+			"extensions/lib/index.ts",
+			"extensions/kept/index.ts",
+		]);
+		write(join(dir, "extensions", ".ignore"), "helper.js\n");
+		write(join(dir, "extensions", ".gitignore"), "# folders\n*/\n!kept/\n");
+
+		assert.deepEqual(expandPackageEntry(join(dir, "extensions")), [
+			join(dir, "extensions", "extension.js"),
+			join(dir, "extensions", "kept", "index.ts"),
+		]);
+	});
+
+	it("applies ignore rules as the ignore package Pi uses does, for names directly in the folder", () => {
+		const rules = [
+			"*.js", "!keep.js", "/anchored.ts", "dir/", "**/deep.ts", "**", "a/b.ts", "x/**", "[ab].ts", "[!c]x.ts", "?.ts",
+			"file.ts   ", "esc\\ aped\\ ", "\\#hash.ts", "\\!bang.ts", "# comment", "", "a**b.ts", "*.d.ts", "q/",
+		];
+		const names = [
+			["one.js", false], ["keep.js", false], ["anchored.ts", false], ["dir", true], ["dir", false], ["deep.ts", false],
+			["b.ts", false], ["x", true], ["a.ts", false], ["c.ts", false], ["cx.ts", false], ["dx.ts", false], ["z.ts", false],
+			["file.ts", false], ["esc aped ", false], ["#hash.ts", false], ["!bang.ts", false], ["axyb.ts", false],
+			["types.d.ts", false], ["q", true], ["q", false], ["other.md", false],
+		];
+		// Each rule alone, then all of them in order, against Pi's handling (package-manager.ts, addIgnoreRules).
+		for (const set of [...rules.map((rule) => [rule]), rules.filter((rule) => rule !== "**")]) {
+			const dir = scratch();
+			writeFileSync(join(dir, ".fdignore"), set.join("\n"));
+			const ours = ignoreRulesOf(dir);
+			const pis = ignore().add(
+				set
+					.filter((line) => line.trim() && !(line.trim().startsWith("#") && !line.trim().startsWith("\\#")))
+					.map((line) => {
+						const negated = line.startsWith("!");
+						let pattern = negated || line.startsWith("\\!") ? line.slice(1) : line;
+						if (pattern.startsWith("/")) pattern = pattern.slice(1);
+						return negated ? `!${pattern}` : pattern;
+					}),
+			);
+			for (const [name, folder] of names) {
+				assert.equal(ours(name, folder), pis.ignores(folder ? `${name}/` : name), `${JSON.stringify(set)} ${name}${folder ? "/" : ""}`);
+			}
+		}
+	});
+
 	it("says a folder in pi.extensions with no extension in it has no entry point", () => {
 		const agentDir = agent({ packages: ["npm:empty-folder"] });
 		installPackage(agentDir, "empty-folder", { pi: { extensions: ["./extensions"] } }, ["extensions/README.md"]);
@@ -311,6 +373,359 @@ describe("packages installed with pi install", () => {
 		installPackage(agentDir, "a-package", { pi: { extensions: ["./index.js"] } }, ["index.js"]);
 
 		assert.deepEqual(names(planPlugins({ agentDir, noPackages: true })), ["local"]);
+	});
+});
+
+describe("the packages pi-bolt compile gives it (--packages)", () => {
+	it("takes them instead of the packages setting, local folders too, each with the entries given (#108)", () => {
+		// The settings name npm:pi-web-access; piBolt.packages removed it and added these, which pi-bolt compile resolved.
+		const agentDir = agent({ packages: ["npm:pi-web-access"] });
+		installPackage(agentDir, "pi-web-access", { pi: { extensions: ["./index.js"] } }, ["index.js"]);
+		const fff = installPackage(agentDir, "opensec-pi-fff", { dependencies: { direct: "1" } }, ["src/index.ts"]);
+		installPackage(agentDir, "direct", {}, ["index.js"]);
+		const bundle = join(agentDir, "pi-bolt-bundles", "pi-bolt-web-access");
+		write(join(bundle, "package.json"), JSON.stringify({ name: "pi-bolt-web-access", dependencies: { own: "1" } }));
+		write(join(bundle, "extensions", "a.ts"));
+		write(join(bundle, "node_modules", "own", "index.js"));
+		const bare = join(agentDir, "pi-bolt-bundles", "no-manifest");
+		write(join(bare, "index.ts"));
+
+		const plan = planPlugins({
+			agentDir,
+			packages: [
+				{ source: "npm:opensec-pi-fff@0.11.0", root: fff, entries: [join(fff, "src", "index.ts")] },
+				{ source: "pi-bolt-bundles/pi-bolt-web-access", root: bundle, entries: [join(bundle, "extensions", "a.ts")] },
+				{ source: "pi-bolt-bundles/no-manifest", root: bare, entries: [join(bare, "index.ts")] },
+			],
+		});
+		assert.deepEqual(
+			plan.plugins.map((plugin) => [plugin.name, plugin.origin, plugin.importPath]),
+			[
+				["opensec-pi-fff", "package", "./package-opensec-pi-fff/src/index.ts"],
+				["pi-bolt-web-access", "package", "./package-pi-bolt-web-access/extensions/a.ts"],
+				["no-manifest", "package", "./package-no-manifest/index.ts"],
+			],
+		);
+		// An npm package's dependencies are hoisted beside it; a local folder's are in its own node_modules, copied with it.
+		assert.deepEqual(
+			plan.dependencies.map((dependency) => dependency.name),
+			["direct"],
+		);
+		const out = join(scratch(), "folder");
+		writePluginFolder(plan, out);
+		assert.ok(readFileSync(join(out, "package-pi-bolt-web-access", "node_modules", "own", "index.js"), "utf8"));
+	});
+
+	it("finds a workspace package's dependencies hoisted above it, as Node does", () => {
+		// workspace/packages/plugin imports `hoisted`, installed in workspace/node_modules (PR #114 review).
+		const agentDir = agent();
+		const workspace = join(scratch(), "workspace");
+		const plugin = join(workspace, "packages", "plugin");
+		write(join(plugin, "package.json"), JSON.stringify({ name: "plugin", dependencies: { hoisted: "1", own: "1" } }));
+		write(join(plugin, "index.ts"), 'import value from "hoisted";\nexport default () => value;\n');
+		write(join(plugin, "node_modules", "own", "package.json"), JSON.stringify({ name: "own" }));
+		write(join(workspace, "node_modules", "hoisted", "package.json"), JSON.stringify({ name: "hoisted", dependencies: { deep: "1" } }));
+		write(join(workspace, "node_modules", "hoisted", "index.js"), "export default 1;\n");
+		write(join(workspace, "node_modules", "deep", "package.json"), JSON.stringify({ name: "deep" }));
+
+		const plan = planPlugins({
+			agentDir,
+			packages: [{ source: plugin, root: plugin, entries: [join(plugin, "index.ts")] }],
+		});
+		assert.deepEqual(
+			plan.dependencies.map((dependency) => [dependency.name, dependency.from]),
+			[
+				["hoisted", join(realpathSync(workspace), "node_modules", "hoisted")],
+				["deep", join(realpathSync(workspace), "node_modules", "deep")],
+			],
+		);
+		const out = join(scratch(), "folder");
+		writePluginFolder(plan, out);
+		const staged = join(out, plan.plugins[0].importPath);
+		const resolved = spawnSync(
+			process.execPath,
+			["--input-type=module", "-e", `import("hoisted").then(() => process.exit(0))`],
+			{ cwd: dirname(staged), encoding: "utf8" },
+		);
+		assert.equal(resolved.status, 0, resolved.stderr);
+	});
+
+	describe("one node_modules holds one folder per name", () => {
+		/** A plugin in `workspace/packages/<name>` that needs `shared`, hoisted to `workspace/node_modules/shared`. */
+		const workspacePlugin = (workspace, name, version, leaf) => {
+			const plugin = join(workspace, "packages", name);
+			write(join(plugin, "package.json"), JSON.stringify({ name, type: "module", dependencies: { shared: "*" } }));
+			write(join(plugin, "index.js"), 'import shared from "shared";\nexport const value = shared;\nexport default () => {};\n');
+			const shared = join(workspace, "node_modules", "shared");
+			write(join(shared, "package.json"), JSON.stringify({ name: "shared", version, type: "module" }));
+			if (leaf === undefined) {
+				write(join(shared, "index.js"), `export default ${JSON.stringify(version)};\n`);
+			} else {
+				// shared's own leaf, nested in it: two copies of shared@1.0.0 may carry different ones.
+				write(join(shared, "index.js"), 'import leaf from "leaf";\nexport default leaf;\n');
+				write(join(shared, "node_modules", "leaf", "package.json"), JSON.stringify({ name: "leaf", version: leaf, type: "module" }));
+				write(join(shared, "node_modules", "leaf", "index.js"), `export default ${JSON.stringify(leaf)};\n`);
+			}
+			return { source: `./${name}`, root: plugin, entries: [join(plugin, "index.js")] };
+		};
+		const realShared = (workspace) => realpathSync(join(workspace, "node_modules", "shared"));
+		/** What each plugin of `plan` exports from its staged copy. */
+		const stagedValues = (plan) => {
+			const out = join(scratch(), "folder");
+			writePluginFolder(plan, out);
+			return plan.plugins.map((plugin) => {
+				const url = pathToFileURL(join(out, plugin.importPath)).href;
+				const loaded = spawnSync(
+					process.execPath,
+					["--input-type=module", "-e", `import(${JSON.stringify(url)}).then((m) => console.log(m.value))`],
+					{ encoding: "utf8" },
+				);
+				assert.equal(loaded.status, 0, loaded.stderr);
+				return loaded.stdout.trim();
+			});
+		};
+
+		it("shares a name among packages that find it in the same folder, and passes over one that finds another", () => {
+			// Two workspaces hoist different versions of `shared`; a third plugin is in the first workspace.
+			const first = scratch();
+			const second = scratch();
+			const one = workspacePlugin(first, "plugin-one", "1.0.0");
+			const two = workspacePlugin(second, "plugin-two", "2.0.0");
+			const three = workspacePlugin(first, "plugin-three", "1.0.0");
+
+			const plan = planPlugins({ agentDir: agent(), packages: [one, two, three] });
+			assert.deepEqual(names(plan), ["plugin-one", "plugin-three"]);
+			assert.deepEqual(plan.skipped, [
+				{
+					path: two.source,
+					reason: `its shared@2.0.0 (${realShared(second)}) differs from the one plugin-one is compiled in with (${realShared(first)})`,
+				},
+			]);
+			assert.deepEqual(
+				plan.dependencies.map((dependency) => dependency.name),
+				["shared"],
+			);
+			assert.deepEqual(stagedValues(plan), ["1.0.0", "1.0.0"]);
+		});
+
+		it("passes over one whose folder of the same version differs, as two copies with other nested leaves do (PR #114 review)", () => {
+			const first = scratch();
+			const second = scratch();
+			const a = workspacePlugin(first, "plugin-a", "1.0.0", "1");
+			const b = workspacePlugin(second, "plugin-b", "1.0.0", "2");
+
+			const plan = planPlugins({ agentDir: agent(), packages: [a, b] });
+			assert.deepEqual(names(plan), ["plugin-a"]);
+			assert.deepEqual(plan.skipped, [
+				{
+					path: b.source,
+					reason: `its shared@1.0.0 (${realShared(second)}) differs from the one plugin-a is compiled in with (${realShared(first)})`,
+				},
+			]);
+			assert.deepEqual(stagedValues(plan), ["1"]);
+		});
+	});
+
+	it("follows a pnpm link to find what the linked dependency needs beside its target", () => {
+		// plugin/node_modules/foo links to .pnpm/foo@1.0.0/node_modules/foo, whose own dependency bar is beside it there.
+		const agentDir = agent();
+		const plugin = join(scratch(), "plugin");
+		const store = join(plugin, "node_modules", ".pnpm", "foo@1.0.0", "node_modules");
+		write(join(plugin, "package.json"), JSON.stringify({ name: "plugin", type: "module", dependencies: { foo: "1" } }));
+		write(join(plugin, "index.js"), 'import foo from "foo";\nexport const value = foo;\nexport default () => {};\n');
+		write(join(store, "foo", "package.json"), JSON.stringify({ name: "foo", type: "module", dependencies: { bar: "1" } }));
+		write(join(store, "foo", "index.js"), 'import bar from "bar";\nexport default bar;\n');
+		write(join(store, "bar", "package.json"), JSON.stringify({ name: "bar", type: "module" }));
+		write(join(store, "bar", "index.js"), "export default 42;\n");
+		symlinkSync(join(store, "foo"), join(plugin, "node_modules", "foo"), "dir");
+
+		const plan = planPlugins({
+			agentDir,
+			packages: [{ source: plugin, root: plugin, entries: [join(plugin, "index.js")] }],
+		});
+		assert.deepEqual(
+			plan.dependencies.map((dependency) => dependency.name),
+			["foo", "bar"],
+		);
+		const out = join(scratch(), "folder");
+		writePluginFolder(plan, out);
+		const staged = join(out, plan.plugins[0].importPath);
+		const loaded = spawnSync(
+			process.execPath,
+			["--input-type=module", "-e", `import(${JSON.stringify(pathToFileURL(staged).href)}).then((m) => console.log(m.value))`],
+			{ encoding: "utf8" },
+		);
+		assert.equal(loaded.stdout.trim(), "42", loaded.stderr);
+	});
+
+	it("still passes over a package that needs vendoring, by its source", () => {
+		const agentDir = agent();
+		const dir = installPackage(agentDir, "opensec-pi-todo", {}, ["dist-bun/index.js", "dist-bun/core.cjs"]);
+
+		const plan = planPlugins({
+			agentDir,
+			packages: [{ source: "npm:opensec-pi-todo@2.13.1", root: dir, entries: [join(dir, "dist-bun", "index.js")] }],
+		});
+		assert.deepEqual(plan.plugins, []);
+		assert.match(plan.skipped.find((entry) => entry.path === "npm:opensec-pi-todo@2.13.1").reason, /vendoring/);
+	});
+
+	it("reads them from a file given to the command", () => {
+		const agentDir = agent();
+		const bundle = join(agentDir, "pi-bolt-bundles", "b");
+		write(join(bundle, "index.ts"));
+		const list = join(scratch(), "packages.json");
+		writeFileSync(list, JSON.stringify([{ source: "pi-bolt-bundles/b", root: bundle, entries: [join(bundle, "index.ts")] }]));
+		const out = join(scratch(), "out");
+		const script = fileURLToPath(new URL("./gen-plugin-manifest.mjs", import.meta.url));
+		const run = (file) =>
+			spawnSync(process.execPath, [script, "--out", out, "--agent-dir", agentDir, "--packages", file, "--json"], {
+				encoding: "utf8",
+			});
+
+		const result = run(list);
+		assert.equal(result.status, 0, result.stderr);
+		assert.deepEqual(
+			JSON.parse(result.stdout).plugins.map((plugin) => plugin.name),
+			["b"],
+		);
+		writeFileSync(list, JSON.stringify([{ source: "x" }]));
+		assert.match(run(list).stderr, /not a list of \{ source, root, entries \}/);
+	});
+});
+
+describe("the dependencies of a local package, as the staged copy finds them", () => {
+	/** A module's JSON file: its package.json, with `type: module`. */
+	const pkg = (dir, manifest) => write(join(dir, "package.json"), JSON.stringify({ type: "module", ...manifest }));
+	const link = (target, path) => {
+		mkdirSync(dirname(path), { recursive: true });
+		symlinkSync(target, path, "dir");
+	};
+	/** Plans `plugin` (a folder with index.js), writes the folder, and returns what the staged copy's `value` is. */
+	function staged(plugin) {
+		const plan = planPlugins({
+			agentDir: agent(),
+			packages: [{ source: plugin, root: plugin, entries: [join(plugin, "index.js")] }],
+		});
+		const out = join(scratch(), "folder");
+		writePluginFolder(plan, out);
+		const url = pathToFileURL(join(out, plan.plugins[0].importPath)).href;
+		const loaded = spawnSync(
+			process.execPath,
+			["--input-type=module", "-e", `import(${JSON.stringify(url)}).then((m) => console.log(JSON.stringify(m.value)))`],
+			{ encoding: "utf8" },
+		);
+		assert.equal(loaded.status, 0, loaded.stderr);
+		return { plan, value: JSON.parse(loaded.stdout) };
+	}
+	/** A plugin in `workspace/packages/plugin` that needs `dependencies` and exports `value` from `code`. */
+	function workspacePlugin(dependencies, code) {
+		const workspace = join(scratch(), "workspace");
+		const plugin = join(workspace, "packages", "plugin");
+		pkg(plugin, { name: "plugin", dependencies: Object.fromEntries(dependencies.map((name) => [name, "*"])) });
+		write(join(plugin, "index.js"), `${code}\nexport default () => {};\n`);
+		return { workspace, plugin };
+	}
+
+	it("copies each name two links give one folder (PR #114 review)", () => {
+		const { workspace, plugin } = workspacePlugin(
+			["alias-a", "alias-b"],
+			'import a from "alias-a";\nimport b from "alias-b";\nexport const value = [a, b];',
+		);
+		const shared = join(workspace, "store", "shared");
+		pkg(shared, { name: "shared", version: "1.0.0" });
+		write(join(shared, "index.js"), "export default 42;\n");
+		link(shared, join(workspace, "node_modules", "alias-a"));
+		link(shared, join(workspace, "node_modules", "alias-b"));
+
+		const { plan, value } = staged(plugin);
+		assert.deepEqual(value, [42, 42]);
+		assert.deepEqual(
+			plan.dependencies.map((dependency) => dependency.name),
+			["alias-a", "alias-b"],
+		);
+	});
+
+	it("looks again at a folder copied with the package when a dependency outside it needs it too", () => {
+		// plugin/node_modules/m and n come with the plugin's folder; `outer`, hoisted above it, reaches m by a link into it,
+		// and m's copy beside outer then needs n from elsewhere.
+		const { workspace, plugin } = workspacePlugin(
+			["m", "outer"],
+			'import m from "m";\nimport outer from "outer";\nexport const value = [m, outer];',
+		);
+		const m = join(plugin, "node_modules", "m");
+		pkg(m, { name: "m", version: "1.0.0", dependencies: { n: "*" } });
+		write(join(m, "index.js"), 'import n from "n";\nexport default `m+${n}`;\n');
+		pkg(join(plugin, "node_modules", "n"), { name: "n" });
+		write(join(plugin, "node_modules", "n", "index.js"), 'export default "n";\n');
+		const outer = join(workspace, "node_modules", "outer");
+		pkg(outer, { name: "outer", dependencies: { m: "*" } });
+		write(join(outer, "index.js"), 'import m from "m";\nexport default `outer+${m}`;\n');
+		link(m, join(outer, "node_modules", "m"));
+
+		assert.deepEqual(staged(plugin).value, ["m+n", "outer+m+n"]);
+	});
+
+	it("finds a scoped dependency and its own scoped dependency", () => {
+		const { workspace, plugin } = workspacePlugin(["@scope/pkg"], 'import pkg from "@scope/pkg";\nexport const value = pkg;');
+		const scoped = join(workspace, "node_modules", "@scope", "pkg");
+		pkg(scoped, { name: "@scope/pkg", dependencies: { "@scope/dep": "*" } });
+		write(join(scoped, "index.js"), 'import dep from "@scope/dep";\nexport default `pkg+${dep}`;\n');
+		pkg(join(workspace, "node_modules", "@scope", "dep"), { name: "@scope/dep" });
+		write(join(workspace, "node_modules", "@scope", "dep", "index.js"), 'export default "dep";\n');
+
+		const { plan, value } = staged(plugin);
+		assert.equal(value, "pkg+dep");
+		assert.deepEqual(
+			plan.dependencies.map((dependency) => dependency.name),
+			["@scope/pkg", "@scope/dep"],
+		);
+	});
+
+	it("follows a workspace link to another local folder, and finds what that folder needs from where it is", () => {
+		// npm workspaces link workspace/node_modules/lib to packages/lib; lib needs `leaf`, hoisted beside the link.
+		const { workspace, plugin } = workspacePlugin(["lib"], 'import lib from "lib";\nexport const value = lib;');
+		const lib = join(workspace, "packages", "lib");
+		pkg(lib, { name: "lib", dependencies: { leaf: "*" } });
+		write(join(lib, "index.js"), 'import leaf from "leaf";\nexport default `lib+${leaf}`;\n');
+		pkg(join(workspace, "node_modules", "leaf"), { name: "leaf" });
+		write(join(workspace, "node_modules", "leaf", "index.js"), 'export default "leaf";\n');
+		link(lib, join(workspace, "node_modules", "lib"));
+
+		assert.equal(staged(plugin).value, "lib+leaf");
+	});
+
+	it("copies packages that link to each other, or to themselves, without copying them into themselves", () => {
+		// A pnpm workspace links packages/plugin/node_modules/b to ../../b, and b's node_modules/plugin back to the plugin.
+		const { workspace, plugin } = workspacePlugin(["b", "plugin"], 'import b from "b";\nexport const value = b;');
+		const b = join(workspace, "packages", "b");
+		pkg(b, { name: "b", dependencies: { plugin: "*" } });
+		write(join(b, "index.js"), 'export default "b";\n');
+		link(b, join(plugin, "node_modules", "b"));
+		link(plugin, join(b, "node_modules", "plugin"));
+		link(plugin, join(plugin, "node_modules", "plugin"));
+
+		assert.equal(staged(plugin).value, "b");
+	});
+
+	it("copies a dependency whose name only begins like one of Pi's own packages", () => {
+		const { workspace, plugin } = workspacePlugin(["typebox-extra"], 'import extra from "typebox-extra";\nexport const value = extra;');
+		pkg(join(workspace, "node_modules", "typebox-extra"), { name: "typebox-extra" });
+		write(join(workspace, "node_modules", "typebox-extra", "index.js"), 'export default "extra";\n');
+
+		assert.equal(staged(plugin).value, "extra");
+	});
+});
+
+describe("what it leaves out", () => {
+	it("lists each extension --only or --exclude leaves out, and by which (#108)", () => {
+		const agentDir = agent();
+		for (const name of ["a", "b", "c"]) write(join(agentDir, "extensions", `${name}.ts`));
+
+		const excluded = (options) => planPlugins({ agentDir, ...options }).excluded.map((entry) => [entry.name, entry.by]);
+		assert.deepEqual(excluded({ exclude: ["b"] }), [["b", "exclude"]]);
+		assert.deepEqual(excluded({ only: ["a", "b"], exclude: ["b"] }), [["b", "exclude"], ["c", "only"]]);
+		assert.deepEqual(excluded({}), []);
 	});
 });
 
@@ -515,9 +930,10 @@ describe("import.meta in the copies", () => {
 		const copy = await import(pathToFileURL(join(out, "global", "with-skills", "src", "index.js")).href);
 		assert.equal(copy.skills(), join(extension, "skills"));
 		assert.equal(readFileSync(join(extension, "src", "index.js"), "utf8"), RESOLVES);
+		// (A dependency is pinned to its real path: where it is when the installed extension imports it, as Node resolves links.)
 		assert.equal(
 			readFileSync(join(out, "node_modules", "dep", "index.js"), "utf8"),
-			`export const here = ${JSON.stringify(dep)};\n`,
+			`export const here = ${JSON.stringify(realpathSync(dep))};\n`,
 		);
 		assert.equal(readFileSync(join(dep, "index.js"), "utf8"), "export const here = import.meta.dirname;\n");
 	});

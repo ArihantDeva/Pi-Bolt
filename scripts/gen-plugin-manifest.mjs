@@ -19,6 +19,8 @@
  *   --only a,b          only these extensions, by the name this prints (repeatable)
  *   --exclude a,b       every extension except these (repeatable)
  *   --no-packages       leave out the packages `pi install` installed
+ *   --packages FILE     the packages to compile in, instead of the `packages` setting's npm: packages: a JSON list of
+ *                       { source, root, entries }, as `pi-bolt compile` resolves them (piBolt.packages applied)
  *   --json              print the plan as JSON instead of a summary
  *
  * The agent directory's `settings.json` supplies the `extensions` paths and the `packages` list. A project's settings are
@@ -29,6 +31,7 @@ import {
 	chmodSync,
 	cpSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -99,19 +102,92 @@ export function discoverExtensionsInDir(dir) {
 	return found;
 }
 
+/** The ignore files whose rules Pi applies to a folder's entries (package-manager.ts, `IGNORE_FILE_NAMES`). */
+const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
+
+/** A gitignore glob of one path segment as a regular expression: `*`, `?`, `[...]` (`[!...]`), and `\` escapes. */
+function segmentPattern(glob) {
+	let source = "";
+	for (let i = 0; i < glob.length; i++) {
+		const char = glob[i];
+		if (char === "\\" && i + 1 < glob.length) {
+			source += glob[++i].replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+		} else if (char === "*") {
+			source += "[^/]*";
+			while (glob[i + 1] === "*") i++;
+		} else if (char === "?") {
+			source += "[^/]";
+		} else if (char === "[" && glob.indexOf("]", i + 2) !== -1) {
+			const end = glob.indexOf("]", i + 2);
+			const body = glob.slice(i + 1, end);
+			source += `[${body.startsWith("!") ? `^${body.slice(1)}` : body}]`;
+			i = end;
+		} else {
+			source += char.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+		}
+	}
+	return new RegExp(`^${source}$`);
+}
+
+/**
+ * Whether a name directly in `dir` (`folder` when it is a folder) is ignored by the rules of `dir`'s own ignore files, as
+ * Pi applies them when it looks for extensions in a folder (package-manager.ts, `addIgnoreRules` and the `ignore` package).
+ * Only names directly in `dir` are tested, so a rule is the gitignore rule reduced to one path segment: one with a `/`
+ * inside it never matches, `**` matches every name, and a trailing `/` matches folders only. The last rule that matches
+ * decides, and a `!` rule takes a name back. scripts/gen-plugin-manifest.test.mjs checks this against the `ignore` package.
+ */
+export function ignoreRulesOf(dir) {
+	const rules = [];
+	for (const file of IGNORE_FILE_NAMES) {
+		let text;
+		try {
+			text = readFileSync(join(dir, file), "utf8");
+		} catch {
+			continue;
+		}
+		for (const line of text.split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (!trimmed || (trimmed.startsWith("#") && !trimmed.startsWith("\\#"))) continue;
+			let pattern = line;
+			// (Pi strips the `\` of `\!` before the `ignore` package reads the rule, which then takes it for a `!` rule too.)
+			const negated = /^\\?!/.test(pattern);
+			pattern = pattern.replace(/^\\?!/, "");
+			if (pattern.startsWith("/")) pattern = pattern.slice(1);
+			// (Trailing spaces are not part of a rule unless escaped.)
+			pattern = pattern.replace(/(?<!\\)\s+$/, "");
+			const folderOnly = pattern.endsWith("/");
+			if (folderOnly) pattern = pattern.slice(0, -1);
+			while (pattern.startsWith("**/")) pattern = pattern.slice(3);
+			if (!pattern) continue;
+			const every = pattern === "**";
+			const regex = every || pattern.includes("/") ? undefined : segmentPattern(pattern);
+			rules.push({ negated, folderOnly, test: (name) => every || (regex?.test(name) ?? false) });
+		}
+	}
+	return (name, folder) => {
+		let ignored = false;
+		for (const rule of rules) {
+			if ((!rule.folderOnly || folder) && rule.test(name)) ignored = !rule.negated;
+		}
+		return ignored;
+	};
+}
+
 /**
  * A package's "pi.extensions" entry may be a folder: pi-openrouter-session declares "./extensions", which holds
  * openrouter-session.ts and no index. Pi loads that folder's own entries, else what discovery finds in it without dot
- * entries and node_modules (package-manager.ts, `collectAutoExtensionEntries`). Imported as it is, the folder does not
- * resolve and the build stops.
+ * entries, node_modules, and what the folder's .gitignore, .ignore and .fdignore leave out (package-manager.ts,
+ * `collectAutoExtensionEntries`). Imported as it is, the folder does not resolve and the build stops.
  */
 export function expandPackageEntry(entry) {
 	if (!statSync(entry).isDirectory()) return [entry];
+	const ignored = ignoreRulesOf(entry);
 	return (
 		resolveExtensionEntries(entry) ??
 		discoverExtensionsInDir(entry).filter((path) => {
 			const first = relative(entry, path).split(sep)[0];
-			return !first.startsWith(".") && first !== "node_modules";
+			const folder = join(entry, first) !== path;
+			return !first.startsWith(".") && first !== "node_modules" && !ignored(first, folder);
 		})
 	);
 }
@@ -206,32 +282,65 @@ function dependencyNames(manifest) {
 	return names;
 }
 
+/** Where Node finds package `name` required from `dir`: the nearest node_modules/<name> in `dir` or above it. */
+function resolvePackageFrom(dir, name) {
+	for (let at = resolve(dir); ; at = dirname(at)) {
+		if (basename(at) !== "node_modules") {
+			const candidate = join(at, "node_modules", ...name.split("/"));
+			if (existsSync(candidate)) return candidate;
+		}
+		if (dirname(at) === at) return undefined;
+	}
+}
+
 /**
- * Every package a package needs, transitively. `pi install` hoists into one flat node_modules, so a package's
- * dependencies are its siblings and not inside it: copying the package folder alone leaves them for the bundler to fail
- * on. `peerDependencies` are not walked -- those are the host's to provide, and a missing one is a loud build error.
+ * Every package a package in `dir` needs, transitively, that is not copied with it: `{ name, from }`, `from` a real path.
+ *
+ * Its dependencies are found as Node finds them, from the real folder of each requiring package up through the folders
+ * above it: `pi install` hoists into one flat node_modules, so an npm package's dependencies are its siblings; a local
+ * package in a workspace may have its own hoisted to the workspace's node_modules; and pnpm links each dependency into
+ * `.pnpm/<name>@<version>/node_modules`, with the dependencies it needs beside the link's target.
+ *
+ * The copies follow links, so a dependency is copied with the folder of the package that needs it only when it is in that
+ * folder and nothing on the way is a link: then it is found from the copy as from the original. Any other is listed, to
+ * be copied into the node_modules beside the manifest. `peerDependencies` are not walked -- those are the host's to
+ * provide, and a missing one is a loud build error.
  */
-function dependencyClosure(dir, root) {
-	const found = new Map();
-	const queue = [dir];
-	const visited = new Set([resolve(dir)]);
+function dependencyClosure(dir) {
+	const inside = (folder, path) => {
+		const rel = relative(folder, path);
+		return !rel.startsWith("..") && resolve(folder, rel) === path;
+	};
+	const root = realpathSync(dir);
+	const needed = [];
+	const listed = new Set();
+	/**
+	 * Each package to look at: its real folder, and the copied folder it is in. What it needs depends on both, so a package
+	 * reached again from another copied folder is looked at again (once per pair, which also ends a cycle).
+	 */
+	const queue = [{ real: root, copied: root }];
+	const visited = new Set([`${root}\0${root}`]);
 	while (queue.length > 0) {
 		const current = queue.shift();
-		for (const name of dependencyNames(readJson(join(current, "package.json")))) {
-			if (isPiPackage(name) || found.has(name)) continue;
-			// Nested before hoisted, as Node resolves: a package may carry its own copy of a version the root hoisted differently.
-			const nested = join(current, "node_modules", ...name.split("/"));
-			const hoisted = join(root, ...name.split("/"));
-			const resolved = existsSync(nested) ? nested : existsSync(hoisted) ? hoisted : undefined;
-			if (!resolved) continue;
-			found.set(name, resolved);
-			if (!visited.has(resolve(resolved))) {
-				visited.add(resolve(resolved));
-				queue.push(resolved);
+		for (const name of dependencyNames(readJson(join(current.real, "package.json")))) {
+			if (isPiPackage(name)) continue;
+			// (Nested before hoisted: a package may carry its own copy of a version hoisted differently above it.)
+			const found = resolvePackageFrom(current.real, name);
+			if (!found) continue;
+			const real = realpathSync(found);
+			const travels = real === resolve(found) && inside(current.copied, real);
+			// (Listed by the name it is required by: two names may lead to one folder, and each is imported by its own.)
+			if (!travels && !listed.has(`${name}\0${real}`)) {
+				listed.add(`${name}\0${real}`);
+				needed.push({ name, from: real });
 			}
+			const next = { real, copied: travels ? current.copied : real };
+			if (visited.has(`${next.real}\0${next.copied}`)) continue;
+			visited.add(`${next.real}\0${next.copied}`);
+			queue.push(next);
 		}
 	}
-	return found;
+	return needed;
 }
 
 // --- the plan -------------------------------------------------------------------------------------------------------
@@ -346,27 +455,57 @@ export function planPlugins(options) {
 
 	const skipped = [...passedOver, ...roots.flatMap((root) => describeSkipped(root.root, seen))];
 
-	const hoisted = join(agentDir, "npm", "node_modules");
-	for (const source of packages) {
-		const resolved = managedPackageFolder(source, agentDir);
-		if (resolved.skip) {
-			skipped.push({ path: source, reason: resolved.skip });
-			continue;
+	// Each package: its folder, the name it is known by, and its entries. `pi-bolt compile` gives the packages Pi-Bolt loads
+	// (`options.packages`: piBolt.packages applied, each with its entries as Pi resolves them); without it, the npm: packages
+	// of the `packages` setting.
+	const installed = [];
+	/** Each package's entry in `installed`, by its stage folder. */
+	const packageOf = new Map();
+	if (options.packages && !options.noPackages) {
+		for (const pkg of options.packages) {
+			const name = readJson(join(pkg.root, "package.json"))?.name;
+			installed.push({
+				path: pkg.source,
+				label: "",
+				name: typeof name === "string" && name ? name : basename(pkg.root),
+				dir: pkg.root,
+				declared: pkg.entries,
+			});
 		}
-		const declared = resolveExtensionEntries(resolved.dir)?.flatMap(expandPackageEntry);
+	} else {
+		for (const source of packages) {
+			const resolved = managedPackageFolder(source, agentDir);
+			if (resolved.skip) {
+				skipped.push({ path: source, reason: resolved.skip });
+				continue;
+			}
+			installed.push({
+				path: resolved.dir,
+				// (The folder alone does not say which package it is.)
+				label: `${resolved.name}: `,
+				name: resolved.name,
+				dir: resolved.dir,
+				declared: resolveExtensionEntries(resolved.dir)?.flatMap(expandPackageEntry),
+			});
+		}
+	}
+
+	for (const resolved of installed) {
+		const declared = resolved.declared;
 		if (!declared?.length) {
-			skipped.push({ path: resolved.dir, reason: `${resolved.name}: no entry point and no "pi.extensions"` });
+			skipped.push({ path: resolved.path, reason: `${resolved.label}no entry point and no "pi.extensions"` });
 			continue;
 		}
 		if (declared.some(needsVendoring)) {
 			skipped.push({
-				path: resolved.dir,
-				reason: `${resolved.name}: a Bun build that loads core.cjs at run time, which needs vendoring per package (plugins/opensec/)`,
+				path: resolved.path,
+				reason: `${resolved.label}a Bun build that loads core.cjs at run time, which needs vendoring per package (plugins/opensec/)`,
 			});
 			continue;
 		}
 		const stageDir = unique(`package-${safeName(resolved.name)}`, takenStageDirs);
 		roots.push({ stageDir, root: resolve(resolved.dir), origin: "package" });
+		packageOf.set(stageDir, resolved);
 		for (const entry of declared) {
 			const rel = relative(resolved.dir, entry).split(sep).join("/");
 			const base = declared.length === 1 ? resolved.name : `${resolved.name}-${withoutExtension(basename(entry))}`;
@@ -384,26 +523,53 @@ export function planPlugins(options) {
 
 	const only = (options.only ?? []).filter(Boolean);
 	const exclude = new Set(options.exclude ?? []);
-	const chosen = plugins
-		.filter((plugin) => only.length === 0 || only.includes(plugin.name))
-		.filter((plugin) => !exclude.has(plugin.name));
+	const chosen = [];
+	/** Those --only or --exclude leave out, so that each extension found is accounted for. */
+	const excluded = [];
+	for (const plugin of plugins) {
+		const by = only.length > 0 && !only.includes(plugin.name) ? "only" : exclude.has(plugin.name) ? "exclude" : "";
+		if (by) excluded.push({ name: plugin.name, origin: plugin.origin, entry: plugin.entry, by });
+		else chosen.push(plugin);
+	}
 
-	// Only the folders something chosen comes from are copied, and only the dependencies of a chosen package.
+	// Only the folders something chosen comes from are copied, and only the dependencies of a chosen package. These share
+	// one node_modules, which holds one folder per name: a name is shared only by packages that find it in the same (real)
+	// folder. Two folders of the same version may still differ (their own node_modules, a patch), so a package that finds a
+	// name elsewhere than one compiled in before it is passed over, and keeps running from its installed copy.
 	const used = new Set(chosen.map((plugin) => plugin.stageDir));
-	const usedRoots = roots.filter((root) => used.has(root.stageDir));
 	const dependencies = new Map();
-	for (const root of usedRoots) {
-		if (root.origin !== "package") continue;
-		for (const [name, from] of dependencyClosure(root.root, hoisted)) {
-			if (!dependencies.has(name)) dependencies.set(name, from);
+	const conflicting = new Set();
+	for (const root of roots) {
+		if (!used.has(root.stageDir) || root.origin !== "package") continue;
+		const pkg = packageOf.get(root.stageDir);
+		const own = new Map();
+		let conflict;
+		for (const { name, from } of dependencyClosure(root.root)) {
+			const before = own.get(name) ?? dependencies.get(name);
+			if (before && before.from !== from) {
+				const its = `${name}@${readJson(join(from, "package.json"))?.version ?? "?"} (${from})`;
+				conflict =
+					before.owner === pkg
+						? `it needs two ${name} folders, ${before.from} and ${from}`
+						: `its ${its} differs from the one ${before.owner.name} is compiled in with (${before.from})`;
+				break;
+			}
+			if (!own.has(name)) own.set(name, { from, owner: pkg });
 		}
+		if (conflict) {
+			conflicting.add(root.stageDir);
+			skipped.push({ path: pkg.path, reason: `${pkg.label}${conflict}` });
+			continue;
+		}
+		for (const [name, dependency] of own) if (!dependencies.has(name)) dependencies.set(name, dependency);
 	}
 
 	return {
-		plugins: chosen,
-		roots: usedRoots,
-		dependencies: [...dependencies].map(([name, from]) => ({ name, from })),
+		plugins: chosen.filter((plugin) => !conflicting.has(plugin.stageDir)),
+		roots: roots.filter((root) => used.has(root.stageDir) && !conflicting.has(root.stageDir)),
+		dependencies: [...dependencies].map(([name, { from }]) => ({ name, from })),
 		skipped,
+		excluded,
 	};
 }
 
@@ -741,14 +907,40 @@ export function renderManifest(plan) {
 }
 
 /** Pi's own packages, which the build resolves to Pi's modules. A copy of one inside a plugin would be a second Pi. */
-const EXCLUDED = [join("node_modules", "typebox"), join("node_modules", "@earendil-works")];
+const isPiCopy = (source) => {
+	const parts = source.split(sep);
+	return parts.some((part, i) => part === "node_modules" && (parts[i + 1] === "typebox" || parts[i + 1] === "@earendil-works"));
+};
+
+/**
+ * Whether `source`, in the folder `from` being copied, is a link to a folder it is in: followed, it would be copied into
+ * itself without end. A pnpm workspace has these when two of its packages need each other, or one needs itself.
+ */
+function linksBack(source, from) {
+	let target;
+	try {
+		if (!lstatSync(source).isSymbolicLink()) return false;
+		target = realpathSync(source);
+	} catch {
+		return false;
+	}
+	for (let at = dirname(source); ; at = dirname(at)) {
+		try {
+			if (realpathSync(at) === target) return true;
+		} catch {
+			// (Not there: it is not the target.)
+		}
+		if (at === from || dirname(at) === at) return false;
+	}
+}
 
 function copyRoot(from, to) {
-	cpSync(from, to, {
+	const start = resolve(from);
+	cpSync(start, to, {
 		recursive: true,
 		// An extension may be a symbolic link to somewhere else on this machine, which the executable has no file for.
 		dereference: true,
-		filter: (source) => basename(source) !== ".git" && !EXCLUDED.some((part) => source.includes(part)),
+		filter: (source) => basename(source) !== ".git" && !isPiCopy(source) && !linksBack(source, start),
 	});
 }
 
@@ -790,11 +982,39 @@ const HELP = `Usage: scripts/gen-plugin-manifest.mjs --out DIR [options]
   --only a,b          only these extensions, by the name this prints (repeatable)
   --exclude a,b       every extension except these (repeatable)
   --no-packages       leave out the packages "pi install" installed
+  --packages FILE     these packages (a JSON list of { source, root, entries }) instead of the "packages" setting's
   --json              print the plan as JSON
 `;
 
+/** The list --packages names: each package's source, folder, and entry files. */
+function readPackageList(file) {
+	let list;
+	try {
+		list = JSON.parse(readFileSync(file, "utf8"));
+	} catch (error) {
+		die(`--packages ${file}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	const valid = (pkg) =>
+		pkg &&
+		typeof pkg.source === "string" &&
+		typeof pkg.root === "string" &&
+		Array.isArray(pkg.entries) &&
+		pkg.entries.every((entry) => typeof entry === "string");
+	if (!Array.isArray(list) || !list.every(valid)) die(`--packages ${file}: not a list of { source, root, entries }`);
+	return list;
+}
+
 function parseArgs(argv) {
-	const options = { out: "", agentDir: "", cwd: "", only: [], exclude: [], noPackages: false, json: false };
+	const options = {
+		out: "",
+		agentDir: "",
+		cwd: "",
+		only: [],
+		exclude: [],
+		noPackages: false,
+		packages: undefined,
+		json: false,
+	};
 	let index = 0;
 	while (index < argv.length) {
 		const arg = argv[index];
@@ -812,6 +1032,7 @@ function parseArgs(argv) {
 			case "--only": options.only.push(...needsValue().split(",").map((n) => n.trim()).filter(Boolean)); break;
 			case "--exclude": options.exclude.push(...needsValue().split(",").map((n) => n.trim()).filter(Boolean)); break;
 			case "--no-packages": options.noPackages = true; break;
+			case "--packages": options.packages = readPackageList(needsValue()); break;
 			case "--json": options.json = true; break;
 			case "-h":
 			case "--help": process.stdout.write(HELP); process.exit(0); break;
@@ -857,6 +1078,7 @@ if (isCommand()) {
 			process.stderr.write(`  with ${plan.dependencies.length} dependency package(s), copied to node_modules\n`);
 		}
 		for (const entry of plan.skipped) process.stderr.write(`  passed over: ${entry.path}\n    ${entry.reason}\n`);
+		for (const entry of plan.excluded) process.stderr.write(`  left out: ${entry.name} (--${entry.by})\n`);
 		// The manifest's path alone on stdout: build-pi.sh reads it with a command substitution.
 		process.stdout.write(`${manifest}\n`);
 	}

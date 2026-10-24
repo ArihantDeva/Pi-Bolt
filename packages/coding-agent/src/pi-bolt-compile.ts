@@ -29,10 +29,13 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { getAgentDir } from "./config.ts";
 import { type CompiledExtensionSource, extensionFingerprint } from "./core/extensions/compiled.ts";
+import { DefaultPackageManager } from "./core/package-manager.ts";
+import { getPackageIdentity } from "./core/package-source.ts";
+import { SettingsManager } from "./core/settings-manager.ts";
 import {
 	PIBOLT,
 	PIBOLT_RELEASE_KEY,
@@ -56,6 +59,10 @@ interface CompileRecord extends CompileSelection {
 }
 
 interface CompileOptions extends CompileSelection {
+	/** --no-exclude: none of the exclusions compile.json records. */
+	noExclude?: boolean;
+	/** `exclude` is compile.json's, applied because the command named none itself. */
+	excludeRecorded?: boolean;
 	/** Files to build with instead of the release's: a kit and a runtime (archives or unpacked folders). */
 	kit?: string;
 	runtime?: string;
@@ -75,12 +82,115 @@ interface Kit {
 	env: Record<string, string>;
 }
 
+/**
+ * A package Pi-Bolt loads, with the extension files Pi loads from it: what gen-plugin-manifest.mjs takes with --packages.
+ * An npm package is fingerprinted by its version; a local folder or a git checkout, which can change without one, by its
+ * files; a local file by itself (core/extensions/compiled.ts).
+ */
+export interface CompilePackage {
+	source: string;
+	kind: "npm" | "git" | "folder" | "file";
+	root: string;
+	entries: string[];
+}
+
+/** The packages a compile takes, as Pi-Bolt loads them (piBolt.packages applied to `packages`). */
+export interface CompilePackages {
+	packages: CompilePackage[];
+	/** Packages Pi-Bolt loads that have nothing to compile in, and why. */
+	passedOver: Array<{ path: string; reason: string }>;
+	/** Packages of Pi's `packages` list that piBolt.packages removes. */
+	removed: string[];
+}
+
+/**
+ * The packages in the agent directory's settings, resolved as `pi-bolt list` and `pi-bolt doctor` resolve them: the
+ * settings manager applies piBolt.packages (additions, `-` removals, replacements) to `packages`, and the package manager
+ * finds each one's folder and the extension files Pi loads from it. A project's settings are not read: what is compiled in
+ * is for every project, as gen-plugin-manifest.mjs reads only the agent directory too. Nothing is installed.
+ */
+export async function resolveCompilePackages(agentDir: string, cwd = process.cwd()): Promise<CompilePackages> {
+	const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
+	const sourceOfEntry = (entry: string | { source: string }) => (typeof entry === "string" ? entry : entry.source);
+	const loaded = settingsManager.getResolvedPackages("global", agentDir).map(sourceOfEntry);
+	const loadedIdentities = new Set(loaded.map((source) => getPackageIdentity(source, agentDir)));
+	const removed = (settingsManager.getGlobalSettings().packages ?? [])
+		.map(sourceOfEntry)
+		.filter((source) => !loadedIdentities.has(getPackageIdentity(source, agentDir)));
+
+	const missing = new Set<string>();
+	const { extensions } = await packageManager.resolve(async (source) => {
+		missing.add(source);
+		return "skip";
+	});
+	const packages: CompilePackage[] = [];
+	const passedOver: CompilePackages["passedOver"] = [];
+	for (const source of loaded) {
+		const identity = getPackageIdentity(source, agentDir);
+		const own = extensions.filter(
+			(resource) =>
+				resource.metadata.origin === "package" &&
+				resource.metadata.scope === "user" &&
+				resource.metadata.source === source,
+		);
+		const entries = own.filter((resource) => resource.enabled).map((resource) => resource.path);
+		if (entries.length === 0) {
+			const installed = !missing.has(source) && packageManager.getInstalledPath(source, "user") !== undefined;
+			passedOver.push({
+				path: source,
+				reason: !installed
+					? identity.startsWith("local:")
+						? "not found"
+						: "not installed, or not the version the settings name"
+					: own.length > 0
+						? "its extensions are turned off in settings"
+						: "no extensions in it",
+			});
+			continue;
+		}
+		const packageRoot = own[0].metadata.packageRoot;
+		const kind = identity.startsWith("npm:")
+			? "npm"
+			: identity.startsWith("git:")
+				? "git"
+				: packageRoot
+					? "folder"
+					: "file";
+		packages.push({ source, kind, root: packageRoot ?? dirname(entries[0]), entries });
+	}
+	return { packages, passedOver, removed };
+}
+
 /** The plan gen-plugin-manifest.mjs prints with --json. */
 interface ManifestPlan {
 	manifest: string;
 	plugins: Array<{ name: string; entry: string; origin: string; stageDir: string }>;
 	roots: Array<{ stageDir: string; root: string; origin: string }>;
 	skipped: Array<{ path: string; reason: string }>;
+	/** Those --only or --exclude left out. */
+	excluded: Array<{ name: string; origin: string; entry: string; by: "only" | "exclude" }>;
+}
+
+/**
+ * One line for each extension and package a compile finds: compiled in, passed over and why, or excluded and by what. None
+ * goes unmentioned: one missing from the list looks like one that is not there.
+ */
+export function candidateLines(
+	plan: Pick<ManifestPlan, "plugins" | "skipped" | "excluded">,
+	packages: Pick<CompilePackages, "passedOver" | "removed">,
+	excludeRecorded = false,
+): string[] {
+	const exclusion = {
+		only: "not in --only",
+		exclude: excludeRecorded ? "excluded (compile.json)" : "excluded (--exclude)",
+	};
+	return [
+		...plan.plugins.map((plugin) => `${plugin.name} (${plugin.origin}): compiling`),
+		...plan.excluded.map((plugin) => `${plugin.name} (${plugin.origin}): ${exclusion[plugin.by]}`),
+		...[...packages.passedOver, ...plan.skipped].map((entry) => `${entry.path}: passed over: ${entry.reason}`),
+		...packages.removed.map((source) => `${source}: excluded by piBolt.packages`),
+	];
 }
 
 class CompileError extends Error {}
@@ -96,7 +206,9 @@ again until it is compiled in again. \`pi-bolt update\` compiles the same extens
 
 Options:
   --only a,b         Only these extensions (by the names this command prints)
-  --exclude a,b      Every extension except these
+  --exclude a,b      Every extension except these. They are recorded: a later \`pi-bolt compile\` without --only or
+                     --exclude, and \`pi-bolt update\`, leave them out too
+  --no-exclude       Leave out none of the extensions --exclude left out before
   --no-packages      Leave out the packages \`pi-bolt install\` installed
   --off              Go back to the release's executable, with no extensions compiled in
   --status           Show what is compiled in
@@ -231,13 +343,22 @@ function runtimeBun(path: string): string {
 	return bun;
 }
 
-/** How each extension is fingerprinted (core/extensions/compiled.ts), from where the generator found it. */
-function sourceOf(plugin: ManifestPlan["plugins"][number], roots: ManifestPlan["roots"]): CompiledExtensionSource {
+/**
+ * How each extension is fingerprinted (core/extensions/compiled.ts), from where the generator found it. `kinds`: each
+ * package's kind by its folder.
+ */
+function sourceOf(
+	plugin: ManifestPlan["plugins"][number],
+	roots: ManifestPlan["roots"],
+	kinds: ReadonlyMap<string, CompilePackage["kind"]>,
+): CompiledExtensionSource {
 	const root = roots.find((r) => r.stageDir === plugin.stageDir)?.root ?? dirname(plugin.entry);
 	const entry = realpathSync(plugin.entry);
 	let source: Omit<CompiledExtensionSource, "fingerprint">;
 	if (plugin.origin === "package") {
-		source = { name: plugin.name, entry, scope: "package", root };
+		const kind = kinds.get(root) ?? "npm";
+		const scope = kind === "npm" ? "package" : kind === "file" ? "file" : "folder";
+		source = { name: plugin.name, entry, scope, root };
 	} else {
 		const segments = relative(root, plugin.entry).split(sep);
 		if (segments.length > 1) {
@@ -291,6 +412,30 @@ function buildEnvironment(kit: Kit, kitDir: string): NodeJS.ProcessEnv {
 	return env;
 }
 
+/** The compiler's "AOT: " lines that say why a build stops (the others report its progress). */
+const AOT_STOP = /cannot be compiled ahead of time|could not be compiled ahead of time|maximumAOTCandidateBytecodeSize/;
+
+/**
+ * Why a build stopped, from what the compiler printed: each "AOT: " line that says so (a function too big to compile, or
+ * one the compiler declined), and the last lines of the rest. The reason is often an "AOT: " line alone, and those lines
+ * are otherwise mostly progress.
+ */
+export function buildFailureReason(output: string): string {
+	const lines = output.split(/\r?\n/).filter((line) => line.trim());
+	const indexes = (keep: (line: string) => boolean) => lines.flatMap((line, index) => (keep(line) ? [index] : []));
+	const stops = indexes((line) => line.startsWith("AOT: ") && AOT_STOP.test(line)).slice(-22);
+	const kept = new Set([...stops, ...indexes((line) => !line.startsWith("AOT: ")).slice(-8)]);
+	const reason = lines.filter((_, index) => kept.has(index));
+	if (reason.length === 0) return lines.slice(-8).join("\n") || "(the compiler printed nothing)";
+	if (stops.some((index) => lines[index].includes("maximumAOTCandidateBytecodeSize"))) {
+		reason.push(
+			"Leave that extension out with `pi-bolt compile --exclude <name>`, or compile it anyway with " +
+				"`BUN_JSC_maximumAOTCandidateBytecodeSize=<n> pi-bolt compile` (docs/TROUBLESHOOTING.md).",
+		);
+	}
+	return reason.join("\n");
+}
+
 /**
  * Builds Pi-Bolt with the extensions of `plan` into `stage`, a folder like this build's. A failed build leaves all of
  * what the compiler printed in `log`, outside the work folder that is removed after it.
@@ -303,11 +448,12 @@ function buildExecutable(
 	stage: string,
 	buildDir: string,
 	log: string,
+	kinds: ReadonlyMap<string, CompilePackage["kind"]>,
 ): void {
 	const build = PIBOLT!;
 	const agent = join(kitDir, kit.agent);
 	const staging = join(agent, ".pibolt-plugins");
-	const sources = Object.fromEntries(plan.plugins.map((plugin) => [plugin.name, sourceOf(plugin, plan.roots)]));
+	const sources = Object.fromEntries(plan.plugins.map((plugin) => [plugin.name, sourceOf(plugin, plan.roots, kinds)]));
 	writeFileSync(join(staging, "sources.json"), `${JSON.stringify(sources, null, "\t")}\n`);
 	writeFileSync(join(staging, "entry.ts"), ENTRY);
 
@@ -327,13 +473,16 @@ function buildExecutable(
 	process.stderr.write(chalk.dim(`compiling Pi ${kit.pi} with ${plan.plugins.length} extension(s)\n`));
 	const result = run(bun, args, { cwd: agent, env: buildEnvironment(kit, kitDir) });
 	if (result.status !== 0 || !existsSync(executable)) {
-		writeFileSync(log, `${result.stdout}\n${result.stderr}`);
-		const reason = `${result.stdout}\n${result.stderr}`
-			.split("\n")
-			.filter((line) => line.trim() && !line.startsWith("AOT: "))
-			.slice(-8)
-			.join("\n");
-		throw new CompileError(`the build stopped:\n${reason}\n(all of what the compiler printed: ${log})`);
+		const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+		writeFileSync(log, output);
+		const how = result.error
+			? `the compiler did not run: ${result.error.message}\n`
+			: result.signal
+				? `the compiler was stopped by ${result.signal}\n`
+				: "";
+		throw new CompileError(
+			`the build stopped:\n${how}${buildFailureReason(output)}\n(all of what the compiler printed: ${log})`,
+		);
 	}
 	// Everything else is this build's: the macOS launcher and pi-spawn, Pi's documentation, themes and native modules.
 	const own = new Set(darwin ? ["pi-bin", "pi-bin.hot"] : ["pi"]);
@@ -376,6 +525,19 @@ function readRecord(installDir: string): CompileRecord | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * The exclusions compile.json records that a compile takes: all of them after an update, which compiles what was asked for
+ * before, and for a compile that chooses nothing itself (no --only, --exclude or --no-exclude). Otherwise none.
+ */
+export function recordedExclusions(
+	options: CompileOptions,
+	record: CompileSelection | undefined,
+): string[] | undefined {
+	if (!record?.exclude?.length) return undefined;
+	if (options.afterUpdate) return record.exclude;
+	return options.only?.length || options.exclude?.length || options.noExclude ? undefined : record.exclude;
 }
 
 /** Whether an update should compile extensions into the release it installed (`pi-bolt compile` was run here). */
@@ -427,22 +589,33 @@ async function compile(options: CompileOptions): Promise<void> {
 		rmSync(staging, { recursive: true, force: true });
 		mkdirSync(staging, { recursive: true });
 		const generatorArgs = [join(kitDir, "gen-plugin-manifest.mjs"), "--out", join(staging, "src"), "--json"];
-		generatorArgs.push("--agent-dir", getAgentDir());
+		const agentDir = getAgentDir();
+		generatorArgs.push("--agent-dir", agentDir);
 		if (options.only?.length) generatorArgs.push("--only", options.only.join(","));
 		if (options.exclude?.length) generatorArgs.push("--exclude", options.exclude.join(","));
+		// The packages as Pi-Bolt loads them, not the `packages` setting the generator reads by itself.
+		const packages: CompilePackages = options.noPackages
+			? { packages: [], passedOver: [], removed: [] }
+			: await resolveCompilePackages(agentDir);
 		if (options.noPackages) generatorArgs.push("--no-packages");
+		else {
+			const list = join(work, "packages.json");
+			writeFileSync(list, JSON.stringify(packages.packages));
+			generatorArgs.push("--packages", list);
+		}
+		const kinds = new Map(packages.packages.map((pkg) => [resolve(pkg.root), pkg.kind]));
 		const generatorEnv = { ...process.env };
 		delete generatorEnv.BUN_BE_BUN;
 		const generated = run(bun, generatorArgs, { env: generatorEnv });
 		if (generated.status !== 0) throw new CompileError(generated.stderr.trim().replace(/^error: /, ""));
 		const plan = JSON.parse(generated.stdout) as ManifestPlan;
-		for (const plugin of plan.plugins) process.stderr.write(`  ${plugin.name} ${chalk.dim(`(${plugin.origin})`)}\n`);
-		for (const entry of plan.skipped)
-			process.stderr.write(chalk.dim(`  passed over: ${entry.path}\n    ${entry.reason}\n`));
+		candidateLines(plan, packages, options.excludeRecorded).forEach((line, index) => {
+			process.stderr.write(`  ${index < plan.plugins.length ? line : chalk.dim(line)}\n`);
+		});
 
 		const buildDir = where?.buildDir ?? dirname(process.execPath);
 		const stage = join(work, basename(buildDir));
-		buildExecutable(kit, kitDir, bun, plan, stage, buildDir, join(workParent, "compile.log"));
+		buildExecutable(kit, kitDir, bun, plan, stage, buildDir, join(workParent, "compile.log"), kinds);
 
 		const names = plan.plugins.map((plugin) => plugin.name);
 		if (options.out) {
@@ -514,6 +687,9 @@ export async function runPiBoltCompile(args: string[], installAgain: () => Promi
 				case "--exclude":
 					options.exclude = parseList(args[++index], arg);
 					break;
+				case "--no-exclude":
+					options.noExclude = true;
+					break;
 				case "--no-packages":
 					options.noPackages = true;
 					break;
@@ -560,10 +736,21 @@ export async function runPiBoltCompile(args: string[], installAgain: () => Promi
 			return 0;
 		}
 		if (mode === "off") return (await off(installAgain)) ? 0 : 1;
-		if (options.afterUpdate) {
-			const record = readRecord(installation().installDir);
-			if (!record) return 0;
-			Object.assign(options, { only: record.only, exclude: record.exclude, noPackages: record.noPackages });
+		if (options.exclude?.length && options.noExclude)
+			throw new CompileError("--exclude and --no-exclude go against each other");
+		const installDir = options.out ? piBoltInstallDir() : installation().installDir;
+		const record = installDir ? readRecord(installDir) : undefined;
+		if (options.afterUpdate && !record) return 0;
+		const recorded = recordedExclusions(options, record);
+		if (options.afterUpdate) Object.assign(options, { only: record!.only, noPackages: record!.noPackages });
+		if (recorded) {
+			options.exclude = recorded;
+			options.excludeRecorded = true;
+			process.stderr.write(
+				chalk.dim(
+					`leaving out what ${join(installDir!, "compile.json")} records as excluded: ${recorded.join(", ")}${options.afterUpdate ? "" : " (--no-exclude compiles them in)"}\n`,
+				),
+			);
 		}
 		await compile(options);
 		return 0;
