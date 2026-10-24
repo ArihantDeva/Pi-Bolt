@@ -198,6 +198,9 @@ jobs:
           scripts/build-pi.sh --out out/pi-bolt
           scripts/build-pi.sh --jit on --out out/pi-bolt-jit
           out/pi-bolt/pi --version | tee /dev/stderr | grep -q "Pi-Bolt $(cat VERSION)"
+      - name: macOS 13 and later
+        if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock' && runner.os == 'macOS'
+        run: scripts/check-macos-floor.sh out/pi-bolt out/pi-bolt-jit
       - name: Pi-Bolt's tests
         if: steps.runtime.outputs.available == 'true' && matrix.part != 'stock'
         run: |
