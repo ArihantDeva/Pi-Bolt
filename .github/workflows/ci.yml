@@ -10,9 +10,19 @@ name: ci
 on:
   push:
     branches: [pi-bolt]
-    # Documentation and benchmark data build nothing. (A release commit changes VERSION too, so it is built. A pull request
-    # always starts this workflow, as its checks are required: the changes job below skips the work instead.)
-    paths-ignore: ["**.md", "docs/**", "bench/results/**", "site/**"]
+    # Documentation and benchmark data build nothing: the same files as the changes job below counts as documentation. (A
+    # release commit changes VERSION too, so it is built. A pull request always starts this workflow, as its checks are
+    # required: the changes job skips the work instead.) Other .md files are code: scripts/lib/training.md is what the
+    # screen checks stream, and build-pi.sh puts the packages' READMEs and docs, and three of docs/, in every build.
+    paths:
+      - "**"
+      - "!*.md"
+      - "!docs/**"
+      - "docs/PLUGINS.md"
+      - "docs/ACP.md"
+      - "docs/TROUBLESHOOTING.md"
+      - "!site/**"
+      - "!bench/results/**"
   pull_request:
     branches: [pi-bolt]
   workflow_dispatch:
