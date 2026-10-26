@@ -21,6 +21,7 @@ import {
 } from "./errors.ts";
 import {
 	type AuthorizationServerMetadata,
+	isHttpUrl,
 	type OAuthClientInformation,
 	type OAuthClientInformationFull,
 	type OAuthClientInformationMixed,
@@ -185,9 +186,12 @@ export async function startAuthorization(
 	if (metadata?.code_challenge_methods_supported && !metadata.code_challenge_methods_supported.includes("S256")) {
 		throw new Error("Authorization server does not support PKCE S256");
 	}
+	const url = new URL(metadata?.authorization_endpoint ?? new URL("/authorize", authorizationServerUrl));
+	// Callers open this URL with the platform URL handler, which also launches files and custom protocols.
+	if (!isHttpUrl(url)) throw new Error(`Invalid authorization endpoint ${url.href}`);
 	// https (or http to this machine), as for the token endpoint: the URL is opened for the user, and metadata from any server
 	// on the discovery chain named it. (A file: URL opened on Windows runs the file, or signs in to the share it names.)
-	const url = secureEndpoint(metadata?.authorization_endpoint ?? new URL("/authorize", authorizationServerUrl));
+	secureEndpoint(url);
 	const { verifier, challenge } = await pkce();
 	url.searchParams.set("response_type", "code");
 	url.searchParams.set("client_id", options.clientInformation.client_id);

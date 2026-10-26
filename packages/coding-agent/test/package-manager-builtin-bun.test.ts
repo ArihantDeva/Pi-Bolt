@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -67,7 +67,7 @@ describe.skipIf(process.platform === "win32")("DefaultPackageManager in a compil
 
 		expect(runCommandSpy).toHaveBeenCalledWith(
 			process.execPath,
-			["install", "@scope/pkg@1.2.3", "--cwd", join(agentDir, "npm"), "--omit=peer"],
+			["install", "@scope/pkg@1.2.3", "--cwd", realpathSync(join(agentDir, "npm")), "--omit=peer"],
 			{ env: BUILTIN_ENV },
 		);
 	});
@@ -83,7 +83,14 @@ describe.skipIf(process.platform === "win32")("DefaultPackageManager in a compil
 
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				process.execPath,
-				["install", "@scope/pkg@1.2.3", "--cwd", join(agentDir, "npm"), "--omit=peer", "--ignore-scripts"],
+				[
+					"install",
+					"@scope/pkg@1.2.3",
+					"--cwd",
+					realpathSync(join(agentDir, "npm")),
+					"--omit=peer",
+					"--ignore-scripts",
+				],
 				{ env: BUILTIN_ENV },
 			);
 		} finally {
@@ -101,7 +108,7 @@ describe.skipIf(process.platform === "win32")("DefaultPackageManager in a compil
 
 		expect(runCommandSpy).toHaveBeenCalledWith(
 			"npm",
-			["install", "@scope/pkg", "--prefix", join(agentDir, "npm"), "--legacy-peer-deps"],
+			["install", "@scope/pkg", "--prefix", realpathSync(join(agentDir, "npm")), "--legacy-peer-deps"],
 			undefined,
 		);
 	});
@@ -118,7 +125,7 @@ describe.skipIf(process.platform === "win32")("DefaultPackageManager in a compil
 				"install",
 				"@scope/pkg",
 				"--prefix",
-				join(agentDir, "npm"),
+				realpathSync(join(agentDir, "npm")),
 				"--config.auto-install-peers=false",
 				"--config.strict-peer-dependencies=false",
 				"--config.strict-dep-builds=false",
@@ -136,7 +143,7 @@ describe.skipIf(process.platform === "win32")("DefaultPackageManager in a compil
 
 		expect(runCommandSpy).toHaveBeenCalledWith(
 			process.execPath,
-			["uninstall", "@scope/pkg", "--cwd", join(agentDir, "npm"), "--omit=peer"],
+			["uninstall", "@scope/pkg", "--cwd", realpathSync(join(agentDir, "npm")), "--omit=peer"],
 			{
 				env: BUILTIN_ENV,
 			},
@@ -185,7 +192,7 @@ describe.skipIf(process.platform === "win32")("DefaultPackageManager in a compil
 		);
 		expect(runCommandSpy).toHaveBeenCalledWith(
 			process.execPath,
-			["install", "example@latest", "--cwd", installRoot, "--omit=peer"],
+			["install", "example@latest", "--cwd", realpathSync(installRoot), "--omit=peer"],
 			{ env: BUILTIN_ENV },
 		);
 	});

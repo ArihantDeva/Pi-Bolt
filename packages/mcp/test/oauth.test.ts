@@ -17,6 +17,7 @@ import {
 	OAuthIssuerMismatchError,
 	type OAuthTokens,
 	registerClient,
+	startAuthorization,
 } from "../src/oauth/index.ts";
 import { closeServers, listen, readBody } from "./helpers.ts";
 
@@ -450,6 +451,39 @@ describe("MCP OAuth", () => {
 		await expect(discoverAuthorizationServerMetadata(origin)).rejects.toBeInstanceOf(OAuthIssuerMismatchError);
 	});
 
+	it("rejects non-HTTP authorization endpoints, which the platform URL handler would launch", async () => {
+		const endpoints = ["file://attacker.example/share/x.exe", "search-ms:query=x", "ms-msdt:/id"];
+		let endpoint = "";
+		const origin = await listen(async (_request, response, serverOrigin) => {
+			response.setHeader("content-type", "application/json");
+			response.end(
+				JSON.stringify({
+					issuer: serverOrigin,
+					authorization_endpoint: endpoint,
+					token_endpoint: `${serverOrigin}/token`,
+					response_types_supported: ["code"],
+				}),
+			);
+		});
+		for (const value of endpoints) {
+			endpoint = value;
+			await expect(discoverAuthorizationServerMetadata(origin)).rejects.toThrow("Invalid authorization endpoint");
+			const metadata = {
+				issuer: origin,
+				authorization_endpoint: value,
+				token_endpoint: `${origin}/token`,
+				response_types_supported: ["code"],
+			};
+			await expect(
+				startAuthorization(origin, {
+					metadata,
+					clientInformation: { client_id: "client" },
+					redirectUrl: "http://127.0.0.1/callback",
+				}),
+			).rejects.toThrow("Invalid authorization endpoint");
+		}
+	});
+
 	// #10172
 	it("uses a configured authorization server metadata document as is", async () => {
 		const origin = await listen(async (request, response, serverOrigin) => {
@@ -489,11 +523,13 @@ describe("MCP OAuth", () => {
 	});
 
 	it("opens no authorization endpoint other than https or this machine's http (a file: URL runs the file on Windows)", async () => {
-		for (const endpoint of [
-			"file:///C:/Users/me/Downloads/x.bat",
-			"file://attacker.example/share/x",
-			"http://idp.example/a",
-		]) {
+		// Not http or https: rejected as invalid when the metadata is read. Plain http to another machine: insecure.
+		for (const [endpoint, error] of [
+			["file:///C:/Users/me/Downloads/x.bat", "Invalid authorization endpoint"],
+			["file://attacker.example/share/x", "Invalid authorization endpoint"],
+			["file://localhost/C:/Users/me/Downloads/x.bat", "Invalid authorization endpoint"],
+			["http://idp.example/a", OAuthInsecureEndpointError],
+		] as const) {
 			const origin = await listen(async (request, response, serverOrigin) => {
 				const url = new URL(request.url ?? "/", serverOrigin);
 				response.setHeader("content-type", "application/json");
@@ -519,7 +555,8 @@ describe("MCP OAuth", () => {
 				serverUrl: `${origin}/mcp`,
 				authorizationServerMetadataUrl: new URL(`${origin}/idp/metadata.json`),
 			};
-			await expect(authorizeMcp(provider, options)).rejects.toBeInstanceOf(OAuthInsecureEndpointError);
+			if (typeof error === "string") await expect(authorizeMcp(provider, options)).rejects.toThrow(error);
+			else await expect(authorizeMcp(provider, options)).rejects.toBeInstanceOf(error);
 			expect(provider.authorizationUrl).toBeUndefined();
 		}
 	});
