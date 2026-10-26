@@ -157,6 +157,14 @@ describe("the walk", () => {
 		]);
 	});
 
+	test("keeps only the entries asked for, and still walks the folders it does not keep", async () => {
+		const all = await walk({ root, requireGit: true });
+		const kept = await walk({ root, requireGit: true, keep: (rel, kind) => kind === "file" && rel.endsWith(".ts") });
+		const ts = all.filter((entry) => entry.kind === "file" && entry.rel.endsWith(".ts"));
+		expect(kept.map((entry) => entry.rel).sort()).toEqual(ts.map((entry) => entry.rel).sort());
+		expect(kept.map((entry) => entry.rel)).toContain("src/sub/b.ts");
+	});
+
 	test("a folder below the repository's root still has its parents' rules", async () => {
 		const files = (await walk({ root: join(root, "src"), requireGit: true })).map((entry) => entry.rel).sort();
 		expect(files).toEqual([".gitignore", "a.ts", "sub", "sub/b.ts", "sub/rooted.ts"]);
@@ -231,6 +239,77 @@ describe("grep", () => {
 		const result = await grep("needle", { limit: 3 });
 		expect(result.limitReached).toBe(true);
 		expect(result.matches).toHaveLength(3);
+	});
+
+	// A file larger than `wholeFileBytes` is read a piece at a time: the same matches, line numbers and lines as when it is
+	// read whole, with lines cut by the pieces anywhere (the 7-byte pieces cut most lines, and the long line many times).
+	test("a file read a piece at a time has the matches of the file read whole", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pibolt-pieces-"));
+		try {
+			const long = `${"x".repeat(5000)} needle in a long line ${"y".repeat(3000)}`;
+			writeFileSync(join(dir, "a.txt"), `needle\nno\r\nNEEDLE two\r\n\n  \n${long}\nend needle`);
+			writeFileSync(join(dir, "b.txt"), "first\nneedle\n\n");
+			writeFileSync(join(dir, "c.txt"), `needle before a NUL\n${"z".repeat(100)}\0\n`);
+			writeFileSync(join(dir, "d.txt"), "é needle ü\n日本 needle\n");
+			const search = (pattern: string, extra: Partial<Parameters<typeof nativeGrep>[0]>) =>
+				nativeGrep({ root: dir, isDirectory: true, pattern, limit: 100, keepChars: 60, ...extra });
+			for (const query of [
+				{ pattern: "needle", literal: true },
+				{ pattern: "NEEDLE", literal: true, ignoreCase: true },
+				{ pattern: "needle\\s\\w+" },
+				{ pattern: "(?i)needle (two|in)" },
+				{ pattern: "^\\s*$" },
+				{ pattern: "^" },
+				{ pattern: "e$" },
+				{ pattern: "x+ needle" },
+				{ pattern: "needle", limit: 3 },
+			]) {
+				const whole = await search(query.pattern, query);
+				expect(whole.matches.length).toBeGreaterThan(0);
+				for (const pieceBytes of [1, 7, 64, 4096]) {
+					expect(await search(query.pattern, { ...query, wholeFileBytes: 0, pieceBytes })).toEqual(whole);
+				}
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	// An expression without a literal runs over 16 KB windows of whole lines: the lines that match, as line by line.
+	test("an expression without a literal finds the lines that match, across windows", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pibolt-windows-"));
+		try {
+			const lines = Array.from({ length: 6000 }, (_, i) =>
+				i % 7 === 0 ? "" : i % 11 === 0 ? `  ${i}x\r` : `${"w".repeat(i % 40)} ${i} line`,
+			);
+			const contents = `${lines.join("\n")}\n`;
+			writeFileSync(join(dir, "big.txt"), contents);
+			for (const [pattern, flags] of [
+				["^\\s*$", ""],
+				["^", ""],
+				["e$", ""],
+				["[0-9]{3}x", ""],
+				["W{3} [0-9]+5 LINE", "i"],
+			]) {
+				const regex = new RegExp(pattern, `${flags}m`);
+				const expected = lines
+					.map((text, i) => ({ text, lineNumber: i + 1 }))
+					.filter(({ text }) => regex.test(text))
+					.slice(0, 2000)
+					.map(({ text, lineNumber }) => `${lineNumber}:${text.replace(/\r$/, "")}`);
+				const result = await nativeGrep({
+					root: join(dir, "big.txt"),
+					isDirectory: false,
+					pattern,
+					ignoreCase: flags === "i",
+					limit: 2000,
+					keepChars: 100,
+				});
+				expect(result.matches.map((m) => `${m.lineNumber}:${m.lineText}`)).toEqual(expected);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	test("a file of its own, and a bad expression", async () => {
@@ -327,6 +406,69 @@ describe.skipIf(!has("git"))("a linked worktree", () => {
 			expect(rels).not.toContain("secret.txt");
 		} finally {
 			rmSync(top, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("limits", () => {
+	test("braces expand to at most 1024 patterns", async () => {
+		expect(expandBraces("{a,b}".repeat(10))).toHaveLength(1024);
+		expect(() => expandBraces("{a,b}".repeat(11))).toThrow("too many patterns");
+		// (Twenty groups would be a million patterns, built before the first match.)
+		await expect(nativeFind({ root, pattern: "{a,b}".repeat(20), limit: 10 })).rejects.toThrow("too many patterns");
+	});
+
+	test.skipIf(process.platform === "win32")(
+		"an ignore file that is a device or a pipe is passed over, not read",
+		async () => {
+			const dir = mkdtempSync(join(tmpdir(), "pibolt-special-"));
+			try {
+				writeFileSync(join(dir, "a.ts"), "needle\n");
+				symlinkSync("/dev/zero", join(dir, ".gitignore"));
+				expect(spawnSync("mkfifo", [join(dir, ".ignore")]).status).toBe(0);
+				// (The link is listed, as fd lists links; the pipe is neither a file nor a folder.)
+				expect((await walk({ root: dir, requireGit: false })).map((entry) => entry.rel).sort()).toEqual([
+					".gitignore",
+					"a.ts",
+				]);
+				// A search of the pipe itself: nothing to read.
+				const fifo = await nativeGrep({
+					root: join(dir, ".ignore"),
+					isDirectory: false,
+					pattern: "x",
+					limit: 10,
+					keepChars: 100,
+				});
+				expect(fifo.matches).toEqual([]);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		},
+		10_000,
+	);
+
+	// An expression that backtracks a long time on each line (about 40 ms here): the search lets the event loop run between
+	// lines, so the abort comes through at once instead of after every line was tried.
+	test("a slow expression can be aborted", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pibolt-slow-"));
+		try {
+			writeFileSync(join(dir, "slow.txt"), `${"xyz".padEnd(25, "a")}\n`.repeat(60));
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(), 100);
+			const start = performance.now();
+			await expect(
+				nativeGrep({
+					root: dir,
+					isDirectory: true,
+					pattern: "xyz(a+)+c",
+					limit: 10,
+					keepChars: 100,
+					signal: controller.signal,
+				}),
+			).rejects.toThrow("Operation aborted");
+			expect(performance.now() - start).toBeLessThan(1000);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });
