@@ -10,7 +10,10 @@ lists without building; --exclude takes a file too and adds to compile.json's, a
 tsconfig.json beside an extension does not give it second copies of Pi's modules. An extension with a static import that does
 not resolve, one that fails compiled in only, or one with a function too big for the compiler is left out of the build with a
 line naming it as --exclude does, and loads from its files; one whose top-level code throws at a start fails alone, with Pi's
-error, and doctor, `compile --status` and `update --rollback` still work. Uses the bench fake model.
+error, and doctor, `compile --status` and `update --rollback` still work.
+It says what it does as it goes, lists a project's extensions as not compiled in, removes the work folder of a compile that
+was killed and an old compile.log, and an extension that writes into its own folder is not "changed" by that. Uses the bench
+fake model.
   python3 tests/pi/compile.py PI KIT RUNTIME     (KIT: pi-bolt-kit-<platform>.tar.gz or its folder; RUNTIME: the runtime's bun)
 """
 import json
@@ -171,9 +174,9 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
             shutil.copy(home / name, agent / name)
         env = harness.pi_env(agent, {"PIBOLT_PROBE": str(probe)})
 
-        def compile_(*args):
+        def compile_(*args, cwd=tmp):
             return subprocess.run([str(build / "pi"), "compile", "--kit", kit, "--runtime", runtime, *args], env=env,
-                                  capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tmp)
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=cwd)
 
         def session():
             """`pi -p`: how each extension was loaded (its module's URL, or None), and what Pi printed."""
@@ -214,10 +217,23 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
         check("before: the skill and prompt beside the module are loaded",
               resources == ["probe-prompt", "skill:probe-skill"], str(resources))
 
+        # What a compile killed with SIGKILL leaves (its process gone), and the log of a failed one.
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (install / ".compile-Kil1ed").mkdir()
+        (install / ".compile-Kil1ed" / "pid").write_text(f"{dead.pid}\n")
+        (install / "compile.log").write_text("an old failure\n")
+
         started = time.time()
         r = compile_()
         took = time.time() - started
         check("pi-bolt compile succeeds", r.returncode == 0, r.stdout[-500:] + r.stderr[-1500:])
+        check("it says what it does as it goes",
+              all(phase in r.stderr for phase in ("finding the extensions", "bundling Pi", "compiling ahead of time"))
+              and re.search(r"Compiled into Pi-Bolt \S+ in \d+ s:", r.stdout), r.stdout[-300:] + r.stderr[-800:])
+        check("it removes the work folder of a compile that was killed, and the old compile.log",
+              not (install / ".compile-Kil1ed").exists() and not (install / "compile.log").exists()
+              and "removed what a compile that was killed left" in r.stderr, r.stderr[-800:])
         check("it names what it compiled in", "file-ext" in r.stderr and "folder-ext" in r.stderr, r.stderr[-500:])
         check("it says the import() that does not resolve is left to run time (#160)",
               'optional-ext: import("pibolt-missing-sdk-160") does not resolve: left to run time' in r.stderr,
@@ -237,6 +253,15 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
         check("both compiled-in extensions run from the executable",
               r.returncode == 0 and all(how == "compiled" for how, _ in loaded.values()), f"{loaded} {r.stderr[-300:]}")
         check("no warning while they are unchanged", "changed since" not in r.stderr, r.stderr[-300:])
+        # (Loader parity #10.) What an extension writes into its own folder is not a change of its code.
+        state = agent / "extensions" / "folder-ext" / "state.json"
+        state.write_text("{}")
+        later = time.time() + 5
+        os.utime(state, (later, later))
+        r, loaded = session()
+        state.unlink()
+        check("a file written into its folder leaves it compiled in", loaded["folder-ext"][0] == "compiled"
+              and "changed since" not in r.stderr, f"{loaded} {r.stderr[-300:]}")
         check("compiled in, import.meta.url is the installed file's, as loaded from its files (#53)",
               {name: loaded[name][1] for name in ("file-ext", "folder-ext")} == from_files, f"{loaded} vs {from_files}")
         check("compiled in, the import() of a package that is not installed fails inside the extension, as loaded from its files (#160)",
@@ -288,10 +313,16 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
         pi_bolt("update", "--channel", "stable")
         check("update --channel stable takes it away", not (install / "channel").exists())
 
-        r = compile_("--out", str(tmp / "elsewhere"))
+        # (From a project with extensions of its own: listed, and not compiled in.)
+        project = tmp / "project"
+        (project / ".pi" / "extensions").mkdir(parents=True)
+        (project / ".pi" / "extensions" / "proj-ext.ts").write_text("export default function () {}\n")
+        r = compile_("--out", str(tmp / "elsewhere"), cwd=project)
         check("--out builds without installing",
               r.returncode == 0 and (tmp / "elsewhere" / "pi").exists() and not (install / ".compile").exists(),
               r.stderr[-800:])
+        check("a project's extension is listed as not compiled in",
+              ".pi/extensions/proj-ext.ts (project): not compiled in" in r.stderr, r.stderr[-800:])
         leftovers = [p.name for p in install.iterdir() if p.name.startswith(".compile-")]
         check("nothing is left of the work folder", not leftovers, str(leftovers))
 
@@ -392,13 +423,13 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
         r = compile_("--exclude", "@mariozechner/pi-tui", "--out", str(tmp / "unknown"))
         check("an --exclude that names no extension stops before the build, and lists the extensions (#174)",
               r.returncode != 0 and "no extension is named @mariozechner/pi-tui. The extensions here are" in r.stderr
-              and "compiling Pi" not in r.stderr, r.stderr[-800:])
+              and "bundling Pi" not in r.stderr, r.stderr[-800:])
 
         # (#174) --list: the extensions and their names, and nothing built; a later --exclude adds to compile.json's, and
         # --include takes one back.
         r = compile_("--list")
         check("--list lists the extensions and stops", r.returncode == 0 and "old-names-ext (global): compiling" in r.stderr
-              and "compiling Pi" not in r.stderr, r.stdout + r.stderr[-800:])
+              and "bundling Pi" not in r.stderr, r.stdout + r.stderr[-800:])
         r = compile_("--exclude", str(agent / "extensions" / "optional-ext.ts"))
         record = json.loads((install / "compile.json").read_text())
         check("--exclude takes an extension by its file, and compile.json records its name",
