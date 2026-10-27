@@ -2,13 +2,15 @@
 the extensions installed here are compiled in and used in place of their files, and find the skills and prompts beside their
 modules from import.meta.url as they do loaded from their files (#53); one changed since is loaded from its files with a warning; one removed since is not loaded; the build it replaced is kept, and `pi-bolt update --rollback` swaps the two
 (and back); `pi-bolt update --channel beta` is kept for the installation; and `--out` builds without installing. An import()
-of a package that is not installed is left to run time, where it fails inside the extension as loaded from its files, while a
-static import of one still stops the build (#160), and the message names the extension; and an extension finds files, modules
-and Pi's packages from where it is installed, as loaded from its files (loader parity). An extension that imports Pi's modules
-by the other names Pi's loader gives them (@mariozechner/pi-*, @sinclair/typebox, the pi-ai root's compat entry) compiles in
-and gets Pi's modules; an --exclude that names no extension stops before the build; --list lists without building; --exclude
-takes a file too and adds to compile.json's, and --include takes one back (#174); a tsconfig.json beside an extension does
-not give it second copies of Pi's modules. Uses the bench fake model.
+of a package that is not installed is left to run time, where it fails inside the extension as loaded from its files (#160);
+and an extension finds files, modules and Pi's packages from where it is installed, as loaded from its files (loader parity). An
+extension that imports Pi's modules by the other names Pi's loader gives them (@mariozechner/pi-*, @sinclair/typebox, the pi-ai
+root's compat entry) compiles in and gets Pi's modules; an --exclude that names no extension stops before the build; --list
+lists without building; --exclude takes a file too and adds to compile.json's, and --include takes one back (#174); a
+tsconfig.json beside an extension does not give it second copies of Pi's modules. An extension with a static import that does
+not resolve, one that fails compiled in only, or one with a function too big for the compiler is left out of the build with a
+line naming it as --exclude does, and loads from its files; one whose top-level code throws at a start fails alone, with Pi's
+error, and doctor, `compile --status` and `update --rollback` still work. Uses the bench fake model.
   python3 tests/pi/compile.py PI KIT RUNTIME     (KIT: pi-bolt-kit-<platform>.tar.gz or its folder; RUNTIME: the runtime's bun)
 """
 import json
@@ -293,18 +295,98 @@ with tempfile.TemporaryDirectory(prefix="pibolt-compile-") as tmp:
         leftovers = [p.name for p in install.iterdir() if p.name.startswith(".compile-")]
         check("nothing is left of the work folder", not leftovers, str(leftovers))
 
-        # (#160) A static import of a package that is not there is the extension's own need: the build stops at it, as before.
+        # An extension the bundler cannot build (a static import of a package that is not there) is left out of the build, with
+        # a line naming it, the import and its file, and loads from its files; the rest are compiled in.
         required = agent / "extensions" / "required-ext.ts"
         required.write_text('import { sdk } from "pibolt-missing-sdk-160";\nexport default function () {\n\treturn sdk;\n}\n')
-        r = compile_("--only", "required-ext", "--out", str(tmp / "required"))
-        check("a static import of a package that is not installed still stops the build (#160)",
-              r.returncode != 0 and 'Could not resolve: "pibolt-missing-sdk-160"' in r.stderr, r.stderr[-800:])
-        check("and the message names the extension it is in (#174)",
-              "That is in the extension required-ext (global/required-ext.ts:1)" in r.stderr, r.stderr[-800:])
-        r = compile_("--exclude", "optional-ext", "--out", str(tmp / "required"))
-        check("with the --exclude that leaves it out, with those excluded already (#174)",
-              "`pi-bolt compile --exclude optional-ext,required-ext`" in r.stderr, r.stderr[-800:])
-        required.unlink()
+        # One that fails compiled in only (its top-level code throws when it runs from the executable's file system).
+        (agent / "extensions" / "compiled-only.ts").write_text(
+            'import { writeFileSync } from "node:fs";\n'
+            'if (new Error().stack.includes("/$bunfs/")) throw new Error("compiled-only: not in a compiled build");\n'
+            'export default function () {\n\twriteFileSync(`${process.env.PIBOLT_PROBE}/compiled-only`, "files ok");\n}\n')
+        # One whose top-level code throws at a start, when its configuration is missing (PIBOLT_ENV_THROW).
+        (agent / "extensions" / "env-throw.ts").write_text(
+            'if (process.env.PIBOLT_ENV_THROW) throw new Error("env-throw: missing config");\n'
+            + PROBE.replace("NAME", "env-throw"))
+        r = compile_()
+        check("one extension that does not bundle, or fails compiled in, does not stop the compile", r.returncode == 0,
+              r.stdout[-500:] + r.stderr[-1500:])
+        check("it names the extension left out, the import that does not resolve and its installed file",
+              f'required-ext (global): not compiled in: "pibolt-missing-sdk-160" does not resolve ({required}:1): it loads from its files'
+              in r.stderr, r.stderr[-1500:])
+        check("it names the extension that fails compiled in, and why",
+              "compiled-only (global): not compiled in: it fails compiled in (compiled-only: not in a compiled build)" in r.stderr,
+              r.stderr[-1500:])
+        record = json.loads((install / "compile.json").read_text())
+        compiled_in = record.get("extensions", [])
+        check("the others are compiled in", "env-throw" in compiled_in and "optional-ext" in compiled_in
+              and "compiled-only" not in compiled_in and "required-ext" not in compiled_in, str(record))
+
+        def probes(extra_env=None):
+            for file in probe.iterdir():
+                file.unlink()
+            r = subprocess.run([str(build / "pi"), "-p", "--model", "fake/fake-model", "hello"], env={**env, **(extra_env or {})},
+                               capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tmp)
+            return r, {file.name: file.read_text().split(" ", 1) for file in probe.iterdir()}
+
+        r, seen = probes()
+        check("the one that failed compiled in loads from its files, and works there; the rest stay compiled in",
+              seen.get("compiled-only") == ["files", "ok"] and seen.get("env-throw", [None])[0] == "compiled",
+              f"{seen} {r.stderr[-500:]}")
+        check("the one that does not resolve fails alone from its files, as in Pi",
+              re.search(r'Failed to load extension ".*required-ext\.ts"', r.stderr) is not None, r.stderr[-800:])
+        r, seen = probes({"PIBOLT_ENV_THROW": "1"})
+        check("an extension whose top-level code throws at a start fails alone, with Pi's error",
+              "env-throw: missing config" in r.stderr and seen.get("folder-ext", [None])[0] == "compiled"
+              and "env-throw" not in seen, f"{r.returncode} {seen} {r.stderr[-800:]}")
+        throw_env = {**env, "PIBOLT_ENV_THROW": "1"}
+        for args in (["doctor", "--offline"], ["compile", "--status"], ["update", "--rollback"], ["update", "--rollback"]):
+            r = subprocess.run([str(build / "pi"), *args], env=throw_env, capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, cwd=tmp)
+            check(f"with it throwing, `pi-bolt {' '.join(args)}` works", r.returncode == 0 and "missing config" not in r.stderr,
+                  r.stdout[-300:] + r.stderr[-500:])
+        doctor = subprocess.run([str(build / "pi"), "doctor", "--offline"], env=env, capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, cwd=tmp).stdout
+        check("doctor lists the extensions compiled in", "compiled in" in doctor and "env-throw.ts: by pi-bolt compile" in doctor,
+              doctor[-1500:])
+
+        # A function too big for the compiler (a CommonJS dependency of 40,000 statements, one function of over 256 KB of
+        # bytecode): the extension it is of is left out, with a line naming it, and the build goes on without it.
+        big = agent / "extensions" / "big-ext"
+        (big / "node_modules" / "big-cjs").mkdir(parents=True)
+        (big / "node_modules" / "big-cjs" / "package.json").write_text('{"name": "big-cjs", "version": "1.0.0", "main": "index.js"}')
+        (big / "node_modules" / "big-cjs" / "index.js").write_text(
+            "\n".join(["var t = {};", *(f"t.k{i} = [{i}, 'v{i}', {i} * 2];" for i in range(40000)), "module.exports = t;"]))
+        (big / "package.json").write_text('{"name": "big-ext", "dependencies": {"big-cjs": "1.0.0"}}')
+        (big / "index.ts").write_text('import big from "big-cjs";\nexport const first = big.k1;\n' + PROBE.replace("NAME", "big-ext"))
+        r = compile_("--only", "big-ext,env-throw", "--out", str(tmp / "big"))
+        check("a function too big to compile leaves its extension out, named, and the rest is built",
+              r.returncode == 0 and "big-ext (global): not compiled in: a function of it is too big for the compiler" in r.stderr
+              and "env-throw" in r.stdout, r.stdout[-300:] + r.stderr[-1500:])
+
+        # One over the compiler's limit but under 1 MB (15,000 statements, about 400 KB): with 8 GB of memory the compile raises
+        # the limit and compiles it in; with less, it is left out as above.
+        mid = agent / "extensions" / "mid-ext"
+        (mid / "node_modules" / "mid-cjs").mkdir(parents=True)
+        (mid / "node_modules" / "mid-cjs" / "package.json").write_text('{"name": "mid-cjs", "version": "1.0.0", "main": "index.js"}')
+        (mid / "node_modules" / "mid-cjs" / "index.js").write_text(
+            "\n".join(["var t = {};", *(f"t.k{i} = [{i}, 'v{i}', {i} * 2];" for i in range(15000)), "module.exports = t;"]))
+        (mid / "package.json").write_text('{"name": "mid-ext", "dependencies": {"mid-cjs": "1.0.0"}}')
+        (mid / "index.ts").write_text('import mid from "mid-cjs";\nexport const first = mid.k1;\n' + PROBE.replace("NAME", "mid-ext"))
+        r = compile_("--only", "mid-ext,env-throw", "--out", str(tmp / "mid"))
+        memory = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+        if memory >= 8 * 2**30:
+            check("a function under 1 MB over the limit: the compile raises the limit and compiles it in",
+                  r.returncode == 0 and "building again with BUN_JSC_maximumAOTCandidateBytecodeSize=" in r.stderr
+                  and "mid-ext" in r.stdout and "not compiled in" not in r.stderr, r.stdout[-300:] + r.stderr[-1500:])
+        else:
+            check("a function under 1 MB over the limit, with less than 8 GB: its extension is left out",
+                  r.returncode == 0 and "mid-ext (global): not compiled in: a function of it is too big" in r.stderr,
+                  r.stdout[-300:] + r.stderr[-1500:])
+        for added in (required, agent / "extensions" / "compiled-only.ts", agent / "extensions" / "env-throw.ts"):
+            added.unlink()
+        shutil.rmtree(big)
+        shutil.rmtree(mid)
 
         # (#174) An --exclude of a package an extension imports, not of an extension, leaves out nothing: it stops at once.
         r = compile_("--exclude", "@mariozechner/pi-tui", "--out", str(tmp / "unknown"))
